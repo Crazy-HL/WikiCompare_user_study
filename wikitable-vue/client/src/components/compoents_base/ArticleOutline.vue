@@ -55,10 +55,10 @@
 		{ leftId: "heading-13-div1", rightId: "heading-15-div3" },
 		{ leftId: "heading-14-div1", rightId: "heading-16-div3" },
 		{ leftId: "heading-17-div1", rightId: "heading-18-div3" },
-		{ leftId: "heading-19-div1", rightId: "heading-26-div3" },
-		{ leftId: "heading-20-div1", rightId: "heading-28-div3" },
-		{ leftId: "heading-21-div1", rightId: "heading-29-div3" },
-		{ leftId: "heading-23-div1", rightId: "heading-30-div3" }
+
+		{ leftId: "heading-20-div1", rightId: "heading-27-div3" },
+
+		{ leftId: "heading-23-div1", rightId: "heading-29-div3" }
 	]);
 
 	// **切换大纲的显示**

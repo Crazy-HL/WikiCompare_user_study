@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>知乎长文静态争议度条示例</title>
+		<style>
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+					Helvetica, Arial, sans-serif;
+				padding: 20px;
+			}
+			.section {
+				margin-bottom: 24px;
+				max-width: 600px;
+			}
+			.title {
+				font-weight: 600;
+				margin-bottom: 6px;
+				font-size: 16px;
+			}
+			/* 争议度条容器 */
+			.controversy-bar {
+				width: 200px;
+				height: 14px;
+				background: #eee;
+				border-radius: 7px;
+				overflow: hidden;
+				display: inline-block;
+				vertical-align: middle;
+			}
+			.controversy-support {
+				height: 100%;
+				background-color: #1f77b4; /* 蓝色 */
+				float: left;
+			}
+			.controversy-oppose {
+				height: 100%;
+				background-color: #d62728; /* 红色 */
+				float: left;
+			}
+			/* 引用情感条容器 */
+			.sentiment-bar {
+				display: flex;
+				gap: 3px;
+				margin-top: 6px;
+			}
+			.sentiment-block {
+				width: 14px;
+				height: 14px;
+				border-radius: 3px;
+			}
+			.positive {
+				background-color: #1f77b4;
+			}
+			.neutral {
+				background-color: #7f7f7f;
+			}
+			.negative {
+				background-color: #d62728;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="section">
+			<div class="title">2️⃣ 现实经济压力巨大 【争议度条】</div>
+			<div class="controversy-bar" aria-label="争议度条，支持70%，反对30%">
+				<div class="controversy-support" style="width: 70%"></div>
+				<div class="controversy-oppose" style="width: 30%"></div>
+			</div>
+			<p style="margin-top: 8px; font-size: 14px; color: #555">
+				高昂的房价、生活成本以及教育费用，让年轻人对未来缺乏安全感。<br />
+				<q
+					>与其把自己逼入一个不确定的未来，不如选择不婚不育，过好自己的生活。</q
+				>
+			</p>
+		</div>
+
+		<div class="section">
+			<div class="title">4️⃣ 传统家庭观念的松动 【引用情感条】</div>
+			<div class="sentiment-bar" aria-label="引用情感分布条">
+				<div class="sentiment-block positive" title="支持"></div>
+				<div class="sentiment-block positive" title="支持"></div>
+				<div class="sentiment-block neutral" title="中立"></div>
+				<div class="sentiment-block negative" title="反对"></div>
+				<div class="sentiment-block neutral" title="中立"></div>
+			</div>
+			<p style="margin-top: 8px; font-size: 14px; color: #555">
+				当代年轻人对于“必须结婚生子”的传统观念认同感逐渐降低，“独自生活”成为一种新的正常状态。<br />
+				<q>结婚不再是人生必选项，更多人希望追求自我价值和自由。</q>
+			</p>
+		</div>
+	</body>
+</html>

@@ -10,6 +10,7 @@
 		:linkedOutline="linkedOutline" /> -->
 	<ParentComponent
 		pageTitle="Economy of South Korea"
+		revision="1273871505"
 		divId="div1"
 		selectContentClass="selectContent1"
 		:linkedOutline="linkedOutline" />

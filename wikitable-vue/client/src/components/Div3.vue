@@ -11,6 +11,7 @@
 
 	<ParentComponent
 		pageTitle="Economy of Japan"
+		revision="1297943898"
 		divId="div3"
 		selectContentClass="selectContent2"
 		:linkedOutline="linkedOutline" />
