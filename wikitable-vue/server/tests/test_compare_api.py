@@ -30,11 +30,12 @@ class CompareApiTest(AsyncHTTPTestCase):
         response = self.fetch(
             "/api/compare-session",
             method="POST",
-            body=b"\xff\xfe",
+            body=b"\x80",
             headers={"Content-Type": "application/json"},
         )
 
         assert response.code == 400
+        assert response.headers["Content-Type"].startswith("application/json")
         assert json.loads(response.body)["error"]
 
     def test_compare_session_returns_session_without_network_or_api_key(self):
@@ -59,6 +60,7 @@ class CompareApiTest(AsyncHTTPTestCase):
             )
 
         assert response.code == 200
+        assert response.headers["Content-Type"].startswith("application/json")
         payload = json.loads(response.body)
         assert payload["sessionId"]
         assert payload["articles"]["left"]["title"] == "Economy_of_Example_A"

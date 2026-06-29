@@ -106,7 +106,7 @@ class ApiHandler(tornado.web.RequestHandler):
     def read_json(self):
         try:
             data = json.loads(self.request.body or b"{}")
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             self.write_error_json(400, "Invalid JSON body")
             return None
         if not isinstance(data, dict):
