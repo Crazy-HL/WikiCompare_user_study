@@ -22,7 +22,7 @@ YEAR_VALUE_RE = re.compile(
 )
 ORDINAL_RE = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE)
 COORDINATE_RE = re.compile(
-    r"\b\d+(?:\.\d+)?\s*°\s*[NS]\b.*\b\d+(?:\.\d+)?\s*°\s*[EW]\b",
+    r"(\b\d+(?:\.\d+)?\s*°\s*[NS]\b.*\b\d+(?:\.\d+)?\s*°\s*[EW]\b|\b\d+(?:\.\d+)?\s*°\s*[EW]\b.*\b\d+(?:\.\d+)?\s*°\s*[NS]\b)",
     re.IGNORECASE,
 )
 YEAR_RE = re.compile(r"\b((?:18|19|20|21)\d{2})\b")
@@ -33,7 +33,7 @@ def choose_chart_type(data_type: str, point_count: int) -> str:
     count = max(int(point_count or 0), 0)
 
     if normalized_type == "numerical":
-        return "bar" if count <= 2 else "scatter"
+        return "bar" if count <= 3 else "scatter"
     if normalized_type == "proportional":
         return "pie" if count <= 4 else "stacked"
     if normalized_type == "trend":
@@ -152,8 +152,7 @@ def rank_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for _, row in sorted(
             indexed_rows,
             key=lambda item: (
-                -_trend_priority(item[1]),
-                -float(item[1].get("score") or 0),
+                -_weighted_score(item[1]),
                 str(item[1].get("label") or item[1].get("id") or ""),
                 item[0],
             ),
@@ -164,6 +163,8 @@ def rank_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _extract_year_value_pairs(text: str) -> list[dict[str, float | int]]:
     values = []
     for match in YEAR_VALUE_RE.finditer(text):
+        if match.group(0).strip().startswith(f"{match.group(1)}-"):
+            continue
         year = int(match.group(1))
         number = _parse_number(match.group(2))
         if number is None:
@@ -254,13 +255,70 @@ def _score_pair(
     left_values: list[dict[str, float | int]],
     right_values: list[dict[str, float | int]],
 ) -> float:
+    if not left_values and not right_values:
+        return 0.0
+    if not left_values or not right_values:
+        return 0.2
     if data_type == "Trend":
-        return 0.95
-    if left_values and right_values:
-        return 0.8
-    if left_values or right_values:
-        return 0.55
-    return 0.25
+        return _trend_difference(left_values, right_values)
+    return _value_difference(left_values, right_values)
+
+
+def _trend_difference(
+    left_values: list[dict[str, float | int]],
+    right_values: list[dict[str, float | int]],
+) -> float:
+    left_by_year = {
+        value["year"]: float(value["value"])
+        for value in left_values
+        if "year" in value and "value" in value
+    }
+    right_by_year = {
+        value["year"]: float(value["value"])
+        for value in right_values
+        if "year" in value and "value" in value
+    }
+    shared_years = sorted(set(left_by_year) & set(right_by_year))
+    if not shared_years:
+        return _value_difference(left_values, right_values)
+    diffs = [
+        _normalized_difference(left_by_year[year], right_by_year[year])
+        for year in shared_years
+    ]
+    level_difference = sum(diffs) / len(diffs)
+    slope_difference = 0.0
+    if len(shared_years) >= 2:
+        first_year = shared_years[0]
+        last_year = shared_years[-1]
+        left_slope = left_by_year[last_year] - left_by_year[first_year]
+        right_slope = right_by_year[last_year] - right_by_year[first_year]
+        slope_difference = _normalized_difference(left_slope, right_slope)
+    return round(min(1.0, (level_difference * 0.6) + (slope_difference * 0.4)), 6)
+
+
+def _value_difference(
+    left_values: list[dict[str, float | int]],
+    right_values: list[dict[str, float | int]],
+) -> float:
+    pair_count = min(len(left_values), len(right_values))
+    if pair_count == 0:
+        return 0.0
+    diffs = [
+        _normalized_difference(
+            float(left_values[index]["value"]),
+            float(right_values[index]["value"]),
+        )
+        for index in range(pair_count)
+        if "value" in left_values[index] and "value" in right_values[index]
+    ]
+    if not diffs:
+        return 0.0
+    return round(sum(diffs) / len(diffs), 6)
+
+
+def _normalized_difference(left: float, right: float) -> float:
+    denominator = max(abs(left), abs(right), 1e-9)
+    return min(1.0, abs(left - right) / denominator)
 
 
 def _visual_side(
@@ -281,5 +339,11 @@ def _row_id(left_id: Any, right_id: Any, label: str) -> str:
     return f"row-{digest}"
 
 
-def _trend_priority(row: dict[str, Any]) -> int:
-    return 1 if row.get("dataType") == "Trend" else 0
+def _weighted_score(row: dict[str, Any]) -> float:
+    score = float(row.get("score") or 0)
+    data_type = row.get("dataType")
+    if data_type == "Trend":
+        return score * 0.5
+    if data_type in {"Numerical", "Proportional"}:
+        return score * 0.3
+    return score * 0.2

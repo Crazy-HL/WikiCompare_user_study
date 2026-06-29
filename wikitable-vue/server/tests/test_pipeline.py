@@ -10,6 +10,7 @@ from services.pipeline import (
 
 def test_choose_chart_type_uses_table_one_rules():
     assert choose_chart_type("Numerical", 2) == "bar"
+    assert choose_chart_type("Numerical", 3) == "bar"
     assert choose_chart_type("Numerical", 4) == "scatter"
     assert choose_chart_type("Proportional", 4) == "pie"
     assert choose_chart_type("Proportional", 5) == "stacked"
@@ -25,6 +26,7 @@ def test_classify_value_rule_detects_common_types():
     assert classify_value_rule("2020: 100, 2024: 150") == "Trend"
     assert classify_value_rule("12th (nominal)") == "Ordinal"
     assert classify_value_rule("40°N, 116°E") == "Geographical"
+    assert classify_value_rule("116°E, 40°N") == "Geographical"
     assert classify_value_rule("10 million") == "Numerical"
 
 
@@ -63,10 +65,40 @@ def test_rank_rows_orders_trend_first_scores():
     assert [row["id"] for row in rank_rows(rows)] == ["b", "a"]
 
 
+def test_rank_rows_uses_weighted_difference_not_trend_bucket_only():
+    rows = [
+        {"id": "tiny-trend", "score": 0.01, "dataType": "Trend"},
+        {"id": "huge-numeric", "score": 0.95, "dataType": "Numerical"},
+    ]
+
+    assert [row["id"] for row in rank_rows(rows)] == ["huge-numeric", "tiny-trend"]
+
+
 def test_extract_numeric_values_handles_currency_magnitude_and_years():
     values = extract_numeric_values("$1.5 billion in 2024")
 
     assert values == [{"value": 1500000000.0, "year": 2024}]
+
+
+def test_extract_numeric_values_does_not_treat_year_ranges_as_year_values():
+    assert extract_numeric_values("2020-2024") == []
+
+
+def test_normalize_attribute_pair_scores_actual_value_differences():
+    same = normalize_attribute_pair(
+        {"id": "left-a", "key": "Exports", "valueText": "2020: 100, 2024: 150", "source": "main_text", "sourceIds": ["left-s-1"]},
+        {"id": "right-a", "key": "Exports", "valueText": "2020: 100, 2024: 150", "source": "main_text", "sourceIds": ["right-s-1"]},
+        "Exports",
+    )
+    different = normalize_attribute_pair(
+        {"id": "left-b", "key": "Exports", "valueText": "2020: 100, 2024: 300", "source": "main_text", "sourceIds": ["left-s-2"]},
+        {"id": "right-b", "key": "Exports", "valueText": "2020: 100, 2024: 150", "source": "main_text", "sourceIds": ["right-s-2"]},
+        "Exports",
+    )
+
+    assert same["score"] == 0
+    assert different["score"] > same["score"]
+    assert different["dataType"] == "Trend"
 
 
 def test_normalize_attribute_pair_marks_source_kind_both():
