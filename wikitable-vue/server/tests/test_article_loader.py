@@ -69,6 +69,7 @@ def test_parse_article_html_preserves_inline_markup():
 
     assert '<a href="/wiki/U.S.">U.S.</a>' in article["html"]
     assert article["paragraphs"][0]["sentences"][1]["id"] == "left-s-1-2"
+    assert 'data-source-id="left-s-1-2"' in article["html"]
     assert article["sourceMap"]["left-s-1-2"]["sourceType"] == "sentence"
 
 

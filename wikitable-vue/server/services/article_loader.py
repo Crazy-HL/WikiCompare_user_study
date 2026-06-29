@@ -4,7 +4,7 @@ import re
 from typing import Any
 from urllib.parse import quote
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 from services.models import SourceRef
 
@@ -120,19 +120,9 @@ def parse_article_html(
         sentence_records = []
 
         paragraph["data-source-id"] = paragraph_id
-        should_wrap_sentences = paragraph.find() is None
-        if should_wrap_sentences:
-            paragraph.clear()
+        _wrap_paragraph_sentences(soup, paragraph, sentences, side, paragraph_index)
         for sentence_index, sentence in enumerate(sentences, start=1):
             sentence_id = f"{side}-s-{paragraph_index}-{sentence_index}"
-            if should_wrap_sentences:
-                span = soup.new_tag("span")
-                span["data-source-id"] = sentence_id
-                span.string = sentence
-                if sentence_index > 1:
-                    paragraph.append(" ")
-                paragraph.append(span)
-
             sentence_records.append({"id": sentence_id, "text": sentence, "side": side})
             source_map[sentence_id] = _source_ref(
                 sentence_id,
@@ -176,6 +166,80 @@ def _non_empty_paragraphs(soup: BeautifulSoup):
     for paragraph in soup.find_all("p"):
         if _node_text(paragraph):
             yield paragraph
+
+
+def _wrap_paragraph_sentences(
+    soup: BeautifulSoup,
+    paragraph: Tag,
+    sentences: list[str],
+    side: str,
+    paragraph_index: int,
+) -> None:
+    if not sentences:
+        return
+
+    original_children = list(paragraph.contents)
+    paragraph.clear()
+
+    sentence_index = 1
+    current_span = _new_sentence_span(soup, side, paragraph_index, sentence_index)
+    paragraph.append(current_span)
+
+    for child in original_children:
+        if isinstance(child, NavigableString):
+            for segment in _sentence_text_segments(str(child)):
+                if not segment:
+                    continue
+                current_span.append(segment)
+                if _span_matches_sentence(current_span, sentences[sentence_index - 1]):
+                    sentence_index += 1
+                    if sentence_index <= len(sentences):
+                        current_span = _new_sentence_span(
+                            soup,
+                            side,
+                            paragraph_index,
+                            sentence_index,
+                        )
+                        paragraph.append(current_span)
+            continue
+
+        current_span.append(child)
+        if _span_matches_sentence(current_span, sentences[sentence_index - 1]):
+            sentence_index += 1
+            if sentence_index <= len(sentences):
+                current_span = _new_sentence_span(soup, side, paragraph_index, sentence_index)
+                paragraph.append(current_span)
+
+    for empty_span in paragraph.select("span[data-source-id]"):
+        if not _node_text(empty_span):
+            empty_span.decompose()
+
+
+def _sentence_text_segments(text: str) -> list[str]:
+    segments = []
+    start = 0
+    for match in re.finditer(r"[.!?](?=\s|$)", text):
+        end = match.end()
+        segments.append(text[start:end])
+        start = end
+    if start < len(text):
+        segments.append(text[start:])
+    return segments
+
+
+def _new_sentence_span(
+    soup: BeautifulSoup,
+    side: str,
+    paragraph_index: int,
+    sentence_index: int,
+) -> Tag:
+    span = soup.new_tag("span")
+    span["data-source-id"] = f"{side}-s-{paragraph_index}-{sentence_index}"
+    return span
+
+
+def _span_matches_sentence(span: Tag, sentence: str) -> bool:
+    return _node_text(span) == sentence
 
 
 def _node_text(node) -> str:
