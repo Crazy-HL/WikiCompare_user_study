@@ -17,11 +17,14 @@ class ParsedWikiUrl:
 
 def parse_english_wikipedia_url(url: str) -> ParsedWikiUrl:
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or parsed.netloc != "en.wikipedia.org":
+    if not _is_allowed_english_wikipedia_host(parsed):
         raise WikiUrlError("Only en.wikipedia.org URLs are supported")
 
     if parsed.path.startswith("/wiki/"):
         title = unquote(parsed.path.removeprefix("/wiki/")).replace(" ", "_")
+        if not title:
+            raise WikiUrlError("Wikipedia article URL must include a title")
+
         return ParsedWikiUrl(
             title=title,
             normalized_url=_normalized_article_url(title),
@@ -44,6 +47,20 @@ def parse_english_wikipedia_url(url: str) -> ParsedWikiUrl:
         )
 
     raise WikiUrlError("Unsupported English Wikipedia URL format")
+
+
+def _is_allowed_english_wikipedia_host(parsed) -> bool:
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if parsed.hostname != "en.wikipedia.org":
+        return False
+
+    default_port = 443 if parsed.scheme == "https" else 80
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    return port in {None, default_port}
 
 
 def _normalized_article_url(title: str) -> str:

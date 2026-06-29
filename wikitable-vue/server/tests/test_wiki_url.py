@@ -41,6 +41,21 @@ def test_parse_accepts_http_urls():
     assert parsed.normalized_url == "https://en.wikipedia.org/wiki/Economy_of_Japan"
 
 
+def test_parse_accepts_uppercase_host():
+    parsed = parse_english_wikipedia_url("https://EN.WIKIPEDIA.ORG/wiki/Economy_of_Japan")
+
+    assert parsed.title == "Economy_of_Japan"
+    assert parsed.normalized_url == "https://en.wikipedia.org/wiki/Economy_of_Japan"
+
+
+def test_parse_accepts_default_ports():
+    https_parsed = parse_english_wikipedia_url("https://en.wikipedia.org:443/wiki/Economy_of_Japan")
+    http_parsed = parse_english_wikipedia_url("http://en.wikipedia.org:80/wiki/Economy_of_Japan")
+
+    assert https_parsed.title == "Economy_of_Japan"
+    assert http_parsed.title == "Economy_of_Japan"
+
+
 def test_reject_non_english_wikipedia():
     with pytest.raises(WikiUrlError, match="Only en.wikipedia.org"):
         parse_english_wikipedia_url("https://zh.wikipedia.org/wiki/人工智能")
@@ -59,3 +74,20 @@ def test_reject_unsupported_scheme():
 def test_reject_unsupported_path():
     with pytest.raises(WikiUrlError, match="Unsupported English Wikipedia URL format"):
         parse_english_wikipedia_url("https://en.wikipedia.org/api/rest_v1/page/summary/Economy_of_Japan")
+
+
+def test_reject_empty_article_title():
+    with pytest.raises(WikiUrlError, match="Wikipedia article URL must include a title"):
+        parse_english_wikipedia_url("https://en.wikipedia.org/wiki/")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://en.wikipedia.org:444/wiki/Economy_of_Japan",
+        "http://en.wikipedia.org:8080/wiki/Economy_of_Japan",
+    ],
+)
+def test_reject_non_default_ports(url):
+    with pytest.raises(WikiUrlError, match="Only en.wikipedia.org"):
+        parse_english_wikipedia_url(url)
