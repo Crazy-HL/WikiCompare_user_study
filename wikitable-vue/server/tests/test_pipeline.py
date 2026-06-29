@@ -82,6 +82,8 @@ def test_extract_numeric_values_handles_currency_magnitude_and_years():
 
 def test_extract_numeric_values_does_not_treat_year_ranges_as_year_values():
     assert extract_numeric_values("2020-2024") == []
+    assert extract_numeric_values("2020 - 2024") == []
+    assert extract_numeric_values("2020–2024") == []
 
 
 def test_normalize_attribute_pair_scores_actual_value_differences():
@@ -99,6 +101,19 @@ def test_normalize_attribute_pair_scores_actual_value_differences():
     assert same["score"] == 0
     assert different["score"] > same["score"]
     assert different["dataType"] == "Trend"
+
+
+def test_normalize_attribute_pair_handles_standalone_year_attributes():
+    row = normalize_attribute_pair(
+        {"id": "left-founded", "key": "Founded", "valueText": "Founded: 1998", "source": "infobox", "sourceIds": ["left-info-1"]},
+        {"id": "right-founded", "key": "Founded", "valueText": "Founded: 2001", "source": "infobox", "sourceIds": ["right-info-1"]},
+        "Founded",
+    )
+
+    assert row["dataType"] == "Numerical"
+    assert row["visualization"]["left"]["values"] == [{"value": 1998.0}]
+    assert row["visualization"]["right"]["values"] == [{"value": 2001.0}]
+    assert row["score"] > 0
 
 
 def test_normalize_attribute_pair_marks_source_kind_both():

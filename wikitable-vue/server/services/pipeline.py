@@ -17,7 +17,7 @@ NUMBER_RE = re.compile(
     re.IGNORECASE,
 )
 YEAR_VALUE_RE = re.compile(
-    r"\b((?:18|19|20|21)\d{2})\b\s*[:=,-]\s*[$€£¥]?\s*([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|thousand|million|billion|trillion))?",
+    r"\b((?:18|19|20|21)\d{2})\b\s*[:=,]\s*[$€£¥]?\s*([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|thousand|million|billion|trillion))?",
     re.IGNORECASE,
 )
 ORDINAL_RE = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE)
@@ -26,6 +26,7 @@ COORDINATE_RE = re.compile(
     re.IGNORECASE,
 )
 YEAR_RE = re.compile(r"\b((?:18|19|20|21)\d{2})\b")
+YEAR_RANGE_RE = re.compile(r"\b(?:18|19|20|21)\d{2}\s*[-–—]\s*(?:18|19|20|21)\d{2}\b")
 
 
 def choose_chart_type(data_type: str, point_count: int) -> str:
@@ -67,6 +68,8 @@ def extract_numeric_values(value_text: str | None) -> list[dict[str, float | int
     text = str(value_text or "").strip()
     if not text:
         return []
+    if _is_plain_year_range(text):
+        return []
 
     year_values = _extract_year_value_pairs(text)
     if year_values:
@@ -74,9 +77,17 @@ def extract_numeric_values(value_text: str | None) -> list[dict[str, float | int
 
     years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
     values: list[dict[str, float | int]] = []
+    has_non_year_number = any(
+        not _is_year_token(match.group(1))
+        for match in NUMBER_RE.finditer(text)
+    )
     for match in NUMBER_RE.finditer(text):
         raw_number = match.group(1)
-        if _is_year_token(raw_number):
+        is_year = _is_year_token(raw_number)
+        if is_year and (
+            has_non_year_number
+            or not _is_standalone_year_attribute(text, raw_number)
+        ):
             continue
         number = _parse_number(raw_number)
         if number is None:
@@ -84,7 +95,7 @@ def extract_numeric_values(value_text: str | None) -> list[dict[str, float | int
         unit = (match.group(2) or "").lower()
         value = _scale_number(number, unit)
         item: dict[str, float | int] = {"value": value}
-        if len(years) == 1:
+        if len(years) == 1 and not is_year:
             item["year"] = years[0]
         values.append(item)
     return values
@@ -171,6 +182,19 @@ def _extract_year_value_pairs(text: str) -> list[dict[str, float | int]]:
             continue
         values.append({"year": year, "value": _scale_number(number, (match.group(3) or "").lower())})
     return values
+
+
+def _is_plain_year_range(text: str) -> bool:
+    return bool(YEAR_RANGE_RE.fullmatch(text.strip()))
+
+
+def _is_standalone_year_attribute(text: str, raw_number: str) -> bool:
+    if not _is_year_token(raw_number):
+        return False
+    years = YEAR_RE.findall(text)
+    if len(years) != 1:
+        return False
+    return not _extract_year_value_pairs(text)
 
 
 def _has_trend_shape(text: str) -> bool:
