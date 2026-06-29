@@ -17,7 +17,7 @@ NUMBER_RE = re.compile(
     re.IGNORECASE,
 )
 YEAR_VALUE_RE = re.compile(
-    r"\b((?:18|19|20|21)\d{2})\b\s*[:=,]\s*[$€£¥]?\s*([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|thousand|million|billion|trillion))?",
+    r"\b((?:18|19|20|21)\d{2})\b\s*[:=]\s*[$€£¥]?\s*([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|thousand|million|billion|trillion))?",
     re.IGNORECASE,
 )
 ORDINAL_RE = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.IGNORECASE)

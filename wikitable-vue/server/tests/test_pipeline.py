@@ -52,7 +52,7 @@ def test_normalize_attribute_pair_produces_visualization():
     )
 
     assert row["label"] == "GDP growth"
-    assert row["dataType"] in {"Proportional", "Trend", "Numerical"}
+    assert row["dataType"] == "Proportional"
     assert row["visualization"]["left"]["values"][0]["value"] == 2.3
 
 
@@ -84,6 +84,7 @@ def test_extract_numeric_values_does_not_treat_year_ranges_as_year_values():
     assert extract_numeric_values("2020-2024") == []
     assert extract_numeric_values("2020 - 2024") == []
     assert extract_numeric_values("2020–2024") == []
+    assert extract_numeric_values("Years: 2020, 2024") == []
 
 
 def test_normalize_attribute_pair_scores_actual_value_differences():
