@@ -71,7 +71,7 @@ class CompareSession:
     attribute_pools: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     aligned_attributes: list[dict[str, Any]] = field(default_factory=list)
     ranked_rows: list[dict[str, Any]] = field(default_factory=list)
-    source_map: dict[str, SourceRef] = field(default_factory=dict)
+    source_map: dict[str, SourceRef | dict[str, Any]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,8 +83,14 @@ class CompareSession:
             "alignedAttributes": self.aligned_attributes,
             "rankedRows": self.ranked_rows,
             "sourceMap": {
-                source_id: source_ref.to_dict()
+                source_id: _source_ref_to_dict(source_ref)
                 for source_id, source_ref in self.source_map.items()
             },
             "warnings": self.warnings,
         }
+
+
+def _source_ref_to_dict(source_ref: SourceRef | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(source_ref, dict):
+        return source_ref
+    return source_ref.to_dict()

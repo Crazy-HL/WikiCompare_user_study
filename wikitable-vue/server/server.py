@@ -2,7 +2,16 @@ import time
 import tornado.ioloop
 import tornado.web
 import json
+import uuid
 from openai import OpenAI
+from services.article_loader import fetch_article_html, parse_article_html
+from services.attribute_pool import build_attribute_pool
+from services.config import get_llm_config
+from services.llm_client import LLMClient
+from services.models import CompareSession
+from services.pipeline import normalize_attribute_pair, rank_rows
+from services.session_store import SessionStore
+from services.wiki_url import WikiUrlError, parse_english_wikipedia_url
 from tool.obtainHtml import obtain_html
 from tool.chart_formats import (
     get_bar_chart_format,
@@ -31,6 +40,7 @@ system_messages = [
 
 # 用于记录对比结果
 comparison_result = ""  # 对比后的文章内容
+SESSION_STORE = SessionStore()
 
 def make_messages(input: str, n: int = 20) -> list:
     """
@@ -80,6 +90,142 @@ def chat(input: str) -> str:
         "error": "OpenAI API 调用失败",
         "message": "请检查 API 配置或稍后重试"
     })
+
+
+class ApiHandler(tornado.web.RequestHandler):
+    def set_default_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.set_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def options(self):
+        self.set_status(204)
+        self.finish()
+
+    def read_json(self):
+        try:
+            data = json.loads(self.request.body or b"{}")
+        except json.JSONDecodeError:
+            self.write_error_json(400, "Invalid JSON body")
+            return None
+        if not isinstance(data, dict):
+            self.write_error_json(400, "JSON body must be an object")
+            return None
+        return data
+
+    def write_error_json(self, status_code: int, message: str):
+        self.set_status(status_code)
+        self.write(json.dumps({"error": message}))
+
+
+class CompareSessionHandler(ApiHandler):
+    def post(self):
+        data = self.read_json()
+        if data is None:
+            return
+
+        left_url = str(data.get("leftUrl") or "").strip()
+        right_url = str(data.get("rightUrl") or "").strip()
+        if not left_url:
+            self.write_error_json(400, "leftUrl is required")
+            return
+        if not right_url:
+            self.write_error_json(400, "rightUrl is required")
+            return
+
+        try:
+            left_wiki = parse_english_wikipedia_url(left_url)
+            right_wiki = parse_english_wikipedia_url(right_url)
+        except WikiUrlError as error:
+            self.write_error_json(400, str(error))
+            return
+
+        warnings = []
+        config = get_llm_config()
+        llm_client = LLMClient(config) if config.enabled else None
+        if not config.enabled:
+            warnings.append("OPENAI_API_KEY is not configured; text attribute extraction is disabled")
+
+        try:
+            left_article = parse_article_html(
+                fetch_article_html(left_wiki.title, left_wiki.revision),
+                side="left",
+                title=left_wiki.title,
+                url=left_wiki.normalized_url,
+                revision=left_wiki.revision,
+            )
+            right_article = parse_article_html(
+                fetch_article_html(right_wiki.title, right_wiki.revision),
+                side="right",
+                title=right_wiki.title,
+                url=right_wiki.normalized_url,
+                revision=right_wiki.revision,
+            )
+        except Exception as error:
+            self.write_error_json(502, f"Failed to load Wikipedia articles: {error}")
+            return
+
+        left_pool = build_attribute_pool(left_article, "left", llm_client)
+        right_pool = build_attribute_pool(right_article, "right", llm_client)
+        aligned_attributes = _align_exact_lowercase_keys(left_pool, right_pool)
+        rows = [
+            normalize_attribute_pair(alignment["left"], alignment["right"], alignment["label"])
+            for alignment in aligned_attributes
+        ]
+        ranked_rows = rank_rows(rows)
+
+        source_map = {}
+        left_article = dict(left_article)
+        right_article = dict(right_article)
+        source_map.update(left_article.pop("sourceMap", {}) or {})
+        source_map.update(right_article.pop("sourceMap", {}) or {})
+
+        session = CompareSession(
+            session_id=str(uuid.uuid4()),
+            articles={"left": left_article, "right": right_article},
+            attribute_pools={"left": left_pool, "right": right_pool},
+            aligned_attributes=[
+                {
+                    "leftId": alignment["left"]["id"],
+                    "rightId": alignment["right"]["id"],
+                    "label": alignment["label"],
+                }
+                for alignment in aligned_attributes
+            ],
+            ranked_rows=ranked_rows,
+            source_map=source_map,
+            warnings=warnings,
+        )
+        SESSION_STORE.save(session)
+        self.write(json.dumps(session.to_dict()))
+
+
+def _align_exact_lowercase_keys(
+    left_pool: list[dict],
+    right_pool: list[dict],
+) -> list[dict]:
+    right_by_key = {
+        _alignment_key(attribute.get("key")): attribute
+        for attribute in right_pool
+        if _alignment_key(attribute.get("key"))
+    }
+    alignments = []
+    for left_attribute in left_pool:
+        key = _alignment_key(left_attribute.get("key"))
+        if not key or key not in right_by_key:
+            continue
+        alignments.append(
+            {
+                "left": left_attribute,
+                "right": right_by_key[key],
+                "label": left_attribute.get("key") or right_by_key[key].get("key") or key,
+            }
+        )
+    return alignments
+
+
+def _alignment_key(value) -> str:
+    return str(value or "").strip().lower()
 
 class GPTCompareHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
@@ -752,6 +898,7 @@ class AskInfoboxHandler(tornado.web.RequestHandler):
 def make_app():
     return tornado.web.Application([
         (r"/", MainHandler),
+        (r"/api/compare-session", CompareSessionHandler),
         (r"/html", HtmlHandler),
         (r"/gpt_compare", GPTCompareHandler),
         (r"/gpt_ask", GPTAskHandler),
