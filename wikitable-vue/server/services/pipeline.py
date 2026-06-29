@@ -68,7 +68,7 @@ def extract_numeric_values(value_text: str | None) -> list[dict[str, float | int
     text = str(value_text or "").strip()
     if not text:
         return []
-    if _is_plain_year_range(text):
+    if _contains_year_range(text):
         return []
 
     year_values = _extract_year_value_pairs(text)
@@ -176,6 +176,8 @@ def _extract_year_value_pairs(text: str) -> list[dict[str, float | int]]:
     for match in YEAR_VALUE_RE.finditer(text):
         if match.group(0).strip().startswith(f"{match.group(1)}-"):
             continue
+        if _is_right_edge_of_year_range(text, match.start()):
+            continue
         year = int(match.group(1))
         number = _parse_number(match.group(2))
         if number is None:
@@ -184,8 +186,13 @@ def _extract_year_value_pairs(text: str) -> list[dict[str, float | int]]:
     return values
 
 
-def _is_plain_year_range(text: str) -> bool:
-    return bool(YEAR_RANGE_RE.fullmatch(text.strip()))
+def _contains_year_range(text: str) -> bool:
+    return bool(YEAR_RANGE_RE.search(text.strip()))
+
+
+def _is_right_edge_of_year_range(text: str, start_index: int) -> bool:
+    prefix = text[:start_index]
+    return bool(re.search(r"(?:18|19|20|21)\d{2}\s*[-–—]\s*$", prefix))
 
 
 def _is_standalone_year_attribute(text: str, raw_number: str) -> bool:
