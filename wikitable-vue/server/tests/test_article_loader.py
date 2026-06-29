@@ -109,6 +109,33 @@ def test_parse_article_html_anchors_sentences_inside_inline_tags():
     assert soup.select_one('[data-source-id="left-s-1-2"]').get_text(" ", strip=True) == "Second fact."
 
 
+def test_parse_article_html_preserves_textless_inline_elements():
+    article = parse_article_html(
+        html='<html><body><p>First fact.<br/><img alt="chart" src="chart.png"/> Second fact.</p></body></html>',
+        side="left",
+        title="InlineMedia",
+        url="https://en.wikipedia.org/wiki/InlineMedia",
+        revision=None,
+    )
+
+    soup = BeautifulSoup(article["html"], "lxml")
+    assert soup.select_one("br") is not None
+    assert soup.select_one('img[alt="chart"][src="chart.png"]') is not None
+    assert soup.select_one('[data-source-id="left-s-1-2"]').get_text(" ", strip=True) == "Second fact."
+
+
+def test_parse_article_html_does_not_duplicate_inline_ids():
+    article = parse_article_html(
+        html='<html><body><p><span id="legacy">First fact. Second fact.</span></p></body></html>',
+        side="left",
+        title="InlineIds",
+        url="https://en.wikipedia.org/wiki/InlineIds",
+        revision=None,
+    )
+
+    assert article["html"].count('id="legacy"') <= 1
+
+
 def test_parse_article_html_preserves_existing_heading_id():
     html = (FIXTURE_DIR / "article_left.html").read_text()
 
@@ -134,4 +161,11 @@ def test_split_sentences_handles_abbreviation_at_sentence_end():
     assert split_sentences("He lives in the U.S. It is large.") == [
         "He lives in the U.S.",
         "It is large.",
+    ]
+
+
+def test_split_sentences_keeps_abbreviation_before_uppercase_phrase():
+    assert split_sentences("The U.S. Army grew. It deployed units.") == [
+        "The U.S. Army grew.",
+        "It deployed units.",
     ]

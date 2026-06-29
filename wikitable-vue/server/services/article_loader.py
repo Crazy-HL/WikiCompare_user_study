@@ -26,6 +26,30 @@ NON_TERMINAL_ABBREVIATIONS = (
     "i.e.",
     "vs.",
 )
+COMMON_SENTENCE_STARTERS = {
+    "A",
+    "After",
+    "An",
+    "At",
+    "Before",
+    "By",
+    "For",
+    "From",
+    "He",
+    "However",
+    "In",
+    "It",
+    "Meanwhile",
+    "On",
+    "She",
+    "That",
+    "The",
+    "There",
+    "These",
+    "They",
+    "This",
+    "Those",
+}
 
 
 def fetch_article_html(title: str, revision: str | None = None) -> str:
@@ -191,18 +215,19 @@ def _wrap_paragraph_sentences(
     if not sentences:
         return
 
-    text_nodes = [
-        (_tag_path(paragraph, text_node), str(text_node))
-        for text_node in paragraph.find_all(string=True)
-    ]
+    inline_tokens = list(_inline_tokens(paragraph, []))
     paragraph.clear()
 
     sentence_index = 1
     current_span = _new_sentence_span(soup, side, paragraph_index, sentence_index)
     paragraph.append(current_span)
 
-    for path, text in text_nodes:
-        for segment in _sentence_text_segments(text):
+    for token_type, path, value in inline_tokens:
+        if token_type == "tag":
+            _append_tag_with_path(soup, current_span, path, value)
+            continue
+
+        for segment in _sentence_text_segments(value):
             if not segment:
                 continue
             _append_segment_with_path(soup, current_span, path, segment)
@@ -237,13 +262,23 @@ def _sentence_text_segments(text: str) -> list[str]:
     return segments
 
 
-def _tag_path(paragraph: Tag, text_node: NavigableString) -> list[Tag]:
-    path = []
-    parent = text_node.parent
-    while isinstance(parent, Tag) and parent is not paragraph:
-        path.append(parent)
-        parent = parent.parent
-    return list(reversed(path))
+def _inline_tokens(node: Tag, path: list[Tag]):
+    for child in node.contents:
+        if isinstance(child, NavigableString):
+            yield ("text", path, str(child))
+            continue
+        if not isinstance(child, Tag):
+            continue
+        child_path = path + [child]
+        if child.contents:
+            yielded_child = False
+            for token in _inline_tokens(child, child_path):
+                yielded_child = True
+                yield token
+            if not yielded_child:
+                yield ("tag", path, child)
+        else:
+            yield ("tag", path, child)
 
 
 def _append_segment_with_path(
@@ -266,9 +301,31 @@ def _append_segment_with_path(
     target.append(root_clone)
 
 
+def _append_tag_with_path(
+    soup: BeautifulSoup,
+    target: Tag,
+    path: list[Tag],
+    tag: Tag,
+) -> None:
+    if not path:
+        target.append(_clone_empty_tag(soup, tag))
+        return
+
+    root_clone = _clone_empty_tag(soup, path[0])
+    current_clone = root_clone
+    for ancestor in path[1:]:
+        child_clone = _clone_empty_tag(soup, ancestor)
+        current_clone.append(child_clone)
+        current_clone = child_clone
+    current_clone.append(_clone_empty_tag(soup, tag))
+    target.append(root_clone)
+
+
 def _clone_empty_tag(soup: BeautifulSoup, tag: Tag) -> Tag:
     clone = soup.new_tag(tag.name)
     for key, value in tag.attrs.items():
+        if key == "id":
+            continue
         clone.attrs[key] = list(value) if isinstance(value, list) else value
     return clone
 
@@ -294,7 +351,14 @@ def _is_protected_abbreviation_boundary(candidate: str, following_text: str) -> 
         return True
     if not any(lowered.endswith(abbreviation.lower()) for abbreviation in FLEXIBLE_ABBREVIATIONS):
         return False
-    return bool(following_text[:1] and following_text[0].islower())
+    if not following_text:
+        return False
+    if following_text[0].islower():
+        return True
+    next_word = re.match(r"[A-Z][A-Za-z'-]*", following_text)
+    if not next_word:
+        return False
+    return next_word.group(0) not in COMMON_SENTENCE_STARTERS
 
 
 def _node_text(node) -> str:
