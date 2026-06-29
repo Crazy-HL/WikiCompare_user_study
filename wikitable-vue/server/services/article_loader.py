@@ -10,6 +10,17 @@ from services.models import SourceRef
 
 
 WIKIPEDIA_HTML_ENDPOINT = "https://en.wikipedia.org/api/rest_v1/page/html"
+COMMON_ABBREVIATIONS = (
+    "U.S.",
+    "U.K.",
+    "Inc.",
+    "Ltd.",
+    "Co.",
+    "Dr.",
+    "Mr.",
+    "Ms.",
+    "Prof.",
+)
 
 
 def fetch_article_html(title: str, revision: str | None = None) -> str:
@@ -29,7 +40,21 @@ def split_sentences(text: str) -> list[str]:
     normalized = " ".join(text.split())
     if not normalized:
         return []
-    return [sentence for sentence in re.split(r"(?<=[.!?])\s+", normalized) if sentence]
+
+    protected_text = normalized
+    protected_abbreviations = {}
+    for index, abbreviation in enumerate(COMMON_ABBREVIATIONS):
+        token = f"__ABBR_{index}__"
+        protected_abbreviations[token] = abbreviation
+        protected_text = protected_text.replace(abbreviation, token)
+
+    sentences = []
+    for sentence in re.split(r"(?<=[.!?])\s+", protected_text):
+        for token, abbreviation in protected_abbreviations.items():
+            sentence = sentence.replace(token, abbreviation)
+        if sentence:
+            sentences.append(sentence)
+    return sentences
 
 
 def parse_article_html(
@@ -51,7 +76,8 @@ def parse_article_html(
     for index, heading in enumerate(soup.select("h1, h2, h3, h4, h5, h6"), start=1):
         source_id = f"{side}-heading-{index}"
         text = _node_text(heading)
-        heading["id"] = source_id
+        if not heading.get("id"):
+            heading["id"] = source_id
         heading["data-source-id"] = source_id
 
         outline.append(
@@ -94,15 +120,18 @@ def parse_article_html(
         sentence_records = []
 
         paragraph["data-source-id"] = paragraph_id
-        paragraph.clear()
+        should_wrap_sentences = paragraph.find() is None
+        if should_wrap_sentences:
+            paragraph.clear()
         for sentence_index, sentence in enumerate(sentences, start=1):
             sentence_id = f"{side}-s-{paragraph_index}-{sentence_index}"
-            span = soup.new_tag("span")
-            span["data-source-id"] = sentence_id
-            span.string = sentence
-            if sentence_index > 1:
-                paragraph.append(" ")
-            paragraph.append(span)
+            if should_wrap_sentences:
+                span = soup.new_tag("span")
+                span["data-source-id"] = sentence_id
+                span.string = sentence
+                if sentence_index > 1:
+                    paragraph.append(" ")
+                paragraph.append(span)
 
             sentence_records.append({"id": sentence_id, "text": sentence, "side": side})
             source_map[sentence_id] = _source_ref(
@@ -130,7 +159,10 @@ def parse_article_html(
         "outline": outline,
         "infobox": infobox,
         "paragraphs": paragraphs,
-        "sourceMap": source_map,
+        "sourceMap": {
+            source_id: source_ref.to_dict()
+            for source_id, source_ref in source_map.items()
+        },
     }
 
 
