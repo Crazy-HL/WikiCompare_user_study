@@ -1,2 +1,7 @@
 .superpowers/
 tmp/
+__pycache__/
+*.pyc
+.DS_Store
+wikitable-vue/client/dist/
+wikitable-vue/client/node_modules/.cache/

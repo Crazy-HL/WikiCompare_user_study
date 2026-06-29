@@ -28,12 +28,6 @@ from tool.chart_formats import (
 from tool.json_extractor import extract_json
 import re
 
-# 初始化 OpenAI 客户端
-client = OpenAI(
-    api_key="sk-dSXNbY9UIoQ1NkbAhTIlqUaAROD5qzA6n9ZnwKMuFV4r5SyR", 
-    base_url="https://api.moonshot.cn/v1",
-)
-
 # 系统消息，用于为模型提供指导
 system_messages = [
     {"role": "system", "content": "你是辅助阅读对比的专家，可以对比两篇文章。同时你还可以判断文章中的内容是否可以进行可视化，并擅长将相关的可视化数据识别提取出来。"},
@@ -68,11 +62,19 @@ def chat(input: str) -> str:
     """
     进行对话，并返回模型的回答，支持多轮对话。
     """
+    config = get_llm_config()
+    if not config.enabled:
+        return json.dumps({
+            "error": "OpenAI API 未配置",
+            "message": "请设置 OPENAI_API_KEY、OPENAI_MODEL 和 OPENAI_BASE_URL 后重试"
+        }, ensure_ascii=False)
+
+    client = OpenAI(api_key=config.api_key, base_url=config.base_url)
     retry_attempts = 3
     for attempt in range(retry_attempts):
         try:
             completion = client.chat.completions.create(
-                model="moonshot-v1-8k",
+                model=config.model,
                 messages=make_messages(input),
                 temperature=0.3,
             )
@@ -719,195 +721,6 @@ class OutlineMatchHandler(tornado.web.RequestHandler):
 
 
 
-class CompareAttributesHandler(tornado.web.RequestHandler):
-    def set_default_headers(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
-        self.set_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.set_header("Access-Control-Allow-Headers", "Content-Type")
-
-    def options(self):
-        self.set_status(204)
-        self.finish()
-
-    def post(self):
-        try:
-            data = json.loads(self.request.body)
-            chart_data = data.get("chartData")
-            chart_type = data.get("chartType")
-            follow_up = data.get("followUp", False)
-            previous_analysis = data.get("previousAnalysis", "")
-
-            if not chart_data or not chart_type:
-                raise ValueError("缺少必要参数")
-
-            if chart_type == "comparison":
-                if follow_up:
-                    # 处理追问请求
-                    analysis_result = self.handle_followup_request(
-                        chart_data, 
-                        previous_analysis
-                    )
-                else:
-                    # 处理初始对比请求
-                    analysis_result = self.handle_initial_comparison(chart_data)
-                
-                self.write(json.dumps({
-                    "analysis": analysis_result
-                }))
-                return
-            
-            self.write(json.dumps({
-                "error": "Unsupported chart type",
-                "message": "不支持的分析类型"
-            }))
-        except Exception as e:
-            self.write(json.dumps({
-                "error": str(e),
-                "message": "分析失败"
-            }))
-
-    def handle_initial_comparison(self, chart_data):
-        """处理初始属性对比请求"""
-        left_data = chart_data.get("leftData", [])
-        right_data = chart_data.get("rightData", [])
-        left_title = chart_data.get("leftTitle", "左侧数据")
-        right_title = chart_data.get("rightTitle", "右侧数据")
-        field_key = chart_data.get("fieldKey", "当前属性")
-
-
-        prompt = f"""
-        请对比分析以下两组数据的{field_key}属性：
-        {left_title} 数据: {json.dumps(left_data, ensure_ascii=False)}
-        {right_title} 数据: {json.dumps(right_data, ensure_ascii=False)}
-        
-        要求：
-        1. 只输出最终结论，不要列出具体数据或分析过程
-        2. 结论需简明扼要，突出差异点
-        3. 使用Markdown格式，可加粗关键词
-        4. 结论必须基于以上数据，不能添加额外信息
-        5.照着下面格式输出：结论：
-韩国经济增长较为稳定，增长率在1.4%到2.3%之间。
-日本经济增长波动较大，增长率从1.5%下降至0.6%。
-        """
-        
-        return chat(prompt)
-
-  
-
-    def handle_followup_request(self, chart_data, previous_analysis):
-            field_key = chart_data.get("fieldKey")
-            left_infobox = chart_data.get("leftInfobox", {})
-            right_infobox = chart_data.get("rightInfobox", {})
-            
-            prompt = f"""
-前面对比了单个属性"{field_key}"，得出了"{previous_analysis}"的结论。请你综合左侧和右侧infobox的其他属性，从宏观经济因素出发，构建每个国家的经济因果链条，**解释为何会得出这个结论**。
-
-请以如下**严格的 JSON 格式**输出内容，不需要任何解释或自然语言描述，仅返回合法的 JSON：
-
-{{
-  "country": "korea",
-  "steps": [
-    {{
-      "text": "低失业率+高就业率",
-      "evidence": ["Unemployment: 3.7%", "Labor force: 65.8%"],
-      "used_fields": ["Unemployment", "Labor force"]
-    }},
-    {{
-      "text": "劳动力市场稳定",
-      "evidence": [],
-      "used_fields": []
-    }},
-    {{
-      "text": "人均工资增长",
-      "evidence": ["Average gross salary: 4,583,525 ₩ / US$3,190 monthly"],
-      "used_fields": ["Average gross salary"]
-    }},
-    {{
-      "text": "消费能力提升",
-      "evidence": ["Average net salary: 3,835,828 ₩ / US$2,670 monthly"],
-      "used_fields": ["Average net salary"]
-    }},
-    {{
-      "text": "服务业增长",
-      "evidence": ["GDP by sector: services: 58.4%"],
-      "used_fields": ["GDP by sector"]
-    }},
-    {{
-      "text": "经济稳定增长",
-      "evidence": ["GDP growth: 1.4% (2023)", "GDP growth: 2.3% (2024)"],
-      "used_fields": ["GDP growth"]
-    }}
-  ]
-}},
-{{
-  "country": "japan",
-  "steps": [
-    {{
-      "text": "高政府债务",
-      "evidence": ["Government debt: 263.9% of GDP (2022)"],
-      "used_fields": ["Government debt"]
-    }},
-    {{
-      "text": "财政紧缩",
-      "evidence": ["Budget balance: 1.35% of GDP (2022 est.)"],
-      "used_fields": ["Budget balance"]
-    }},
-    {{
-      "text": "公共支出受限",
-      "evidence": ["Expenses: 43.4% of GDP (2022)"],
-      "used_fields": ["Expenses"]
-    }},
-    {{
-      "text": "内需不足",
-      "evidence": ["GDP by component: Household consumption: 55.6%"],
-      "used_fields": ["GDP by component"]
-    }},
-    {{
-      "text": "经济增长放缓",
-      "evidence": ["GDP growth: 1.5% (2023)", "GDP growth: 0.8% (2024)", "GDP growth: 0.6% (2025)"],
-      "used_fields": ["GDP growth"]
-    }}
-  ]
-}}
-
-### 要求：
-- 每个国家仅输出一条因果链。
-- 每条链条包含 4~6 个逻辑环节。
-- **每个环节只写单个阶段或因素，不要使用“→”连接前后步骤。**
-- `text` 字段应使用**中文总结性表达**，相关数据支撑应该写在`evidence`数组中，格式为“属性名: 属性值”。
-- 如果在`text`中用到了两个总结性表达，用“+”隔开。
-- 如果用到了 infobox 中的属性，要在 `used_fields` 中列出字段名，未用则为空数组。
-- `evidence` 中每个值都必须是 infobox 中真实存在的字段及其值，不能编造。
-- `evidence` 必须为数组，每个数据点单独作为字符串元素，如果没有，则应为 `[]`。
-- 返回时**不要包含任何额外说明文字，仅是纯粹合法的 JSON 对象。**
-
-左侧infobox数据（韩国）:
-{json.dumps(left_infobox, indent=2, ensure_ascii=False)}
-
-右侧infobox数据（日本）:
-{json.dumps(right_infobox, indent=2, ensure_ascii=False)}
-"""
-
-
-            
-            result = chat(prompt)
-            print("res:",chat(prompt))
-            # 清理Markdown代码块标记和前后空白
-            cleaned_result = re.sub(r'```(json)?|```', '', result).strip()
-            print("clean:",cleaned_result)
-            
-                # 加中括号包成 JSON 数组（如果本来不是的话）
-            json_like = f"[{cleaned_result}]"
-
-            try:
-                json_obj = json.loads(json_like)
-            except json.JSONDecodeError as e:
-                print("❌ JSON解析失败:", e)
-                return {"error": "格式解析失败", "raw": cleaned_result}
-
-            # 成功：转为字符串返回给前端
-            return json.dumps(json_obj, ensure_ascii=False, indent=2)
-
 class AskInfoboxHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
@@ -964,8 +777,6 @@ def make_app():
         (r"/analyze_chart", AnalyzeChartHandler),
         (r"/gpt_ask_chart", GPTAskChartHandler),
         (r"/outline_match", OutlineMatchHandler),
-        (r"/compare_attributes", CompareAttributesHandler),
-        (r"/ask_infobox",AskInfoboxHandler),
     ], debug=True)
 
 if __name__ == "__main__":
