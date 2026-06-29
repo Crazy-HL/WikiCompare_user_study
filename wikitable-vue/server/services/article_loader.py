@@ -10,6 +10,10 @@ from services.models import SourceRef
 
 
 WIKIPEDIA_HTML_ENDPOINT = "https://en.wikipedia.org/api/rest_v1/page/html"
+WIKIPEDIA_REQUEST_HEADERS = {
+    "User-Agent": "WikiCompare/0.1 (https://github.com/Crazy-HL/WikiCompare)",
+    "Accept": "text/html,application/xhtml+xml",
+}
 FLEXIBLE_ABBREVIATIONS = (
     "U.S.",
     "U.K.",
@@ -60,7 +64,7 @@ def fetch_article_html(title: str, revision: str | None = None) -> str:
     if revision is not None:
         url = f"{url}/{revision}"
 
-    response = requests.get(url, timeout=20)
+    response = requests.get(url, headers=WIKIPEDIA_REQUEST_HEADERS, timeout=20)
     response.raise_for_status()
     return response.text
 

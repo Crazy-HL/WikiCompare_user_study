@@ -1,12 +1,34 @@
 import json
 from pathlib import Path
 
+import requests
 from bs4 import BeautifulSoup
 
-from services.article_loader import parse_article_html, split_sentences
+from services.article_loader import fetch_article_html, parse_article_html, split_sentences
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
+
+
+def test_fetch_article_html_sends_wikipedia_user_agent(monkeypatch):
+    calls = []
+
+    class FakeResponse:
+        text = "<html></html>"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    assert fetch_article_html("Economy_of_South_Korea") == "<html></html>"
+
+    assert calls[0][0] == "https://en.wikipedia.org/api/rest_v1/page/html/Economy_of_South_Korea"
+    assert "WikiCompare" in calls[0][1]["headers"]["User-Agent"]
 
 
 def test_parse_article_html_adds_traceable_sources():
