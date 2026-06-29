@@ -4,6 +4,7 @@ import tornado.web
 import json
 import uuid
 from openai import OpenAI
+from services.analysis import fallback_answer, fallback_attribute_summary, row_context
 from services.article_loader import fetch_article_html, parse_article_html
 from services.attribute_pool import build_attribute_pool
 from services.config import get_llm_config
@@ -227,6 +228,59 @@ def _align_exact_lowercase_keys(
 
 def _alignment_key(value) -> str:
     return str(value or "").strip().lower()
+
+
+class AnalyzeAttributeHandler(ApiHandler):
+    def post(self):
+        data = self.read_json()
+        if data is None:
+            return
+
+        session_id = str(data.get("sessionId") or "").strip()
+        attribute_id = str(data.get("attributeId") or "").strip()
+        if not session_id:
+            self.write_error_json(400, "sessionId is required")
+            return
+        if not attribute_id:
+            self.write_error_json(400, "attributeId is required")
+            return
+
+        session = SESSION_STORE.get(session_id)
+        if session is None:
+            self.write_error_json(404, "Session not found")
+            return
+
+        row = row_context(session, attribute_id)
+        if row is None:
+            self.write_error_json(404, "Attribute not found")
+            return
+
+        result = fallback_attribute_summary(row, session.source_map)
+        self.write(json.dumps(result, ensure_ascii=False))
+
+
+class AskHandlerV2(ApiHandler):
+    def post(self):
+        data = self.read_json()
+        if data is None:
+            return
+
+        session_id = str(data.get("sessionId") or "").strip()
+        question = str(data.get("question") or "").strip()
+        if not session_id:
+            self.write_error_json(400, "sessionId is required")
+            return
+        if not question:
+            self.write_error_json(400, "question is required")
+            return
+
+        session = SESSION_STORE.get(session_id)
+        if session is None:
+            self.write_error_json(404, "Session not found")
+            return
+
+        result = fallback_answer(session, question)
+        self.write(json.dumps(result, ensure_ascii=False))
 
 class GPTCompareHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
@@ -900,6 +954,8 @@ def make_app():
     return tornado.web.Application([
         (r"/", MainHandler),
         (r"/api/compare-session", CompareSessionHandler),
+        (r"/api/analyze-attribute", AnalyzeAttributeHandler),
+        (r"/api/ask", AskHandlerV2),
         (r"/html", HtmlHandler),
         (r"/gpt_compare", GPTCompareHandler),
         (r"/gpt_ask", GPTAskHandler),
