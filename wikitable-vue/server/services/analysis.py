@@ -6,12 +6,16 @@ from services.models import Citation, CompareSession, SourceRef
 
 
 def validate_citations(
-    citations: list[Citation],
+    citations: list[Any],
     source_map: dict[str, SourceRef | dict[str, Any]],
 ) -> list[Citation]:
     valid = []
     known_source_ids = set(source_map.keys())
     for citation in citations:
+        if not isinstance(citation, Citation):
+            continue
+        if not str(citation.id or "").strip():
+            continue
         source_ids = list(citation.source_ids or [])
         if not source_ids:
             continue
@@ -123,7 +127,20 @@ def _side_value(row: dict[str, Any], side: str) -> str:
     side_data = visualization.get(side)
     if not isinstance(side_data, dict):
         return ""
-    return str(side_data.get("valueText") or side_data.get("value") or "").strip()
+    raw_value = side_data.get("raw") or side_data.get("valueText") or side_data.get("value")
+    if raw_value not in (None, ""):
+        return str(raw_value).strip()
+    values = side_data.get("values")
+    if isinstance(values, list) and values:
+        return ", ".join(_display_numeric_value(value) for value in values if isinstance(value, dict))
+    return ""
+
+
+def _display_numeric_value(value: dict[str, Any]) -> str:
+    amount = value.get("value")
+    if "year" in value:
+        return f"{value['year']}: {amount}"
+    return str(amount)
 
 
 def _display_value(value: str) -> str:
