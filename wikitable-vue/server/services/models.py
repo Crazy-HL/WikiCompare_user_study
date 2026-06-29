@@ -92,5 +92,5 @@ class CompareSession:
 
 def _source_ref_to_dict(source_ref: SourceRef | dict[str, Any]) -> dict[str, Any]:
     if isinstance(source_ref, dict):
-        return source_ref
+        return dict(source_ref)
     return source_ref.to_dict()

@@ -26,6 +26,17 @@ class CompareApiTest(AsyncHTTPTestCase):
         assert response.code == 400
         assert b"leftUrl" in response.body
 
+    def test_compare_session_rejects_invalid_utf8_json_body(self):
+        response = self.fetch(
+            "/api/compare-session",
+            method="POST",
+            body=b"\xff\xfe",
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert response.code == 400
+        assert json.loads(response.body)["error"]
+
     def test_compare_session_returns_session_without_network_or_api_key(self):
         left_html = (FIXTURE_DIR / "article_left.html").read_text()
         right_html = (FIXTURE_DIR / "article_right.html").read_text()

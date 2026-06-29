@@ -97,6 +97,7 @@ class ApiHandler(tornado.web.RequestHandler):
         self.set_header("Access-Control-Allow-Origin", "*")
         self.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.set_header("Access-Control-Allow-Headers", "Content-Type")
+        self.set_header("Content-Type", "application/json; charset=UTF-8")
 
     def options(self):
         self.set_status(204)
@@ -115,7 +116,7 @@ class ApiHandler(tornado.web.RequestHandler):
 
     def write_error_json(self, status_code: int, message: str):
         self.set_status(status_code)
-        self.write(json.dumps({"error": message}))
+        self.write(json.dumps({"error": message}, ensure_ascii=False))
 
 
 class CompareSessionHandler(ApiHandler):
@@ -197,7 +198,7 @@ class CompareSessionHandler(ApiHandler):
             warnings=warnings,
         )
         SESSION_STORE.save(session)
-        self.write(json.dumps(session.to_dict()))
+        self.write(json.dumps(session.to_dict(), ensure_ascii=False))
 
 
 def _align_exact_lowercase_keys(

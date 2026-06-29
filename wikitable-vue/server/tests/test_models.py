@@ -89,3 +89,24 @@ def test_compare_session_serializes_to_frontend_shape():
         },
         "warnings": ["Low confidence"],
     }
+
+
+def test_compare_session_serializes_dict_source_map_defensively():
+    session = CompareSession(
+        session_id="session-1",
+        articles={},
+        source_map={
+            "left-info-1": {
+                "id": "left-info-1",
+                "side": "left",
+                "sourceType": "infobox",
+                "text": "GDP growth 1.5%",
+                "selector": '[data-source-id="left-info-1"]',
+            }
+        },
+    )
+
+    serialized = session.to_dict()
+    serialized["sourceMap"]["left-info-1"]["text"] = "mutated"
+
+    assert session.source_map["left-info-1"]["text"] == "GDP growth 1.5%"
