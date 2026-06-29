@@ -1,6 +1,8 @@
 import pytest
 
 from services.attribute_pool import build_attribute_pool
+from services.config import LLMConfig
+from services.llm_client import LLMClient
 from services.llm_client import extract_json
 
 
@@ -133,6 +135,31 @@ def test_build_attribute_pool_returns_infobox_when_llm_unavailable_or_raises():
     ]
 
 
+def test_build_attribute_pool_drops_malformed_infobox_rows():
+    article = {
+        "infobox": [
+            {"id": "left-info-1", "key": "GDP growth", "valueText": "2.3%"},
+            {"key": "Missing source", "valueText": "bad"},
+            {"id": "left-info-2", "key": "", "valueText": "bad"},
+            {"id": "left-info-3", "key": "Blank value", "valueText": " "},
+            "not a row",
+        ],
+        "paragraphs": [],
+    }
+
+    assert build_attribute_pool(article, "left", None) == [
+        {
+            "id": "left-attr-infobox-1",
+            "side": "left",
+            "key": "GDP growth",
+            "valueText": "2.3%",
+            "source": "infobox",
+            "sourceIds": ["left-info-1"],
+            "section": None,
+        }
+    ]
+
+
 def test_build_attribute_pool_rejects_blank_text_key_or_value_and_missing_sentences():
     article = {
         "infobox": [],
@@ -188,6 +215,20 @@ def test_build_attribute_pool_ignores_non_list_llm_output():
             return None
 
     assert build_attribute_pool(article, "left", MalformedLLM()) == []
+
+
+def test_llm_client_disabled_config_does_not_instantiate_openai():
+    client = LLMClient(
+        LLMConfig(
+            model="gpt-test",
+            base_url="https://example.test/v1",
+            api_key=None,
+        )
+    )
+
+    assert client.client is None
+    with pytest.raises(RuntimeError, match="disabled"):
+        client.chat_json([])
 
 
 @pytest.mark.parametrize(

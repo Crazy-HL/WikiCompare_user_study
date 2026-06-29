@@ -34,15 +34,23 @@ def build_attribute_pool(article: dict[str, Any], side: str, llm_client: Any) ->
 
 def _infobox_attributes(article: dict[str, Any], side: str) -> list[dict[str, Any]]:
     attributes = []
-    for index, row in enumerate(article.get("infobox", []), start=1):
+    for row in article.get("infobox", []):
+        if not isinstance(row, dict):
+            continue
+        source_id = _clean_text(row.get("id"))
+        key = _clean_text(row.get("key"))
+        value_text = _clean_text(row.get("valueText"))
+        if not source_id or not key or not value_text:
+            continue
+        index = len(attributes) + 1
         attributes.append(
             {
                 "id": f"{side}-attr-infobox-{index}",
                 "side": side,
-                "key": row.get("key", ""),
-                "valueText": row.get("valueText", ""),
+                "key": key,
+                "valueText": value_text,
                 "source": "infobox",
-                "sourceIds": [row.get("id")],
+                "sourceIds": [source_id],
                 "section": row.get("section"),
             }
         )
