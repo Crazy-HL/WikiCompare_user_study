@@ -1,40 +1,51 @@
 <template>
-	<div id="root">
-		<Div1 class="div" />
-		<Div2 class="div" />
-		<Div3 class="div" />
+	<div id="app-shell">
+		<UrlCompareForm />
+		<div id="root">
+			<Div1 class="div" />
+			<Div2 class="div" />
+			<Div3 class="div" />
+		</div>
 	</div>
 </template>
 
 <script setup>
-	import Div1 from "./Div1.vue"; // 引入 Div1 组件
-	import Div2 from "./Div2.vue"; // 引入 Div2 组件
-	import Div3 from "./Div3.vue"; // 引入 Div3 组件
+	import UrlCompareForm from "./UrlCompareForm.vue";
+	import Div1 from "./Div1.vue";
+	import Div2 from "./Div2.vue";
+	import Div3 from "./Div3.vue";
 </script>
 
 <style scoped>
+	#app-shell {
+		height: 100vh;
+		width: 100%;
+		overflow: hidden;
+		background-color: #f9f9f9;
+	}
+
 	#root {
 		display: flex;
 		justify-content: space-between;
 		align-items: flex-start;
-		height: 100vh;
+		height: calc(100vh - 50px);
 		width: 100%;
-		padding: 5px; /* 增加内边距 */
-		background-color: #f9f9f9; /* 背景色 */
-		overflow: hidden; /* 确保内容不会超出根容器 */
+		padding: 5px;
+		background-color: #f9f9f9;
+		overflow: hidden;
 	}
 
 	.div {
 		flex: 1;
-		margin: 0 1px; /* 增加间距 */
-		padding: 0px; /* 内边距 */
-		background-color: #ffffff; /* 白色背景 */
-		border: 1px solid #e0e0e0; /* 更柔和的边框颜色 */
-		border-radius: 12px; /* 圆角 */
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); /* 阴影效果 */
-		overflow-y: auto; /* 添加垂直滚动条 */
-		max-height: calc(100vh - 40px); /* 最大高度，避免超出屏幕 */
-		transition: box-shadow 0.3s ease, transform 0.3s ease; /* 悬停动画 */
+		margin: 0 1px;
+		padding: 0px;
+		background-color: #ffffff;
+		border: 1px solid #e0e0e0;
+		border-radius: 8px;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+		overflow-y: auto;
+		max-height: calc(100vh - 60px);
+		transition: box-shadow 0.3s ease, transform 0.3s ease;
 	}
 
 	.div:hover {
