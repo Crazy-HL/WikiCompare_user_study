@@ -10,16 +10,21 @@ from services.models import SourceRef
 
 
 WIKIPEDIA_HTML_ENDPOINT = "https://en.wikipedia.org/api/rest_v1/page/html"
-COMMON_ABBREVIATIONS = (
+FLEXIBLE_ABBREVIATIONS = (
     "U.S.",
     "U.K.",
     "Inc.",
     "Ltd.",
     "Co.",
+)
+NON_TERMINAL_ABBREVIATIONS = (
     "Dr.",
     "Mr.",
     "Ms.",
     "Prof.",
+    "e.g.",
+    "i.e.",
+    "vs.",
 )
 
 
@@ -41,19 +46,27 @@ def split_sentences(text: str) -> list[str]:
     if not normalized:
         return []
 
-    protected_text = normalized
-    protected_abbreviations = {}
-    for index, abbreviation in enumerate(COMMON_ABBREVIATIONS):
-        token = f"__ABBR_{index}__"
-        protected_abbreviations[token] = abbreviation
-        protected_text = protected_text.replace(abbreviation, token)
-
     sentences = []
-    for sentence in re.split(r"(?<=[.!?])\s+", protected_text):
-        for token, abbreviation in protected_abbreviations.items():
-            sentence = sentence.replace(token, abbreviation)
-        if sentence:
-            sentences.append(sentence)
+    start = 0
+    for match in re.finditer(r"[.!?](?=\s|$)", normalized):
+        punctuation_end = match.end()
+        next_start = punctuation_end
+        while next_start < len(normalized) and normalized[next_start].isspace():
+            next_start += 1
+
+        candidate = normalized[start:punctuation_end].strip()
+        if not candidate:
+            start = next_start
+            continue
+        if _is_protected_abbreviation_boundary(candidate, normalized[next_start:]):
+            continue
+
+        sentences.append(candidate)
+        start = next_start
+
+    tail = normalized[start:].strip()
+    if tail:
+        sentences.append(tail)
     return sentences
 
 
@@ -178,36 +191,33 @@ def _wrap_paragraph_sentences(
     if not sentences:
         return
 
-    original_children = list(paragraph.contents)
+    text_nodes = [
+        (_tag_path(paragraph, text_node), str(text_node))
+        for text_node in paragraph.find_all(string=True)
+    ]
     paragraph.clear()
 
     sentence_index = 1
     current_span = _new_sentence_span(soup, side, paragraph_index, sentence_index)
     paragraph.append(current_span)
 
-    for child in original_children:
-        if isinstance(child, NavigableString):
-            for segment in _sentence_text_segments(str(child)):
-                if not segment:
-                    continue
-                current_span.append(segment)
-                if _span_matches_sentence(current_span, sentences[sentence_index - 1]):
-                    sentence_index += 1
-                    if sentence_index <= len(sentences):
-                        current_span = _new_sentence_span(
-                            soup,
-                            side,
-                            paragraph_index,
-                            sentence_index,
-                        )
-                        paragraph.append(current_span)
-            continue
-
-        current_span.append(child)
-        if _span_matches_sentence(current_span, sentences[sentence_index - 1]):
+    for path, text in text_nodes:
+        for segment in _sentence_text_segments(text):
+            if not segment:
+                continue
+            _append_segment_with_path(soup, current_span, path, segment)
+            if sentence_index > len(sentences):
+                continue
+            if not _span_matches_sentence(current_span, sentences[sentence_index - 1]):
+                continue
             sentence_index += 1
             if sentence_index <= len(sentences):
-                current_span = _new_sentence_span(soup, side, paragraph_index, sentence_index)
+                current_span = _new_sentence_span(
+                    soup,
+                    side,
+                    paragraph_index,
+                    sentence_index,
+                )
                 paragraph.append(current_span)
 
     for empty_span in paragraph.select("span[data-source-id]"):
@@ -227,6 +237,42 @@ def _sentence_text_segments(text: str) -> list[str]:
     return segments
 
 
+def _tag_path(paragraph: Tag, text_node: NavigableString) -> list[Tag]:
+    path = []
+    parent = text_node.parent
+    while isinstance(parent, Tag) and parent is not paragraph:
+        path.append(parent)
+        parent = parent.parent
+    return list(reversed(path))
+
+
+def _append_segment_with_path(
+    soup: BeautifulSoup,
+    target: Tag,
+    path: list[Tag],
+    text: str,
+) -> None:
+    if not path:
+        target.append(NavigableString(text))
+        return
+
+    root_clone = _clone_empty_tag(soup, path[0])
+    current_clone = root_clone
+    for tag in path[1:]:
+        child_clone = _clone_empty_tag(soup, tag)
+        current_clone.append(child_clone)
+        current_clone = child_clone
+    current_clone.append(NavigableString(text))
+    target.append(root_clone)
+
+
+def _clone_empty_tag(soup: BeautifulSoup, tag: Tag) -> Tag:
+    clone = soup.new_tag(tag.name)
+    for key, value in tag.attrs.items():
+        clone.attrs[key] = list(value) if isinstance(value, list) else value
+    return clone
+
+
 def _new_sentence_span(
     soup: BeautifulSoup,
     side: str,
@@ -240,6 +286,15 @@ def _new_sentence_span(
 
 def _span_matches_sentence(span: Tag, sentence: str) -> bool:
     return _node_text(span) == sentence
+
+
+def _is_protected_abbreviation_boundary(candidate: str, following_text: str) -> bool:
+    lowered = candidate.lower()
+    if any(lowered.endswith(abbreviation.lower()) for abbreviation in NON_TERMINAL_ABBREVIATIONS):
+        return True
+    if not any(lowered.endswith(abbreviation.lower()) for abbreviation in FLEXIBLE_ABBREVIATIONS):
+        return False
+    return bool(following_text[:1] and following_text[0].islower())
 
 
 def _node_text(node) -> str:
