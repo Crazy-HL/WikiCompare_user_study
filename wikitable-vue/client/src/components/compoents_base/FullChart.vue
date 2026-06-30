@@ -1,80 +1,24 @@
 <template>
 	<div class="full-chart">
-		<!-- 文本显示 -->
-		<template v-if="visualization === 'text-only'">
-			<div class="full-text">
-				<div
-					v-for="(item, index) in formattedData"
-					:key="index"
-					class="text-item">
-					{{ formatDisplayValue(item) }}
-				</div>
+		<div v-if="isTextMode" class="full-text">
+			<div v-for="(item, index) in textRows" :key="index" class="text-item">
+				<span class="text-label">{{ item.label }}</span>
+				<span class="text-value">{{ item.value }}</span>
 			</div>
-		</template>
-
-		<!-- 完整饼图 -->
-		<template v-else-if="visualization === 'pie-chart'">
-			<div v-if="hasData" class="chart-container">
-				<PieChart :data="pieChartData" />
-			</div>
-			<div v-else class="no-data">无可用数据</div>
-		</template>
-
-		<!-- 完整柱状图 -->
-		<template v-else-if="visualization === 'bar-chart'">
-			<div v-if="hasData" class="chart-container">
-				<BarChart
-					:data="barChartData"
-					:field-key="fieldKey"
-					:show-value="true" />
-			</div>
-			<div v-else class="no-data">无可用数据</div>
-		</template>
-
-		<!-- 完整折线图 -->
-		<template v-else-if="visualization === 'line-chart'">
-			<div v-if="hasData" class="chart-container">
-				<template v-if="isCombinedChart">
-					<LineChart
-						:data="processedCombinedData"
-						:show-trend="true"
-						:is-combined="true"
-						:sources="field.sources" />
-					<div class="chart-legend">
-						<span v-for="(source, index) in field.sources" :key="index">
-							<span
-								class="legend-color"
-								:style="{ backgroundColor: getSourceColor(index) }"></span>
-							{{ source }}
-						</span>
-					</div>
-				</template>
-				<template v-else>
-					<LineChart :data="lineChartData" :show-trend="true" />
-				</template>
-			</div>
-			<div v-else class="no-data">无可用数据</div>
-		</template>
-
-		<!-- 默认显示 -->
-		<template v-else>
-			<div class="full-text">
-				<div
-					v-for="(item, index) in formattedData"
-					:key="index"
-					class="text-item">
-					{{ formatDisplayValue(item) }}
-				</div>
-			</div>
-		</template>
+		</div>
+		<div v-else-if="hasNumericData" ref="chartEl" class="chart-container"></div>
+		<div v-else class="no-data">无可用数据</div>
 	</div>
 </template>
 
 <script setup>
-	import { computed } from "vue";
-	import PieChart from "./charts/PieChart.vue";
-	import BarChart from "./charts/BarChart.vue";
-	import LineChart from "./charts/LineChart.vue";
+	import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+	import * as echarts from "echarts";
+	const {
+		barChartDomain,
+		formatChartNumber,
+		xLabelForPoint
+	} = require("@/js/chartValueDisplay");
 
 	const props = defineProps({
 		field: [Object, Array, String, Number],
@@ -83,186 +27,574 @@
 		fieldKey: String
 	});
 
-	// 判断是否是合并图表
-	const isCombinedChart = computed(() => {
-		return props.field?.combined === true;
-	});
+	const chartEl = ref(null);
+	let chart = null;
 
-	// 处理合并图表数据
-	const processedCombinedData = computed(() => {
-		if (!isCombinedChart.value) {
-			console.log("[Debug] 当前不是合并图表模式");
-			return [];
-		}
+	const COLORS = [
+		"#3867a8",
+		"#c94f45",
+		"#5f8f3f",
+		"#d9902f",
+		"#7d5fb2",
+		"#2f8c8f",
+		"#b05f6d",
+		"#6b7280"
+	];
+	const REMAINDER_COLOR = "#e7edf4";
 
-		console.log(
-			"[Debug] 原始合并数据:",
-			JSON.parse(JSON.stringify(props.field))
-		); // 避免响应式代理干扰
-
-		const years = [...new Set(props.field.map(item => item.year))].sort(
-			(a, b) => a - b
-		);
-		console.log("[Debug] 提取的唯一年份:", years);
-
-		const series = props.field.sources.map((source, index) => {
-			const sourceData = props.field.filter(item => item.source === source);
-			console.log(`[Debug] 数据源 ${source} 的原始数据:`, sourceData);
-			return {
-				name: source,
-				data: years.map(year => {
-					const point = sourceData.find(item => item.year === year);
-					return point ? point.value : null;
-				}),
-				color: getSourceColor(index)
-			};
-		});
-
-		const result = { categories: years, series };
-		console.log(
-			"[Debug] 处理后的合并图表数据:",
-			JSON.parse(JSON.stringify(result))
-		);
-		return result;
-	});
-
-	// 获取数据源颜色
-	const getSourceColor = index => {
-		const colors = ["#4e79a7", "#e15759", "#76b7b2", "#f28e2b"];
-		return colors[index % colors.length];
+	const isYearEntry = value => {
+		if (typeof value !== "string") return false;
+		const trimmed = value.trim();
+		return /^\(\d{4}.*\)$/.test(trimmed) || /^\d{4}$/.test(trimmed);
 	};
 
-	// 数据预处理（统一数据结构）
+	const numericValue = value => {
+		if (value === null || value === undefined || value === "") return null;
+		if (typeof value === "number") return Number.isFinite(value) ? value : null;
+		if (typeof value === "object") return numericValue(value.value ?? value.raw);
+		const source = String(value)
+			.replace(/\u00a0/g, " ")
+			.replace(/US\$|[$¥₩€£,%]/g, "")
+			.trim();
+		const number = parseFloat(source.replace(/,/g, ""));
+		if (!Number.isFinite(number)) return null;
+		const lower = source.toLowerCase();
+		if (lower.includes("trillion")) return number * 1e12;
+		if (lower.includes("billion")) return number * 1e9;
+		if (lower.includes("million")) return number * 1e6;
+		if (lower.includes("thousand")) return number * 1e3;
+		return number;
+	};
+
+	const cleanLabel = (value, fallback = "项目") => {
+		const text = String(value || "")
+			.replace(/\u00a0/g, " ")
+			.replace(/\s+/g, " ")
+			.trim();
+		return text || fallback;
+	};
+
+	const shortValueDisplay = item => {
+		const display = String(item?.display || "").trim();
+		const colonIndex = display.lastIndexOf(":");
+		if (colonIndex >= 0) return display.slice(colonIndex + 1).trim();
+		return display || formatAxisValue(item?.value);
+	};
+
 	const normalizedData = computed(() => {
-		if (!props.field) return [];
-
-		// 处理数组数据
-		if (Array.isArray(props.field)) {
-			return props.field.map(item => normalizeItem(item));
-		}
-
-		// 处理单条数据
-		return [normalizeItem(props.field)];
+		if (!props.field || props.field === "-") return [];
+		const values = Array.isArray(props.field) ? props.field : [props.field];
+		return values
+			.map((item, index) => {
+				if (typeof item === "object" && item !== null) {
+					const raw = cleanLabel(
+						item.raw ?? item.display ?? item.label ?? item.value,
+						""
+					);
+					const display = cleanLabel(
+						item.display ?? item.raw ?? item.value,
+						raw || "-"
+					);
+					const label = cleanLabel(item.label ?? item.year ?? raw, `项目${index + 1}`);
+					return {
+						value: numericValue(item.value ?? item.raw),
+						raw,
+						display,
+						label,
+						year: item.year ?? null,
+						parent: item.parent ?? null,
+						unit: item.unit ?? null
+					};
+				}
+				const raw = cleanLabel(item, "");
+				return {
+					value: numericValue(item),
+					raw,
+					display: raw || "-",
+					label: raw || `项目${index + 1}`,
+					year: null,
+					parent: null,
+					unit: null
+				};
+			})
+			.filter(item => item.display && !isYearEntry(item.raw));
 	});
 
-	// 统一数据结构
-	const normalizeItem = item => {
-		// 已经是标准格式
+	const numericData = computed(() =>
+		normalizedData.value.filter(item => Number.isFinite(item.value))
+	);
+
+	const hasNumericData = computed(() => numericData.value.length > 0);
+
+	const isTextMode = computed(
+		() => props.visualization === "text-only" || !chartVisualization.value
+	);
+
+	const chartVisualization = computed(() => {
+		if (props.visualization === "text-only") return "";
+		if (props.visualization === "pie-chart") {
+			return usablePieData.value.length ? "pie-chart" : "bar-chart";
+		}
 		if (
-			typeof item === "object" &&
-			item !== null &&
-			("value" in item || "raw" in item)
+			["bar-chart", "line-chart", "stacked-chart"].includes(props.visualization)
 		) {
-			return {
-				value: item.value ?? null,
-				raw: item.raw ?? String(item.value) ?? "",
-				unit: item.unit ?? null,
-				year: item.year ?? null,
-				currency: item.currency ?? null,
-				extracted: item.extracted ?? false,
-				source: item.source ?? null // 添加来源字段
-			};
+			return props.visualization;
 		}
-
-		// 原始值处理
-		return {
-			value: typeof item === "number" ? item : null,
-			raw: String(item),
-			unit: null,
-			year: null,
-			currency: null,
-			extracted: false,
-			source: null
-		};
-	};
-
-	// 格式化显示值（带单位）
-	const formatDisplayValue = item => {
-		if (!item) return "-";
-
-		// 优先使用raw字段
-		if (item.raw) {
-			let text = item.raw;
-			if (item.unit) text += ` ${item.unit}`;
-			if (item.year) text += ` (${item.year})`;
-			return text;
-		}
-
-		// 数值格式化
-		if (item.value !== null) {
-			let num = item.value;
-			let text = "";
-
-			// 百分比处理
-			if (props.type === "percentage") {
-				return `${num > 0 ? "+" : ""}${num.toFixed(1)}%`;
-			}
-
-			// 大数值格式化
-			if (Math.abs(num) >= 100000000) {
-				text = (num / 100000000).toFixed(2) + "亿";
-			} else if (Math.abs(num) >= 10000) {
-				text = (num / 10000).toFixed(1) + "万";
-			} else {
-				text = num.toLocaleString();
-			}
-
-			if (item.unit) text += ` ${item.unit}`;
-			if (item.year) text += ` (${item.year})`;
-			return text;
-		}
-
-		return "-";
-	};
-
-	// 饼图数据
-	const pieChartData = computed(() => {
-		return normalizedData.value
-			.filter(item => item.value !== null)
-			.map((item, index) => ({
-				name: item.raw || `项目${index + 1}`,
-				value: Math.min(100, Math.max(0, item.value)),
-				raw: item.raw,
-				unit: item.unit
-			}));
+		return "";
 	});
 
-	// 柱状图数据
-	const barChartData = computed(() => {
-		return normalizedData.value.map((item, index) => ({
-			name: item.raw || `项目${index + 1}`,
-			value: item.value !== null ? item.value : 0,
-			raw: item.raw,
-			unit: item.unit,
-			year: item.year
+	const textRows = computed(() => {
+		const rows = normalizedData.value.length
+			? normalizedData.value
+			: [{ label: props.fieldKey || "值", display: String(props.field || "-") }];
+		return rows.map((item, index) => ({
+			label: item.label || `${props.fieldKey || "值"} ${index + 1}`,
+			value: item.display || item.raw || "-"
 		}));
 	});
 
-	// 折线图数据
-	const lineChartData = computed(() => {
-		return normalizedData.value
-			.filter(item => item.value !== null)
-			.map((item, index) => ({
-				year: item.year || index + 1,
-				value: item.value,
-				raw: item.raw,
-				unit: item.unit
-			}))
-			.sort((a, b) => a.year - b.year);
+	const usablePieData = computed(() => {
+		const data = numericData.value.filter(item => item.value > 0);
+		if (data.length > 1) return data;
+		if (data.length === 1 && isPercentageType.value && data[0].value <= 100) {
+			return data;
+		}
+		return [];
 	});
 
-	// 文本显示数据
-	const formattedData = computed(() => {
-		return normalizedData.value;
+	const isPercentageType = computed(() => {
+		const type = String(props.type || "").toLowerCase();
+		return type === "percentage" || type === "proportional";
 	});
 
-	const hasData = computed(() => {
-		return (
-			normalizedData.value.length > 0 &&
-			normalizedData.value.some(
-				item => item.value !== null || (item.raw && item.raw.trim() !== "")
-			)
-		);
+	const resize = () => chart?.resize();
+
+	const disposeChart = () => {
+		chart?.dispose();
+		chart = null;
+	};
+
+	const renderChart = () => {
+		if (isTextMode.value || !hasNumericData.value || !chartEl.value) {
+			disposeChart();
+			return;
+		}
+		if (!chart) chart = echarts.init(chartEl.value);
+		chart.setOption(buildOption(), true);
+	};
+
+	const buildOption = () => {
+		if (chartVisualization.value === "line-chart") return lineOption();
+		if (chartVisualization.value === "pie-chart") return pieOption();
+		if (chartVisualization.value === "stacked-chart") return stackedOption();
+		return barOption();
+	};
+
+	const baseTooltip = formatter => ({
+		trigger: "axis",
+		axisPointer: { type: "shadow" },
+		formatter
+	});
+
+	const baseGrid = (bottom = 48) => ({
+		top: 34,
+		left: 60,
+		right: 28,
+		bottom,
+		containLabel: true
+	});
+
+	const barOption = () => {
+		const data = numericData.value;
+		const values = data.map(item => item.value);
+		const [min, max] = barChartDomain(values);
+		return {
+			color: COLORS,
+			tooltip: baseTooltip(params =>
+				params
+					.map(param => `${param.marker}${param.name}: ${param.data.display}`)
+					.join("<br/>")
+			),
+			grid: baseGrid(data.length > 5 ? 76 : 48),
+			xAxis: {
+				type: "category",
+				data: data.map((item, index) => xLabelForPoint(item, index)),
+				axisTick: { alignWithLabel: true },
+				axisLine: { lineStyle: { color: "#cbd5e1" } },
+				axisLabel: {
+					interval: 0,
+					rotate: data.length > 5 ? 28 : 0,
+					color: "#475569",
+					fontSize: 11,
+					overflow: "truncate",
+					width: 90
+				}
+			},
+			yAxis: {
+				type: "value",
+				min,
+				max,
+				axisLabel: {
+					color: "#475569",
+					formatter: value => formatAxisValue(value)
+				},
+				axisLine: { show: false },
+				splitLine: { lineStyle: { color: "#e5eaf1" } }
+			},
+			series: [
+				{
+					type: "bar",
+					barMaxWidth: 54,
+					data: data.map((item, index) => ({
+						value: item.value,
+						display: item.display,
+						shortDisplay: shortValueDisplay(item),
+						itemStyle: {
+							color: COLORS[index % COLORS.length],
+							borderRadius:
+								item.value >= 0 ? [4, 4, 0, 0] : [0, 0, 4, 4]
+						}
+					})),
+					label: {
+						show: true,
+						position: "top",
+						color: "#1f2937",
+						fontSize: 11,
+						formatter: params =>
+							params.data?.shortDisplay || params.data?.display || "-"
+					},
+					markLine:
+						min < 0 && max > 0
+							? {
+									silent: true,
+									symbol: "none",
+									lineStyle: { color: "#94a3b8", type: "dashed", width: 1 },
+									data: [{ yAxis: 0 }]
+							  }
+							: undefined
+				}
+			],
+			dataZoom:
+				data.length > 10
+					? [
+							{
+								type: "slider",
+								height: 18,
+								bottom: 14,
+								start: 0,
+								end: Math.min(100, (10 / data.length) * 100)
+							}
+					  ]
+					: []
+		};
+	};
+
+	const lineOption = () => {
+		const data = [...numericData.value].sort((a, b) => {
+			const left = Number(a.year);
+			const right = Number(b.year);
+			if (Number.isFinite(left) && Number.isFinite(right)) return left - right;
+			return 0;
+		});
+		const values = data.map(item => item.value);
+		const [min, max] = paddedDomain(values);
+		return {
+			color: [COLORS[0]],
+			tooltip: {
+				trigger: "axis",
+				formatter: params =>
+					params
+						.map(param => `${param.marker}${param.name}: ${param.data.display}`)
+						.join("<br/>")
+			},
+			grid: baseGrid(data.length > 6 ? 72 : 48),
+			xAxis: {
+				type: "category",
+				boundaryGap: false,
+				data: data.map((item, index) => xLabelForPoint(item, index)),
+				axisLabel: {
+					interval: 0,
+					rotate: data.length > 6 ? 24 : 0,
+					color: "#475569",
+					fontSize: 11
+				},
+				axisLine: { lineStyle: { color: "#cbd5e1" } }
+			},
+			yAxis: {
+				type: "value",
+				min,
+				max,
+				axisLabel: {
+					color: "#475569",
+					formatter: value => formatAxisValue(value)
+				},
+				axisLine: { show: false },
+				splitLine: { lineStyle: { color: "#e5eaf1" } }
+			},
+			series: [
+				{
+					type: "line",
+					smooth: false,
+					symbol: "circle",
+					symbolSize: 8,
+					data: data.map(item => ({
+						value: item.value,
+						display: item.display,
+						shortDisplay: shortValueDisplay(item)
+					})),
+					lineStyle: { width: 2.5 },
+					label: {
+						show: data.length <= 8,
+						position: "top",
+						color: "#1f2937",
+						fontSize: 11,
+						formatter: params =>
+							params.data?.shortDisplay || params.data?.display || "-"
+					}
+				}
+			],
+			dataZoom:
+				data.length > 12
+					? [
+							{
+								type: "slider",
+								height: 18,
+								bottom: 14,
+								start: 0,
+								end: Math.min(100, (12 / data.length) * 100)
+							}
+					  ]
+					: []
+		};
+	};
+
+	const pieOption = () => {
+		const data = usablePieData.value;
+		const isSingle = data.length === 1;
+		const seriesData = isSingle
+			? [
+					{
+						name: data[0].label,
+						value: Math.max(0, Math.min(100, data[0].value)),
+						display: data[0].display,
+						shortDisplay: shortValueDisplay(data[0]),
+						itemStyle: { color: COLORS[0] }
+					},
+					{
+						name: "剩余",
+						value: Math.max(0, 100 - Math.max(0, Math.min(100, data[0].value))),
+						display: "剩余",
+						silent: true,
+						label: { show: false },
+						itemStyle: { color: REMAINDER_COLOR }
+					}
+			  ]
+			: data.map((item, index) => ({
+					name: item.label,
+					value: item.value,
+					display: item.display,
+					shortDisplay: shortValueDisplay(item),
+					itemStyle: { color: COLORS[index % COLORS.length] }
+			  }));
+		return {
+			tooltip: {
+				trigger: "item",
+				formatter: params =>
+					params.data?.silent
+						? ""
+						: `${params.marker}${params.name}: ${params.data?.display || params.value}`
+			},
+			legend: {
+				type: "scroll",
+				orient: "horizontal",
+				left: "center",
+				bottom: 0,
+				icon: "roundRect",
+				itemWidth: 14,
+				itemHeight: 8,
+				textStyle: { color: "#334155", fontSize: 12 }
+			},
+			series: [
+				{
+					type: "pie",
+					radius: isSingle ? ["44%", "68%"] : ["0%", "68%"],
+					center: ["50%", "44%"],
+					data: seriesData,
+					minAngle: 2,
+					avoidLabelOverlap: true,
+					label: {
+						color: "#1f2937",
+						fontSize: 11,
+						formatter: params => {
+							if (params.data?.silent) return "";
+							return isSingle
+								? params.data?.shortDisplay || params.data?.display || "-"
+								: `${params.name}\n${params.data?.shortDisplay || params.value}`;
+						}
+					},
+					labelLine: { length: 14, length2: 8 }
+				}
+			]
+		};
+	};
+
+		const stackedOption = () => {
+			const data = numericData.value.filter(item => item.value > 0);
+			const total = data.reduce((sum, item) => sum + item.value, 0);
+			if (!data.length || total <= 0) return barOption();
+			const renderTotal = total > 101 ? total : 100;
+			const legendNames = data.map(item => item.label);
+			const splitIndex = Math.ceil(legendNames.length / 2);
+			const chartWidth = chartEl.value?.clientWidth || 760;
+			const sideInset = chartWidth < 640 ? 104 : 148;
+			const legendFormatter = name =>
+				name.length > (chartWidth < 640 ? 12 : 18)
+					? `${name.slice(0, chartWidth < 640 ? 11 : 17)}…`
+					: name;
+			return {
+				color: COLORS,
+				tooltip: {
+					trigger: "item",
+					formatter: params =>
+						`${params.marker}${params.seriesName}: ${
+							params.data?.display || formatAxisValue(params.data?.originalValue)
+						}`
+				},
+				legend: [
+					{
+						type: "scroll",
+						orient: "vertical",
+						left: 8,
+						top: "middle",
+						data: legendNames.slice(0, splitIndex),
+						icon: "roundRect",
+						itemWidth: 14,
+						itemHeight: 8,
+						itemGap: 10,
+						selectedMode: false,
+						formatter: legendFormatter,
+						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						pageIconColor: "#64748b",
+						pageIconInactiveColor: "#cbd5e1",
+						pageTextStyle: { color: "#64748b" }
+					},
+					{
+						type: "scroll",
+						orient: "vertical",
+						right: 8,
+						top: "middle",
+						data: legendNames.slice(splitIndex),
+						icon: "roundRect",
+						itemWidth: 14,
+						itemHeight: 8,
+						itemGap: 10,
+						selectedMode: false,
+						formatter: legendFormatter,
+						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						pageIconColor: "#64748b",
+						pageIconInactiveColor: "#cbd5e1",
+						pageTextStyle: { color: "#64748b" }
+					}
+				],
+				grid: {
+					top: 34,
+					left: sideInset,
+					right: sideInset,
+					bottom: 42,
+					containLabel: true
+				},
+				xAxis: {
+					type: "category",
+					data: [props.fieldKey || "Composition"],
+					axisTick: { show: false },
+					axisLine: { lineStyle: { color: "#cbd5e1" } },
+					axisLabel: {
+						color: "#475569",
+						fontSize: 12,
+						overflow: "truncate",
+						width: 120
+					}
+				},
+				yAxis: {
+					type: "value",
+					min: 0,
+					max: 100,
+					axisLabel: {
+						color: "#475569",
+						formatter: value => `${value}%`
+					},
+					axisLine: { show: false },
+					splitLine: { lineStyle: { color: "#e5eaf1" } }
+				},
+				series: data.map((item, index) => {
+					const renderValue = (item.value / renderTotal) * 100;
+					return {
+						name: item.label,
+						type: "bar",
+						stack: "total",
+						barWidth: 46,
+						data: [
+							{
+								value: renderValue,
+								originalValue: item.value,
+								display: item.display,
+								shortDisplay: shortValueDisplay(item)
+							}
+						],
+						itemStyle: {
+							color: COLORS[index % COLORS.length],
+							borderRadius:
+								index === 0
+									? [0, 0, 4, 4]
+									: index === data.length - 1
+										? [4, 4, 0, 0]
+										: 0
+						},
+						label: {
+							show: renderValue >= 12,
+							position: "inside",
+							color: "#111827",
+							fontSize: 11,
+							formatter: params => params.data?.shortDisplay || ""
+						}
+					};
+				})
+			};
+		};
+
+	const paddedDomain = values => {
+		const nums = values.filter(Number.isFinite);
+		if (!nums.length) return [0, 1];
+		const min = Math.min(...nums);
+		const max = Math.max(...nums);
+		if (min === max) {
+			const padding = Math.max(1, Math.abs(min) * 0.12);
+			return [min - padding, max + padding];
+		}
+		const padding = (max - min) * 0.12;
+		return [min - padding, max + padding];
+	};
+
+	const formatAxisValue = value => formatChartNumber(value, axisType.value);
+
+	const axisType = computed(() =>
+		isPercentageType.value ? "percentage" : String(props.type || "")
+	);
+
+	onMounted(() => {
+		nextTick(renderChart);
+		window.addEventListener("resize", resize);
+	});
+
+	watch(
+		() => [props.field, props.type, props.visualization, props.fieldKey],
+		() => nextTick(renderChart),
+		{ deep: true }
+	);
+
+	onUnmounted(() => {
+		window.removeEventListener("resize", resize);
+		disposeChart();
 	});
 </script>
 
@@ -270,50 +602,68 @@
 	.full-chart {
 		width: 100%;
 		height: 100%;
-		padding: 16px;
+		min-height: 420px;
 		box-sizing: border-box;
-	}
-
-	.full-text {
-		max-height: 400px;
-		overflow-y: auto;
-	}
-
-	.text-item {
-		margin-bottom: 8px;
-		padding: 8px;
-		background: #f8f9fa;
-		border-radius: 4px;
-		word-break: break-word;
+		color: #1f2937;
 	}
 
 	.chart-container {
 		width: 100%;
 		height: 100%;
-		min-height: 400px;
+		min-height: 420px;
+		border: 1px solid #dbe3ee;
+		border-radius: 8px;
+		background:
+			linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+	}
+
+	.full-text {
+		display: grid;
+		gap: 8px;
+		max-height: 440px;
+		overflow-y: auto;
+	}
+
+	.text-item {
+		display: grid;
+		grid-template-columns: minmax(120px, 0.32fr) minmax(0, 1fr);
+		gap: 10px;
+		padding: 9px 11px;
+		border: 1px solid #dbe3ee;
+		border-radius: 6px;
+		background: #fbfdff;
+		line-height: 1.45;
+	}
+
+	.text-label {
+		color: #64748b;
+		font-size: 12px;
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+
+	.text-value {
+		font-size: 13px;
+		overflow-wrap: anywhere;
+		white-space: pre-wrap;
 	}
 
 	.no-data {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		height: 100%;
-		color: #999;
-		font-style: italic;
-		font-size: 1.2em;
-	}
-
-	.chart-legend {
-		margin-top: 15px;
-		text-align: center;
+		min-height: 420px;
+		border: 1px solid #dbe3ee;
+		border-radius: 8px;
+		background: #fbfdff;
+		color: #64748b;
 		font-size: 14px;
 	}
 
-	.legend-color {
-		display: inline-block;
-		width: 12px;
-		height: 12px;
-		margin-right: 5px;
-		border-radius: 3px;
+	@media (max-width: 760px) {
+		.text-item {
+			grid-template-columns: 1fr;
+		}
 	}
 </style>

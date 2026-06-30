@@ -1,0 +1,6 @@
+tornado
+openai
+beautifulsoup4
+lxml
+pytest
+requests

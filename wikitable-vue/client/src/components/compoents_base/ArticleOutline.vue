@@ -1,5 +1,4 @@
 <template>
-	<!-- 大纲切换按钮 -->
 	<button @click="toggleOutline" class="toggle-btn" :style="buttonStyle">
 		<svg v-if="!isVisible" class="icon" viewBox="0 0 24 24">
 			<path
@@ -11,23 +10,23 @@
 		</svg>
 	</button>
 
-	<!-- 大纲内容 -->
 	<div v-if="isVisible" class="outline-container" :style="outlineStyle">
 		<div class="outline">
 			<ul>
 				<li
-					v-for="(item, index) in outline"
+					v-for="item in outlineItems"
 					:key="item.id"
-					:class="{ linked: isLinked(item) }"
+					:class="{ linked: isLinked(item.id) }"
 					:style="{
-						paddingLeft: `${(item.level - 1) * 15}px`,
-						borderLeft: isLinked(item)
+						paddingLeft: `${Math.max((item.level || 1) - 1, 0) * 15}px`,
+						borderLeft: isLinked(item.id)
 							? `4px solid ${getBorderColor(item.id)}`
 							: 'none'
 					}">
-					<a :href="'#' + item.id" @click.prevent="scrollToChapter(item.id)">{{
-						item.text
-					}}</a>
+					<a :href="'#' + item.id" @click.prevent="scrollToChapter(item.id)">
+						{{ item.text }}
+					</a>
+					<span v-if="isLinked(item.id)" class="linked-dot" title="Matched section"></span>
 				</li>
 			</ul>
 		</div>
@@ -35,118 +34,86 @@
 </template>
 
 <script setup>
-	import { ref, watch, onMounted, onUnmounted } from "vue";
+	import { computed, onMounted, onUnmounted, ref } from "vue";
 	import eventBus from "@/js/eventBus.js";
 
 	const props = defineProps({
-		content: String, // 文章 HTML
-		divId: String // "div1" 或 "div3"
+		outline: {
+			type: Array,
+			default: () => []
+		},
+		divId: String,
+		matches: {
+			type: Array,
+			default: () => []
+		}
 	});
 
 	const isVisible = ref(false);
-	const outline = ref([]);
 	const buttonStyle = ref({});
 	const outlineStyle = ref({});
 
-	// **自定义关联数组**
-	const linkedOutline = ref([
-		{ leftId: "heading-0-div1", rightId: "heading-0-div3" },
-		{ leftId: "heading-10-div1", rightId: "heading-11-div3" },
-		{ leftId: "heading-13-div1", rightId: "heading-15-div3" },
-		{ leftId: "heading-14-div1", rightId: "heading-16-div3" },
-		{ leftId: "heading-17-div1", rightId: "heading-18-div3" },
+	const outlineItems = computed(() => props.outline || []);
 
-		{ leftId: "heading-20-div1", rightId: "heading-27-div3" },
+	const linkedPairs = computed(() =>
+		(props.matches || [])
+			.map(match => ({
+				leftId: match.leftId || match.left || match.leftHeadingId,
+				rightId: match.rightId || match.right || match.rightHeadingId
+			}))
+			.filter(match => match.leftId && match.rightId)
+	);
 
-		{ leftId: "heading-23-div1", rightId: "heading-29-div3" }
-	]);
-
-	// **切换大纲的显示**
 	const toggleOutline = () => {
 		isVisible.value = !isVisible.value;
 	};
 
-	// **解析文章，提取 h1-h6 标题**
-	const extractOutline = (content, containerId) => {
-		if (!content) return [];
-		const parser = new DOMParser();
-		const doc = parser.parseFromString(content, "text/html");
-		const headings = doc.querySelectorAll("h1, h2, h3, h4, h5, h6");
+	const linkedPairFor = id =>
+		linkedPairs.value.find(linked => linked.leftId === id || linked.rightId === id);
 
-		return Array.from(headings).map((heading, index) => {
-			const level = parseInt(heading.tagName.substring(1));
-			const id = `heading-${index}-${containerId}`;
-			heading.id = id;
-			return { id, text: heading.textContent, level };
-		});
-	};
+	const isLinked = id => Boolean(linkedPairFor(id));
 
-	// **监听 content 变化，更新大纲**
-	watch(
-		() => props.content,
-		newContent => {
-			outline.value = extractOutline(newContent, props.divId);
-
-			// 提取另一个容器的大纲数据
-			const otherContainerId = props.divId === "div1" ? "div3" : "div1";
-			const otherContainer = document.getElementById(otherContainerId);
-			if (otherContainer) {
-				// 通过 eventBus 通知另一个大纲组件
-				eventBus.emit("update-linked-outline", linkedOutline.value);
-			}
-		},
-		{ immediate: true }
-	);
-
-	// **监听 eventBus，确保两边大纲同步**
-	eventBus.on("update-linked-outline", newLinkedOutline => {
-		linkedOutline.value = newLinkedOutline;
-	});
-
-	// **检查是否存在关联章节**
-	const isLinked = item =>
-		linkedOutline.value.some(
-			linked => linked.leftId === item.id || linked.rightId === item.id
-		);
-
-	// **生成不同关联章节的边框颜色**
 	const getBorderColor = id => {
-		const linkedItem = linkedOutline.value.find(
-			linked => linked.leftId === id || linked.rightId === id
-		);
-		if (linkedItem) {
-			// 根据关联章节的索引生成不同的颜色
-			const index = linkedOutline.value.indexOf(linkedItem);
-			const colors = ["#FF6B6B", "#4ECDC4", "#FFD166", "#118AB2", "#073B4C"];
-			return colors[index % colors.length];
-		}
-		return "transparent";
+		const linkedItem = linkedPairFor(id);
+		if (!linkedItem) return "transparent";
+		const index = linkedPairs.value.indexOf(linkedItem);
+		const colors = ["#ef4444", "#14b8a6", "#f59e0b", "#2563eb", "#475569"];
+		return colors[index % colors.length];
 	};
 
-	// **滚动到章节**
 	const scrollToChapter = id => {
-		// 跳转到当前文章的章节
-		const element = document.getElementById(id);
-		if (element) element.scrollIntoView({ behavior: "smooth" });
-
-		// 找到关联章节并跳转
-		const linkedItem = linkedOutline.value.find(
-			linked => linked.leftId === id || linked.rightId === id
-		);
-		if (linkedItem) {
-			const targetId =
-				linkedItem.leftId === id ? linkedItem.rightId : linkedItem.leftId;
-			eventBus.emit("scroll-to-chapter", targetId);
-		}
+		scrollSourceIntoView(id, "smooth");
+		const linkedItem = linkedPairFor(id);
+		if (!linkedItem) return;
+		const targetId = linkedItem.leftId === id ? linkedItem.rightId : linkedItem.leftId;
+		eventBus.emit("scroll-to-chapter", { targetId, fromDivId: props.divId });
 	};
 
-	// **监听 eventBus，确保两个组件同步跳转**
-	eventBus.on("scroll-to-chapter", targetId => {
-		const targetElement = document.getElementById(targetId);
-		if (targetElement) targetElement.scrollIntoView({ behavior: "smooth" });
-	});
+	const handleScrollToChapter = payload => {
+		const targetId = typeof payload === "string" ? payload : payload?.targetId;
+		if (!targetId || payload?.fromDivId === props.divId) return;
+		scrollSourceIntoView(targetId, "smooth");
+	};
 
-	// **更新按钮和大纲的相对位置**
+	const scrollSourceIntoView = (sourceId, behavior = "auto") => {
+		const node = sourceNode(sourceId);
+		if (!node) return;
+		node.scrollIntoView({ behavior, block: "start", inline: "nearest" });
+		node.classList.add("outline-target-flash");
+		window.setTimeout(() => node.classList.remove("outline-target-flash"), 900);
+	};
+
+	const sourceNode = sourceId => {
+		const root = document.getElementById(props.divId);
+		if (!root || !sourceId) return null;
+		return root.querySelector(`[data-source-id="${cssEscape(sourceId)}"]`);
+	};
+
+	const cssEscape = value => {
+		if (window.CSS?.escape) return window.CSS.escape(value);
+		return String(value).replace(/"/g, '\\"');
+	};
+
 	const updatePosition = () => {
 		const isDiv1 = props.divId === "div1";
 		buttonStyle.value = {
@@ -162,71 +129,70 @@
 			maxHeight: "80vh",
 			overflowY: "auto",
 			zIndex: "1000",
-			background: "white",
+			background: "rgba(255, 255, 255, 0.97)",
+			border: "1px solid #dbe3ee",
 			borderRadius: "8px",
-			boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
+			boxShadow: "0 12px 30px rgba(15, 23, 42, 0.18)",
 			padding: "15px"
 		};
 	};
 
-	// **窗口滚动时更新大纲位置**
 	const handleScroll = () => {
 		const referenceElement = document.getElementById(props.divId);
 		if (!referenceElement) return;
-
 		const scrollY = referenceElement.scrollTop;
 		buttonStyle.value.top = `${scrollY + 10}px`;
 		outlineStyle.value.top = `${scrollY + 50}px`;
 	};
 
-	// **初始化**
 	onMounted(() => {
-		outline.value = extractOutline(props.content, props.divId);
 		updatePosition();
+		eventBus.on("scroll-to-chapter", handleScrollToChapter);
 		const referenceElement = document.getElementById(props.divId);
-		if (referenceElement)
-			referenceElement.addEventListener("scroll", handleScroll);
+		referenceElement?.addEventListener("scroll", handleScroll);
 	});
 
-	// **组件销毁时移除事件**
 	onUnmounted(() => {
+		eventBus.off("scroll-to-chapter", handleScrollToChapter);
 		const referenceElement = document.getElementById(props.divId);
-		if (referenceElement)
-			referenceElement.removeEventListener("scroll", handleScroll);
-		eventBus.off("update-linked-outline");
-		eventBus.off("scroll-to-chapter");
+		referenceElement?.removeEventListener("scroll", handleScroll);
 	});
 </script>
 
 <style scoped>
-	/* **按钮样式** */
 	.toggle-btn {
 		padding: 10px;
 		border-radius: 50%;
 		cursor: pointer;
 		z-index: 2000;
-		background-color: #0077b6;
+		background-color: #243447;
 		color: white;
-		border: none;
+		border: 1px solid rgba(255, 255, 255, 0.72);
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		width: 36px;
 		height: 36px;
-		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-		transition: all 0.3s ease-in-out;
+		box-shadow:
+			0 2px 5px rgba(15, 23, 42, 0.18),
+			0 8px 18px rgba(15, 23, 42, 0.16);
+		transition: all 0.2s ease-in-out;
 	}
 
-	/* **大纲样式** */
+	.toggle-btn:hover {
+		background-color: #172033;
+		transform: translateY(-1px);
+	}
+
 	.outline-container {
-		background: white;
+		background: rgba(255, 255, 255, 0.97);
+		border: 1px solid #dbe3ee;
 		border-radius: 8px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
 		padding: 15px;
 		max-height: 80vh;
 		overflow-y: auto;
 		width: 260px;
-		transition: all 0.3s ease-in-out;
 	}
 
 	.outline ul {
@@ -235,23 +201,37 @@
 	}
 
 	.outline li {
-		margin-bottom: 8px;
-		font-size: 14px;
-		transition: padding-left 0.2s ease-in-out;
-	}
-
-	/* **关联章节样式** */
-	.outline li.linked {
-		border-left: 4px solid;
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-bottom: 7px;
+		font-size: 12px;
+		line-height: 1.35;
 	}
 
 	.outline li a {
+		flex: 1;
 		text-decoration: none;
-		color: #0077b6;
+		color: #3867a8;
+		overflow-wrap: anywhere;
 	}
 
 	.outline li a:hover {
 		text-decoration: underline;
-		color: #005f8a;
+		color: #243447;
+	}
+
+	.linked-dot {
+		width: 7px;
+		height: 7px;
+		border-radius: 999px;
+		background: #5f8f3f;
+	}
+
+	:global(.outline-target-flash) {
+		box-shadow: inset 3px 0 0 #5f8f3f;
+		background: rgba(95, 143, 63, 0.12);
+		transition: background 0.2s ease;
 	}
 </style>

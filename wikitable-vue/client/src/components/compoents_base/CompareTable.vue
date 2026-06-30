@@ -1,84 +1,120 @@
 <template>
 	<div class="compare-container">
-		<!-- 加载状态提示 -->
-		<div v-if="isInitializing" class="initial-loading">
+		<div v-if="store.isLoading" class="initial-loading">
 			<div class="loading-spinner"></div>
 			<p>正在准备数据对比...</p>
 		</div>
 
-		<!-- 主对比表格 -->
-		<div class="comparison-grid">
-			<div class="header left-column">
-				{{ leftInfobox.title }}
+		<div v-else-if="!store.session" class="empty-state">
+			输入两篇英文 Wikipedia 文章 URL 后开始比较。
+		</div>
+
+		<div v-else-if="!rows.length" class="empty-state">
+			没有找到可对比属性。
+		</div>
+
+		<div v-else class="comparison-grid" role="table">
+			<div class="header left-column" role="columnheader">
+				{{ articleTitle("left") }}
 			</div>
-			<div class="header middle-column">对比属性</div>
-			<div class="header right-column">
-				{{ rightInfobox.title }}
+			<div class="header middle-column" role="columnheader">对比属性</div>
+			<div class="header right-column" role="columnheader">
+				{{ articleTitle("right") }}
 			</div>
 
-			<template v-for="field in sortedFields" :key="field.key">
+			<template v-for="(row, index) in rows" :key="row.id">
 				<div
-					class="cell left-column"
-					@mouseover="hoverInfobox(leftInfobox, field.key, 'left')"
-					@mouseout="unhoverInfobox('left')"
-					@click="showFullChart(leftInfobox, field)">
-					<SimpleChart v-bind="getChartProps(leftInfobox, field)" />
+					class="cell value-cell left-column"
+					:title="detailText(row, 'left')"
+					@mouseover="highlight(row.leftSourceIds)"
+					@mouseout="clearHighlight"
+					@click="showFullChart(row, 'left')">
+					<SimpleChart
+						:field="chartField(row, 'left')"
+						:type="chartDataType(row)"
+						:visualization="chartVisualization(row)"
+						:fieldKey="row.label"
+						:yDomain="barDomain(row)" />
 				</div>
+
 				<div
-					class="cell middle-column"
-					@mouseover="hoverBothInfoboxes(field.key)"
-					@mouseout="unhoverBothInfoboxes()">
-					<div class="field-name">{{ field.key }}</div>
-					<div class="field-type">{{ field.typeLabel }}</div>
+					class="cell middle-column meta-cell"
+					@mouseover="highlightBoth(row)"
+					@mouseout="clearHighlight">
+					<div class="row-number">{{ index + 1 }}</div>
+					<div class="field-name" :title="row.label">{{ row.label }}</div>
+					<div class="meta-line">
+						<span class="type-badge">{{ row.dataType }}</span>
+						<span class="source-badge">{{ row.sourceKind }}</span>
+					</div>
+					<div class="score-line" :title="`差异度 ${formatScore(row.score)}`">
+						<span>差异度</span>
+						<div class="score-track">
+							<div class="score-fill" :style="{ width: formatScore(row.score) }"></div>
+						</div>
+						<strong>{{ formatScore(row.score) }}</strong>
+					</div>
 					<div class="icon-actions">
-						<span
+						<button
 							class="icon-btn compare"
 							title="对比分析"
-							@click="handleMiddleColumnClick(field)">
-							⚖️
-						</span>
-						<span
+							aria-label="对比分析"
+							@click.stop="emit('compareAttribute', row)">
+							<font-awesome-icon :icon="['fas', 'align-left']" />
+						</button>
+						<button
 							class="icon-btn merge"
 							title="合并图表"
-							@click="showCombinedChart(field)">
-							📊
-						</span>
+							aria-label="合并图表"
+							@click.stop="showCombinedChart(row)">
+							<font-awesome-icon :icon="['fas', 'chart-bar']" />
+						</button>
 					</div>
 				</div>
+
 				<div
-					class="cell right-column"
-					@mouseover="hoverInfobox(rightInfobox, field.key, 'right')"
-					@mouseout="unhoverInfobox('right')"
-					@click="showFullChart(rightInfobox, field)">
-					<SimpleChart v-bind="getChartProps(rightInfobox, field)" />
+					class="cell value-cell right-column"
+					:title="detailText(row, 'right')"
+					@mouseover="highlight(row.rightSourceIds)"
+					@mouseout="clearHighlight"
+					@click="showFullChart(row, 'right')">
+					<SimpleChart
+						:field="chartField(row, 'right')"
+						:type="chartDataType(row)"
+						:visualization="chartVisualization(row)"
+						:fieldKey="row.label"
+						:yDomain="barDomain(row)" />
 				</div>
 			</template>
 		</div>
 
-		<!-- 全屏图表模态框 -->
 		<div
 			v-if="showFullChartModal"
 			class="full-chart-modal"
 			@click.self="closeFullChart">
 			<div class="modal-content">
-				<button class="close-btn" @click="closeFullChart">×</button>
-				<!-- <h3>{{ currentChart.title }}</h3> -->
+				<button class="close-btn" @click="closeFullChart">x</button>
+				<h3>{{ currentChart.title }}</h3>
 				<div class="chart-container">
-					<template v-if="currentChart.field.combined">
-						<CombinedChart
-							:data="currentChart.data"
-							:fieldKey="currentChart.field.key"
-							:sources="currentChart.field.sources" />
-					</template>
-					<template v-else>
-						<FullChart
-							:field="currentChart.data"
-							:type="currentChart.field.type"
-							:visualization="currentChart.field.visualization" />
-					</template>
+					<MergedComparisonChart
+						v-if="currentChart.combined"
+						:row="currentChart.row"
+						:titles="currentChart.titles" />
+					<FullChart
+						v-else
+						:field="currentChart.data"
+						:type="currentChart.type"
+						:visualization="currentChart.visualization"
+						:fieldKey="currentChart.fieldKey" />
 				</div>
-				<div class="chart-legend" v-if="currentChart.field.legend">
-					{{ currentChart.field.legend }}
+				<div v-if="!currentChart.combined && currentChart.details.length" class="chart-details">
+					<div
+						v-for="(detail, index) in currentChart.details"
+						:key="index"
+						class="detail-row">
+						<span class="detail-label">{{ detail.label }}</span>
+						<span class="detail-value">{{ detail.value }}</span>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -86,658 +122,198 @@
 </template>
 
 <script setup>
-	import { ref, computed, onMounted, watch, onUnmounted } from "vue";
+	import { computed, ref } from "vue";
 	import SimpleChart from "./SimpleChart.vue";
 	import FullChart from "./FullChart.vue";
-	import CombinedChart from "./charts/CombinedChart.vue";
-	import bus from "@/js/eventBus.js";
+	import MergedComparisonChart from "./MergedComparisonChart.vue";
+	import { sessionStore as store } from "@/js/sessionStore";
+	const { barChartDomain, formatValueDisplay } = require("@/js/chartValueDisplay");
 
-	const props = defineProps({
+	defineProps({
 		div1RawData: Object,
 		div3RawData: Object
 	});
 
 	const emit = defineEmits(["compareAttribute"]);
 
-	// 状态变量
-	const leftInfobox = ref({ title: "", type: "", data: {} });
-	const rightInfobox = ref({ title: "", type: "", data: {} });
+	const rows = computed(() => store.session?.rankedRows || []);
 	const showFullChartModal = ref(false);
 	const currentChart = ref({
 		title: "",
-		field: {},
-		data: []
+		data: [],
+		type: "text",
+		visualization: "text-only",
+		fieldKey: "",
+		details: [],
+		combined: false,
+		row: null,
+		titles: {}
 	});
-	const isInitializing = ref(true);
-	const hasAutoCompared = ref(false);
-	const leftDataLoaded = ref(false);
-	const rightDataLoaded = ref(false);
-	const sortedFieldsWithScores = ref([]);
 
-	// 可比较字段配置
-	const COMPARABLE_FIELDS = [
-		{
-			key: "GDP growth",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "line-chart",
-			legend: "GDP年增长率（%）"
-		},
-		{
-			key: "Population",
-			type: "number",
-			typeLabel: "数值(人)",
-			visualization: "bar-chart",
-			legend: "人口数量（单位：亿人）"
-		},
-		{
-			key: "GDP",
-			type: "number",
-			typeLabel: "数值(美元)",
-			visualization: "bar-chart",
-			legend: "国内生产总值（单位：万亿美元）"
-		},
-		{
-			key: "Export goods",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "stacked-chart",
-			legend: "出口商品（%）"
-		},
-		{
-			key: "Import goods",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "stacked-chart",
-			legend: "进口商品（%）"
-		},
-		{
-			key: "GDP by sector",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "pie-chart",
-			legend: "按行业划分的国内生产总值"
-		},
-		{
-			key: "GDP per capita",
-			type: "number",
-			typeLabel: "数值(美元)",
-			visualization: "bar-chart",
-			legend: "人均国内生产总值（单位：美元）"
-		},
-		{
-			key: "Main industries",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "stacked-chart",
-			legend: "主要产业（%）"
-		},
-		{
-			key: "Inflation (CPI)",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "pie-chart",
-			legend: "消费者价格指数变化"
-		},
+	const articleTitle = side => store.session?.articles?.[side]?.title || side;
 
-		{
-			key: "Main export partners",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "stacked-chart",
-			legend: "主要出口伙伴（%）"
-		},
-		{
-			key: "Labor force by occupation",
-			type: "percentage",
-			typeLabel: "百分比(%)",
-			visualization: "pie-chart",
-			legend: "按职业划分的劳动力"
-		},
-
-		{
-			key: "GDP rank",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "全球GDP排名"
-		},
-		{
-			key: "GDP per capita",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "人均国内生产总值"
-		},
-
-		{
-			key: "Unemployment",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "失业"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
-		},
-		{
-			key: "Gini coefficient",
-			type: "text",
-			typeLabel: "文本",
-			visualization: "text-only",
-			legend: "基尼系数"
+	const chartField = (row, side) => {
+		const sideData = row.visualization?.[side] || {};
+		if (Array.isArray(sideData.values) && sideData.values.length) {
+			return sideData.values.map(value => ({
+				...value,
+				display: valueDisplayText(value, sideData.raw, row.dataType),
+				raw: valueDisplayText(value, sideData.raw, row.dataType),
+				label: value.label || valueDisplayText(value, sideData.raw, row.dataType)
+			}));
 		}
-	];
-
-	// 基础颜色列表（12种）
-	const UNIFIED_COLOR_PALETTE = [
-		"#8dd3c7",
-		"#ffffb3",
-		"#bebada",
-		"#fb8072",
-		"#80b1d3",
-		"#fdb462",
-		"#b3de69",
-		"#fccde5",
-		"#d9d9d9",
-		"#bc80bd",
-		"#ccebc5",
-		"#ffed6f"
-	];
-	const OTHERS_COLOR = "#a9a9a9"; // "Others"类别的固定颜色
-
-	/**
-	 * 为超出基础调色板的类别动态生成视觉上不同的颜色。
-	 */
-	const generateDistinctColor = (index, baseHue) => {
-		const hue = (baseHue + index * 137.5) % 360;
-		const saturation = 75;
-		const lightness = 55;
-		return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+		return sideData.raw || "-";
 	};
 
-	/**
-	 * 创建统一的颜色映射，如果类别超过12个，则动态生成新颜色。
-	 */
-	const getUnifiedCategoryColors = fieldKey => {
-		// 辅助函数：从数据项中提取并清理类别名称
-		const getCategoryName = item => {
-			if (!item || !item.raw) return null;
-			let name = String(item.raw)
-				.replace(/\s*\d+(\.\d+)?%?$/, "")
-				.trim();
-			return name.replace(/[.:\s]*$/, "").trim();
-		};
-
-		const leftData = getField(leftInfobox.value, fieldKey);
-		const rightData = getField(rightInfobox.value, fieldKey);
-
-		// 获取所有唯一的类别名称
-		const allUniqueCategories = [
-			...new Set([
-				...leftData.map(getCategoryName),
-				...rightData.map(getCategoryName)
-			])
-		].filter(Boolean);
-
-		const colorMap = {};
-		const baseHueForGenerator = Math.random() * 360;
-		let colorIndex = 0;
-
-		// 遍历所有唯一类别来分配颜色
-		allUniqueCategories.forEach(category => {
-			const lowerCaseCategory = category.toLowerCase();
-			if (lowerCaseCategory === "others" || lowerCaseCategory === "other") {
-				colorMap["Others"] = OTHERS_COLOR;
-				colorMap["Other"] = OTHERS_COLOR;
-				colorMap[category] = OTHERS_COLOR;
-				return;
-			}
-
-			if (colorIndex < UNIFIED_COLOR_PALETTE.length) {
-				colorMap[category] = UNIFIED_COLOR_PALETTE[colorIndex];
-			} else {
-				const generatorIndex = colorIndex - UNIFIED_COLOR_PALETTE.length;
-				colorMap[category] = generateDistinctColor(
-					generatorIndex,
-					baseHueForGenerator
-				);
-			}
-			colorIndex++;
-		});
-
-		return colorMap;
+	const valueDisplayText = (value, sourceRaw = "", dataType = "") => {
+		return formatValueDisplay(value, sourceRaw, dataType);
 	};
 
-	// 计算统一的最大值
-	const getUnifiedMaxValue = fieldKey => {
-		const leftValues = getField(leftInfobox.value, fieldKey)
-			.map(v => (typeof v === "object" ? v.value ?? v.raw : v))
-			.map(Number)
-			.filter(n => !isNaN(n));
-
-		const rightValues = getField(rightInfobox.value, fieldKey)
-			.map(v => (typeof v === "object" ? v.value ?? v.raw : v))
-			.map(Number)
-			.filter(n => !isNaN(n));
-
-		const leftMax = leftValues.length ? Math.max(...leftValues) : 0;
-		const rightMax = rightValues.length ? Math.max(...rightValues) : 0;
-
-		return Math.max(leftMax, rightMax) * 1.1 || 1;
-	};
-
-	// 获取图表props
-	const getChartProps = (infobox, field) => {
-		return {
-			field: getField(infobox, field.key),
-			type: field.type,
-			visualization: field.visualization,
-			unifiedMax: getUnifiedMaxValue(field.key),
-			fieldKey: field.key,
-			categoryColors: getUnifiedCategoryColors(field.key)
-		};
-	};
-
-	// 自动对比方法
-	const tryAutoCompare = () => {
-		if (
-			hasAutoCompared.value ||
-			!leftDataLoaded.value ||
-			!rightDataLoaded.value
-		)
-			return;
-
-		isInitializing.value = true;
-		hasAutoCompared.value = true;
-
-		const mostSignificantField = sortedFieldsWithScores.value[0];
-		if (mostSignificantField) {
-			emit("compareAttribute", {
-				fieldKey: mostSignificantField.key,
-				leftData: getField(leftInfobox.value, mostSignificantField.key),
-				rightData: getField(rightInfobox.value, mostSignificantField.key),
-				leftTitle: leftInfobox.value.title,
-				rightTitle: rightInfobox.value.title,
-				fieldType: mostSignificantField.type,
-				fieldLabel: mostSignificantField.typeLabel
-			});
+	const chartVisualization = row => {
+		const chartType = String(row.chartType || "").toLowerCase();
+		if (chartType === "pie" && hasNonPartWholePercentage(row)) {
+			return "bar-chart";
 		}
-
-		isInitializing.value = false;
+		if (String(row.dataType || "").toLowerCase() === "proportional") {
+			if (hasNonPartWholePercentage(row)) return "bar-chart";
+			const valueCount = maxValueCount(row);
+			if (valueCount <= 1) return "bar-chart";
+			return valueCount <= 4 ? "pie-chart" : "stacked-chart";
+		}
+		const map = {
+			bar: "bar-chart",
+			scatter: "bar-chart",
+			pie: "pie-chart",
+			stacked: "stacked-chart",
+			line: "line-chart",
+			text: "text-only"
+		};
+		return map[chartType] || "text-only";
 	};
 
-	// 检查是否是有效的国家/地区名称
-	const isValidCountryName = name => {
-		const invalidPatterns = [
-			/^<\/?[a-z][\s\S]*>/i, // HTML标签
-			/^\(.*\)$/, // 括号内容（如年份）
-			/^\d+$/, // 纯数字
-			/^nowrap$/i, // CSS类名
-			/^flagicon$/i, // CSS类名
-			/^treeview$/i, // CSS类名
-			/^mw-/i, // MediaWiki相关
-			/^cite_ref/i // 引用标记
-		];
-
-		return (
-			!invalidPatterns.some(pattern => pattern.test(name)) &&
-			name.length > 1 &&
-			!name.includes("{") &&
-			!name.includes("}")
+	const maxValueCount = row => {
+		return Math.max(
+			...["left", "right"].map(side => {
+				const values = row.visualization?.[side]?.values;
+				return Array.isArray(values) ? values.length : 0;
+			})
 		);
 	};
 
-	// 从 raw 数据中提取名称
-	const extractNameFromRaw = raw => {
-		if (!raw) return null;
-		const match = String(raw).match(/(.+?)\s*[\d.]+%?$/);
-		return match ? match[1].trim() : null;
-	};
-
-	// 从 raw 数据中提取数值
-	const extractValueFromRaw = raw => {
-		if (!raw) return 0;
-		const match = String(raw).match(/([\d.]+)%?$/);
-		return match ? parseFloat(match[1]) : 0;
-	};
-
-	// 解析树形结构数据的辅助函数
-	const parseTreeStructureData = dataString => {
-		const result = [];
-		const lines = dataString.split("\n").filter(line => line.trim());
-
-		lines.forEach(line => {
-			// 匹配百分比数据格式：国家/地区 XX.X%
-			const match = line.match(/(.+?)\s*([\d.]+)%$/);
-			if (match) {
-				const [, name, percentage] = match;
-				const trimmedName = name.trim();
-
-				// 跳过空名称
-				if (!trimmedName) return;
-
-				// 检查是否是有效的国家/地区名称（不是HTML标签或其他无效内容）
-				if (isValidCountryName(trimmedName)) {
-					result.push({
-						label: trimmedName,
-						value: parseFloat(percentage),
-						raw: line.trim(),
-						parent: null
-					});
-				}
-			}
+	const hasNonPartWholePercentage = row => {
+		if (String(row.dataType || "").toLowerCase() !== "proportional") return false;
+		return ["left", "right"].some(side => {
+			const values = row.visualization?.[side]?.values;
+			if (!Array.isArray(values) || values.length !== 1) return false;
+			const value = Number(values[0]?.value);
+			return Number.isFinite(value) && (value < 0 || value > 100);
 		});
-
-		return result;
 	};
 
-	const getField = (infobox, fieldKey) => {
-		if (!infobox?.data) return [];
-
-		const possibleKeys = [fieldKey];
-		if (fieldKey.includes("Labor")) {
-			possibleKeys.push(fieldKey.replace("Labor", "Labour"));
-		}
-
-		const deepFind = (obj, keys) => {
-			for (const key of keys) {
-				if (obj[key] !== undefined) return obj[key];
-			}
-			for (const [k, v] of Object.entries(obj)) {
-				if (typeof v === "object" && v !== null) {
-					const found = deepFind(v, keys);
-					if (found !== undefined) return found;
-				}
-			}
-			return undefined;
-		};
-
-		let fieldData = deepFind(infobox.data, possibleKeys);
-		if (fieldData === undefined) return [];
-
-		// 特殊处理：如果字段是主要出口伙伴但没有找到数据，尝试其他可能的键名
-		if (
-			fieldKey === "Main export partners" &&
-			(!fieldData || (Array.isArray(fieldData) && fieldData.length === 0))
-		) {
-			// 尝试其他可能的键名
-			const alternativeKeys = [
-				"Export partners",
-				"Exports",
-				"Main exports",
-				"Export"
-			];
-			for (const altKey of alternativeKeys) {
-				fieldData = deepFind(infobox.data, [altKey]);
-				if (fieldData && (!Array.isArray(fieldData) || fieldData.length > 0)) {
-					break;
-				}
-			}
-		}
-
-		// 特殊处理：如果字段是主要产业但没有找到数据，尝试其他可能的键名
-		if (
-			fieldKey === "Main industries" &&
-			(!fieldData || (Array.isArray(fieldData) && fieldData.length === 0))
-		) {
-			// 尝试其他可能的键名
-			const alternativeKeys = [
-				"Industries",
-				"Industry",
-				"Sectors",
-				"Economic sectors"
-			];
-			for (const altKey of alternativeKeys) {
-				fieldData = deepFind(infobox.data, [altKey]);
-				if (fieldData && (!Array.isArray(fieldData) || fieldData.length > 0)) {
-					break;
-				}
-			}
-		}
-
-		// 处理主要出口伙伴的特殊情况 - 直接解析HTML结构
-		if (fieldKey === "Main export partners") {
-			// 根据国家返回相应的数据
-			if (
-				infobox.title.includes("South Korea") ||
-				infobox.title.includes("Korea")
-			) {
-				// 韩国数据 - 正确解析为两个独立的条目
-				const result = [
-					{ label: "China", value: 24.6, raw: "China 24.6%" },
-					{ label: "Hong Kong", value: 5.1, raw: "Hong Kong 5.1%" },
-					{ label: "United States", value: 18.7, raw: "United States 18.7%" },
-					{ label: "ASEAN", value: 16.7, raw: "ASEAN 16.7%" },
-					{ label: "European Union", value: 10.0, raw: "European Union 10.0%" },
-					{ label: "Taiwan", value: 5.0, raw: "Taiwan 5.0%" },
-					{ label: "Japan", value: 4.3, raw: "Japan 4.3%" }
-				];
-				console.log(`Parsed ${fieldKey} data for South Korea:`, result);
-				return result;
-			} else if (infobox.title.includes("Japan")) {
-				// 日本数据 - 正确解析为两个独立的条目
-				const result = [
-					{ label: "China", value: 22.2, raw: "China 22.2%" },
-					{ label: "Hong Kong", value: 4.9, raw: "Hong Kong 4.9%" },
-					{ label: "United States", value: 20.6, raw: "United States 20.6%" },
-					{ label: "ASEAN", value: 13.9, raw: "ASEAN 13.9%" },
-					{ label: "European Union", value: 9.7, raw: "European Union 9.7%" },
-					{ label: "Taiwan", value: 6.6, raw: "Taiwan 6.6%" },
-					{ label: "South Korea", value: 6.6, raw: "South Korea 6.6%" }
-				];
-				console.log(`Parsed ${fieldKey} data for Japan:`, result);
-				return result;
-			}
-		}
-
-		// 处理主要产业的特殊情况
-		if (fieldKey === "Main industries") {
-			// 根据国家返回相应的产业数据
-			if (
-				infobox.title.includes("South Korea") ||
-				infobox.title.includes("Korea")
-			) {
-				// 韩国主要产业数据 - 只有类别名称，没有百分比
-				const result = [
-					{ label: "Electronics", value: 0, raw: "Electronics" },
-					{ label: "Automobiles", value: 0, raw: "Automobiles" },
-					{ label: "Shipbuilding", value: 0, raw: "Shipbuilding" },
-					{ label: "Chemicals", value: 0, raw: "Chemicals" },
-					{ label: "Steel", value: 0, raw: "Steel" },
-					{ label: "Textiles", value: 0, raw: "Textiles" }
-				];
-				console.log(`Parsed ${fieldKey} data for South Korea:`, result);
-				return result;
-			} else if (infobox.title.includes("Japan")) {
-				// 日本主要产业数据 - 只有类别名称，没有百分比
-				const result = [
-					{ label: "Automobiles", value: 0, raw: "Automobiles" },
-					{ label: "Electronics", value: 0, raw: "Electronics" },
-					{ label: "Machinery", value: 0, raw: "Machinery" },
-					{ label: "Chemicals", value: 0, raw: "Chemicals" },
-					{ label: "Steel", value: 0, raw: "Steel" },
-					{
-						label: "Precision instruments",
-						value: 0,
-						raw: "Precision instruments"
-					}
-				];
-				console.log(`Parsed ${fieldKey} data for Japan:`, result);
-				return result;
-			}
-		}
-
-		// 处理字符串格式的数据 - 正确解析树形结构
-		if (typeof fieldData === "string") {
-			const result = parseTreeStructureData(fieldData);
-			console.log(`Parsed ${fieldKey} string data:`, result);
-			return result;
-		}
-
-		// 处理数组格式的数据
-		if (Array.isArray(fieldData)) {
-			const result = [];
-			fieldData.forEach(item => {
-				if (typeof item === "string") {
-					result.push(...parseTreeStructureData(item));
-				} else if (typeof item === "object") {
-					// 确保每个条目都有正确的 label 和 value
-					result.push({
-						label: item.label || extractNameFromRaw(item.raw) || "Unknown",
-						value: item.value || extractValueFromRaw(item.raw) || 0,
-						raw: item.raw || JSON.stringify(item),
-						parent: item.parent || null
-					});
-				}
-			});
-			console.log(`Parsed ${fieldKey} array data:`, result);
-			return result;
-		}
-
-		const finalResult = Array.isArray(fieldData) ? fieldData : [fieldData];
-		console.log(`Final ${fieldKey} data:`, finalResult);
-		return finalResult;
+	const chartDataType = row => {
+		const dataType = String(row.dataType || "").toLowerCase();
+		if (dataType === "proportional") return "percentage";
+		if (dataType === "trend" && rowHasPercentValues(row)) return "percentage";
+		if (["numerical", "trend", "ordinal"].includes(dataType)) return "number";
+		return "text";
 	};
 
-	const calculateDifferenceScore = field => {
-		const leftValues = getField(leftInfobox.value, field.key)
-			.map(v => (typeof v === "object" ? v.value ?? v.raw : v))
-			.map(Number)
-			.filter(n => !isNaN(n));
-
-		const rightValues = getField(rightInfobox.value, field.key)
-			.map(v => (typeof v === "object" ? v.value ?? v.raw : v))
-			.map(Number)
-			.filter(n => !isNaN(n));
-
-		if (leftValues.length === 0 || rightValues.length === 0) {
-			return 0;
-		}
-
-		let maxScore = 0;
-
-		leftValues.forEach(leftNum => {
-			rightValues.forEach(rightNum => {
-				const isOpposite =
-					(leftNum > 0 && rightNum < 0) || (leftNum < 0 && rightNum > 0);
-
-				const absDiff = Math.abs(leftNum - rightNum);
-				const avg = (Math.abs(leftNum) + Math.abs(rightNum)) / 2;
-				const relativeDiff = avg > 0 ? absDiff / avg : 0;
-
-				let score;
-				if (isOpposite) {
-					score = 90 + 10 * relativeDiff;
-				} else {
-					score = 10 + 40 * relativeDiff;
-				}
-
-				if (score > maxScore) maxScore = score;
-			});
+	const barDomain = row => {
+		if (chartVisualization(row) !== "bar-chart") return null;
+		const values = ["left", "right"].flatMap(side => {
+			const sideValues = row.visualization?.[side]?.values;
+			return Array.isArray(sideValues)
+				? sideValues.map(value => Number(value.value)).filter(Number.isFinite)
+				: [];
 		});
-
-		const weight = field.key.toLowerCase().includes("gdp growth") ? 3 : 1;
-		return Math.min(100, Math.round(maxScore * weight));
+		return values.length ? barChartDomain(values) : null;
 	};
 
-	const sortedFields = computed(() => {
-		return comparableFields.value;
-	});
-
-	const comparableFields = computed(() => {
-		return COMPARABLE_FIELDS.filter(field => {
-			const leftVal = getField(leftInfobox.value, field.key);
-			const rightVal = getField(rightInfobox.value, field.key);
-			return (
-				(Array.isArray(leftVal) && leftVal.length > 0) ||
-				(Array.isArray(rightVal) && rightVal.length > 0)
-			);
+	const rowHasPercentValues = row => {
+		return ["left", "right"].some(side => {
+			const raw = row.visualization?.[side]?.raw;
+			return raw !== null && raw !== undefined && String(raw).includes("%");
 		});
-	});
-
-	const tryCalculateScores = () => {
-		if (leftDataLoaded.value && rightDataLoaded.value) {
-			sortedFieldsWithScores.value = comparableFields.value
-				.map(field => ({
-					...field,
-					score: calculateDifferenceScore(field)
-				}))
-				.sort((a, b) => {
-					if (a.type !== "text" && b.type === "text") return -1;
-					if (a.type === "text" && b.type !== "text") return 1;
-					return b.score - a.score;
-				});
-
-			tryAutoCompare();
-		}
 	};
 
-	const showFullChart = (infobox, field) => {
+	const formatScore = score => `${Math.round(Number(score || 0) * 100)}%`;
+
+	const rawText = (row, side) => {
+		const raw = row.visualization?.[side]?.raw;
+		if (raw === null || raw === undefined || raw === "") return "-";
+		return String(raw);
+	};
+
+	const extractedValueText = (row, side) => {
+		const sideData = row.visualization?.[side] || {};
+		if (!Array.isArray(sideData.values) || !sideData.values.length) return "";
+		return sideData.values
+			.map(value => valueDisplayText(value, sideData.raw, row.dataType))
+			.join("\n");
+	};
+
+	const detailRows = (row, side) => {
+		const rows = [];
+		const extracted = extractedValueText(row, side);
+		if (extracted) {
+			rows.push({ label: "标准化值", value: extracted });
+		}
+		const raw = rawText(row, side);
+		if (raw !== "-") {
+			rows.push({ label: "原始值", value: raw });
+		}
+		return rows;
+	};
+
+	const detailText = (row, side) => {
+		const details = detailRows(row, side);
+		return details.map(detail => `${detail.label}: ${detail.value}`).join("\n");
+	};
+
+	const highlight = sourceIds => {
+		store.highlight(sourceIds || []);
+	};
+
+	const highlightBoth = row => {
+		store.highlightAndReveal([...(row.leftSourceIds || []), ...(row.rightSourceIds || [])]);
+	};
+
+	const clearHighlight = () => {
+		store.clearHighlight();
+	};
+
+	const showFullChart = (row, side) => {
 		currentChart.value = {
-			title: `${infobox.title} - ${field.key}`,
-			field: field,
-			data: getField(infobox, field.key)
+			title: `${articleTitle(side)} - ${row.label}`,
+			data: chartField(row, side),
+			type: chartDataType(row),
+			visualization: chartVisualization(row),
+			fieldKey: row.label,
+			details: detailRows(row, side),
+			combined: false,
+			row: null,
+			titles: {}
+		};
+		showFullChartModal.value = true;
+	};
+
+	const showCombinedChart = row => {
+		currentChart.value = {
+			title: `合并图表 - ${row.label}`,
+			data: [],
+			type: chartDataType(row),
+			visualization: "merged-comparison",
+			fieldKey: row.label,
+			details: [],
+			combined: true,
+			row: {
+				...row,
+				mergeVisualization: chartVisualization(row)
+			},
+			titles: {
+				left: articleTitle("left"),
+				right: articleTitle("right")
+			}
 		};
 		showFullChartModal.value = true;
 	};
@@ -745,351 +321,339 @@
 	const closeFullChart = () => {
 		showFullChartModal.value = false;
 	};
-
-	const hoverInfobox = (infobox, fieldKey, side) => {
-		bus.emit(`hover-${side}-infobox`, {
-			fieldKey,
-			infoboxTitle: infobox.title
-		});
-	};
-
-	const unhoverInfobox = side => {
-		bus.emit(`unhover-${side}-infobox`);
-	};
-
-	const hoverBothInfoboxes = fieldKey => {
-		bus.emit("highlight-infobox", {
-			side: "left",
-			fields: [fieldKey],
-			highlightType: "step"
-		});
-		bus.emit("highlight-infobox", {
-			side: "right",
-			fields: [fieldKey],
-			highlightType: "step"
-		});
-	};
-
-	const unhoverBothInfoboxes = () => {
-		bus.emit("unhighlight-infobox");
-	};
-
-	const handleMiddleColumnClick = field => {
-		emit("compareAttribute", {
-			fieldKey: field.key,
-			leftData: getField(leftInfobox.value, field.key),
-			rightData: getField(rightInfobox.value, field.key),
-			leftTitle: leftInfobox.value.title,
-			rightTitle: rightInfobox.value.title,
-			fieldType: field.type,
-			fieldLabel: field.typeLabel
-		});
-	};
-
-	const showCombinedChart = field => {
-		const leftData = getField(leftInfobox.value, field.key);
-		const rightData = getField(rightInfobox.value, field.key);
-
-		const combinedData = [
-			...leftData.map(item => ({
-				...item,
-				source: leftInfobox.value.title,
-				sourceType: "left"
-			})),
-			...rightData.map(item => ({
-				...item,
-				source: rightInfobox.value.title,
-				sourceType: "right"
-			}))
-		];
-
-		currentChart.value = {
-			title: `合并图表 - ${field.key}`,
-			field: {
-				...field,
-				visualization: "line-chart",
-				combined: true,
-				sources: {
-					left: leftInfobox.value.title,
-					right: rightInfobox.value.title
-				}
-			},
-			data: combinedData
-		};
-		showFullChartModal.value = true;
-	};
-
-	const processInfoboxData = data => {
-		if (!data) {
-			console.warn("接收到空Infobox数据");
-			return { title: "", type: "", data: {} };
-		}
-		return {
-			title: data.title || "无标题",
-			type: data.type || "未知类型",
-			data: data.sections || {}
-		};
-	};
-
-	onMounted(() => {
-		bus.on("div1_InfoboxData", data => {
-			leftInfobox.value = processInfoboxData(data);
-			leftDataLoaded.value = true;
-			tryCalculateScores();
-		});
-
-		bus.on("div3_InfoboxData", data => {
-			rightInfobox.value = processInfoboxData(data);
-			rightDataLoaded.value = true;
-			tryCalculateScores();
-		});
-	});
-
-	watch(
-		[() => leftDataLoaded.value, () => rightDataLoaded.value],
-		([leftLoaded, rightLoaded]) => {
-			if (leftLoaded && rightLoaded) {
-				tryCalculateScores();
-			}
-		}
-	);
-
-	onUnmounted(() => {
-		bus.off("div1_InfoboxData");
-		bus.off("div3_InfoboxData");
-	});
 </script>
 
 <style scoped>
 	.compare-container {
 		width: 100%;
 		height: 100%;
-		padding: 8px;
+		padding: 0;
 		box-sizing: border-box;
 		position: relative;
+		background: #ffffff;
+		color: #1f2937;
+	}
+
+	.initial-loading,
+	.empty-state {
+		display: flex;
+		min-height: 220px;
+		align-items: center;
+		justify-content: center;
+		color: #64748b;
+		font-size: 13px;
+		text-align: center;
 	}
 
 	.initial-loading {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background: rgba(255, 255, 255, 0.8);
-		display: flex;
 		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		z-index: 100;
-	}
-
-	.initial-loading p {
-		margin-top: 10px;
-		font-size: 14px;
-		color: #666;
 	}
 
 	.loading-spinner {
 		width: 30px;
 		height: 30px;
-		border: 3px solid #f3f3f3;
-		border-top: 3px solid #4caf50;
+		border: 3px solid #e2e8f0;
+		border-top: 3px solid #2563eb;
 		border-radius: 50%;
 		animation: spin 1s linear infinite;
 	}
 
 	@keyframes spin {
-		0% {
-			transform: rotate(0deg);
-		}
-		100% {
+		to {
 			transform: rotate(360deg);
 		}
 	}
 
 	.comparison-grid {
 		display: grid;
-		grid-template-columns:
-			minmax(120px, 1fr)
-			minmax(80px, 150px)
-			minmax(120px, 1fr);
+		grid-template-columns: minmax(0, 1fr) minmax(92px, 106px) minmax(0, 1fr);
 		width: 100%;
-		border: 1px solid #e0e0e0;
-		border-radius: 4px;
-		overflow: hidden;
-		max-height: 1500px;
-		overflow-y: auto;
+		min-height: 100%;
+		border: 0;
+		background: #dfe7f1;
+		gap: 1px;
 	}
 
 	.header {
-		padding: 8px 6px;
-		background: #2c3e50;
-		color: white;
-		font-weight: bold;
-		text-align: center;
 		position: sticky;
 		top: 0;
-		z-index: 1;
-		border-right: 1px solid #475569;
-		min-height: 36px;
-		font-size: 13px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.header.middle-column {
-		padding: 8px 4px;
-		background: #1e293b;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+		z-index: 5;
+		background: linear-gradient(180deg, #fbfdff 0%, #f1f5f9 100%);
+		padding: 10px 8px;
+		border-bottom: 1px solid #cfd8e5;
+		box-shadow: 0 1px 0 rgba(255, 255, 255, 0.82) inset;
+		font-weight: 750;
+		text-align: center;
+		color: #243447;
+		font-size: 11px;
+		line-height: 1.25;
+		overflow-wrap: anywhere;
+		min-width: 0;
 	}
 
 	.cell {
-		padding: 8px;
-		height: 150px;
-		border-bottom: 1px solid #e0e0e0;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		position: relative;
-		cursor: pointer;
-		transition: all 0.3s ease;
 		min-width: 0;
+		min-height: 124px;
+		padding: 7px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		overflow: hidden;
+		background: #ffffff;
+		transition: background 0.16s ease, box-shadow 0.16s ease;
 	}
 
-	.left-column,
-	.right-column {
-		max-width: 100%;
+	.value-cell {
+		flex-direction: column;
+		gap: 6px;
+		cursor: zoom-in;
+		background: #ffffff;
 	}
 
-	.cell:hover {
-		background-color: #f5f5f5;
-	}
-
-	.left-column:hover {
-		background-color: #fff8e1;
-	}
-
-	.right-column:hover {
-		background-color: #fff8e1;
+	.value-cell:hover {
+		background: #fbfdff;
+		box-shadow: inset 0 0 0 2px rgba(56, 103, 168, 0.12);
 	}
 
 	.middle-column {
 		position: relative;
-		cursor: default;
-		background-color: #f8f9fa;
-		transition: background-color 0.2s;
+		flex-direction: column;
+		gap: 6px;
+		text-align: center;
+		background: #f7fafc;
 	}
 
-	.middle-column:hover {
-		background-color: #e9ecef;
+	.meta-cell {
+		padding: 9px 6px;
+		border-left: 1px solid rgba(226, 232, 240, 0.7);
+		border-right: 1px solid rgba(226, 232, 240, 0.7);
+	}
+
+	.meta-cell:hover {
+		background: #f1f6fb;
+	}
+
+	.row-number {
+		position: absolute;
+		top: 6px;
+		left: 6px;
+		display: grid;
+		width: 18px;
+		height: 18px;
+		place-items: center;
+		border-radius: 50%;
+		background: #e8eef6;
+		color: #4b5f76;
+		font-size: 10px;
+		font-weight: 750;
 	}
 
 	.field-name {
-		font-weight: bold;
-		margin-bottom: 4px;
-		font-size: 12px;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		text-align: center;
-		width: 100%;
+		max-width: 100%;
+		padding: 0 18px;
+		color: #172033;
+		font-size: 11px;
+		font-weight: 750;
+		line-height: 1.25;
+		overflow-wrap: anywhere;
 	}
 
-	.field-type {
-		color: #666;
-		font-size: 11px;
-		font-style: italic;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		text-align: center;
+	.meta-line {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+		justify-content: center;
+	}
+
+	.type-badge,
+	.source-badge {
+		padding: 2px 6px;
+		border-radius: 999px;
+		font-size: 10px;
+		line-height: 1.4;
+		border: 1px solid transparent;
+		font-weight: 650;
+	}
+
+	.type-badge {
+		background: #eaf2fb;
+		border-color: #c9d9eb;
+		color: #2c5b8f;
+	}
+
+	.source-badge {
+		background: #eef7ef;
+		border-color: #cfe2d2;
+		color: #4d783d;
+	}
+
+	.score-line {
+		display: grid;
+		grid-template-columns: auto 1fr auto;
 		width: 100%;
+		align-items: center;
+		gap: 5px;
+		color: #64748b;
+		font-size: 11px;
+	}
+
+	.score-line strong {
+		color: #334155;
+		font-weight: 600;
+	}
+
+	.score-track {
+		height: 5px;
+		overflow: hidden;
+		border-radius: 999px;
+		background: #dde6ef;
+	}
+
+	.score-fill {
+		height: 100%;
+		border-radius: inherit;
+		background: linear-gradient(90deg, #3867a8 0%, #5f8f3f 100%);
 	}
 
 	.icon-actions {
 		display: flex;
+		gap: 8px;
 		justify-content: center;
-		gap: 15px;
-		margin-top: 8px;
+		align-items: center;
 	}
 
 	.icon-btn {
-		font-size: 16px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		border: 1px solid rgba(255, 255, 255, 0.75);
+		border-radius: 50%;
+		background: #3867a8;
+		color: #ffffff;
+		font-size: 11px;
+		line-height: 1;
+		padding: 0;
 		cursor: pointer;
-		opacity: 0.7;
-		transition: all 0.2s;
+		box-shadow:
+			0 1px 2px rgba(15, 23, 42, 0.12),
+			0 4px 10px rgba(56, 103, 168, 0.18);
+		transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 	}
 
 	.icon-btn:hover {
-		opacity: 1;
-		transform: scale(1.2);
+		background: #2f588f;
+		transform: translateY(-1px);
+		box-shadow:
+			0 2px 5px rgba(15, 23, 42, 0.14),
+			0 7px 14px rgba(56, 103, 168, 0.2);
 	}
 
-	.icon-btn.compare:hover {
-		color: #4caf50;
+	.icon-btn.merge {
+		background: #5f8f3f;
+		box-shadow:
+			0 1px 2px rgba(15, 23, 42, 0.12),
+			0 4px 10px rgba(95, 143, 63, 0.18);
 	}
 
 	.icon-btn.merge:hover {
-		color: #2196f3;
+		background: #507c35;
 	}
 
 	.full-chart-modal {
 		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background-color: rgba(0, 0, 0, 0.3);
-		backdrop-filter: blur(8px);
+		inset: 0;
+		background: rgba(15, 23, 42, 0.5);
+		z-index: 3000;
 		display: flex;
-		justify-content: center;
 		align-items: center;
-		z-index: 1000;
-		animation: fadeIn 0.3s ease-out;
+		justify-content: center;
+		backdrop-filter: blur(3px);
 	}
 
 	.modal-content {
 		background: white;
-		padding: 16px;
-		border-radius: 8px;
-		width: 85%;
-		max-width: 800px;
-		max-height: 85vh;
+		border: 1px solid rgba(226, 232, 240, 0.9);
+		border-radius: 10px;
+		width: min(980px, 92vw);
+		max-height: 86vh;
+		padding: 20px;
 		position: relative;
-		overflow-y: auto;
+		overflow: auto;
+		box-shadow:
+			0 18px 45px rgba(15, 23, 42, 0.22),
+			0 2px 8px rgba(15, 23, 42, 0.1);
 	}
 
-	.chart-container {
-		height: 60vh;
-		width: 100%;
-		margin: 16px 0;
-	}
-
-	.chart-legend {
-		font-size: 13px;
-		color: #666;
-		text-align: center;
-		margin-top: 12px;
-		padding-top: 12px;
-		border-top: 1px solid #eee;
+	.modal-content h3 {
+		margin: 0 36px 16px 0;
+		color: #172033;
+		font-size: 18px;
+		line-height: 1.3;
+		font-weight: 750;
 	}
 
 	.close-btn {
 		position: absolute;
-		top: 8px;
-		right: 8px;
-		font-size: 20px;
-		background: none;
-		border: none;
+		right: 12px;
+		top: 12px;
+		border: 0;
+		background: #f1f5f9;
+		color: #334155;
+		border-radius: 999px;
+		width: 30px;
+		height: 30px;
 		cursor: pointer;
-		color: #666;
+		font-size: 13px;
+		font-weight: 700;
+		transition: background 0.16s ease, transform 0.16s ease;
 	}
 
 	.close-btn:hover {
-		color: #333;
+		background: #e2e8f0;
+		transform: scale(1.04);
+	}
+
+	.chart-container {
+		min-height: 360px;
+	}
+
+	.chart-details {
+		display: grid;
+		gap: 8px;
+		margin-top: 12px;
+		padding-top: 12px;
+		border-top: 1px solid #e2e8f0;
+	}
+
+	.detail-row {
+		display: grid;
+		grid-template-columns: 76px 1fr;
+		gap: 10px;
+		align-items: start;
+		color: #334155;
+		font-size: 12px;
+		line-height: 1.45;
+	}
+
+	.detail-label {
+		color: #64748b;
+		font-weight: 600;
+	}
+
+	.detail-value {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+
+	:deep(.simple-chart) {
+		width: 100%;
+		min-height: 58px;
+	}
+
+	:deep(.simple-text) {
+		font-size: 12px;
+		line-height: 1.35;
 	}
 </style>

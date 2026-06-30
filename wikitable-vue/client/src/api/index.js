@@ -1,6 +1,6 @@
-import axios from 'axios';
+import axios from "axios";
 
-var address = "http://localhost:8888/"
+var address = "http://localhost:8888/";
 
 function filterNull(o) {
     for (var key in o) {
@@ -40,6 +40,12 @@ function apiAxios(type, url, params, callback) {
     }
 }
 
+export function postJson(url, params) {
+    return axios
+        .post(address + url, params, { headers: { "Content-Type": "application/json" } })
+        .then(response => response.data);
+}
+
 export default {
     get: function (url, params, callback) {
         return apiAxios('GET', url, params, callback);
@@ -47,4 +53,4 @@ export default {
     post: function (url, params, callback) {
         return apiAxios('POST', url, params, callback);
     }
-}
+};

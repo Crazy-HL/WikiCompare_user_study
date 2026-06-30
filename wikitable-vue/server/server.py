@@ -1,8 +1,26 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 import tornado.ioloop
 import tornado.web
 import json
+import uuid
 from openai import OpenAI
+from services.analysis import (
+    fallback_answer,
+    fallback_attribute_summary,
+    llm_answer,
+    llm_attribute_summary,
+    row_context,
+)
+from services.article_loader import fetch_article_html, parse_article_html
+from services.attribute_pool import build_attribute_pool
+from services.config import get_llm_config
+from services.llm_client import LLMClient
+from services.models import CompareSession
+from services.outline_matcher import build_outline_matches
+from services.pipeline import normalize_attribute_pair, rank_rows
+from services.session_store import SessionStore
+from services.wiki_url import WikiUrlError, parse_english_wikipedia_url
 from tool.obtainHtml import obtain_html
 from tool.chart_formats import (
     get_bar_chart_format,
@@ -18,12 +36,6 @@ from tool.chart_formats import (
 from tool.json_extractor import extract_json
 import re
 
-# 初始化 OpenAI 客户端
-client = OpenAI(
-    api_key="sk-dSXNbY9UIoQ1NkbAhTIlqUaAROD5qzA6n9ZnwKMuFV4r5SyR", 
-    base_url="https://api.moonshot.cn/v1",
-)
-
 # 系统消息，用于为模型提供指导
 system_messages = [
     {"role": "system", "content": "你是辅助阅读对比的专家，可以对比两篇文章。同时你还可以判断文章中的内容是否可以进行可视化，并擅长将相关的可视化数据识别提取出来。"},
@@ -31,6 +43,8 @@ system_messages = [
 
 # 用于记录对比结果
 comparison_result = ""  # 对比后的文章内容
+SESSION_STORE = SessionStore()
+BLOCKING_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 
 def make_messages(input: str, n: int = 20) -> list:
     """
@@ -57,11 +71,24 @@ def chat(input: str) -> str:
     """
     进行对话，并返回模型的回答，支持多轮对话。
     """
+    config = get_llm_config()
+    if not config.enabled:
+        return json.dumps({
+            "error": "OpenAI API 未配置",
+            "message": "请设置 OPENAI_API_KEY、OPENAI_MODEL 和 OPENAI_BASE_URL 后重试"
+        }, ensure_ascii=False)
+
+    client = OpenAI(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        timeout=config.timeout_seconds,
+        max_retries=0,
+    )
     retry_attempts = 3
     for attempt in range(retry_attempts):
         try:
             completion = client.chat.completions.create(
-                model="moonshot-v1-8k",
+                model=config.model,
                 messages=make_messages(input),
                 temperature=0.3,
             )
@@ -80,6 +107,229 @@ def chat(input: str) -> str:
         "error": "OpenAI API 调用失败",
         "message": "请检查 API 配置或稍后重试"
     })
+
+
+class ApiHandler(tornado.web.RequestHandler):
+    def set_default_headers(self):
+        self.set_header("Access-Control-Allow-Origin", "*")
+        self.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.set_header("Access-Control-Allow-Headers", "Content-Type")
+        self.set_header("Content-Type", "application/json; charset=UTF-8")
+
+    def options(self):
+        self.set_status(204)
+        self.finish()
+
+    def read_json(self):
+        try:
+            data = json.loads(self.request.body or b"{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.write_error_json(400, "Invalid JSON body")
+            return None
+        if not isinstance(data, dict):
+            self.write_error_json(400, "JSON body must be an object")
+            return None
+        return data
+
+    def write_error_json(self, status_code: int, message: str):
+        self.set_status(status_code)
+        self.write(json.dumps({"error": message}, ensure_ascii=False))
+
+
+class CompareSessionHandler(ApiHandler):
+    async def post(self):
+        data = self.read_json()
+        if data is None:
+            return
+
+        left_url = str(data.get("leftUrl") or "").strip()
+        right_url = str(data.get("rightUrl") or "").strip()
+        if not left_url:
+            self.write_error_json(400, "leftUrl is required")
+            return
+        if not right_url:
+            self.write_error_json(400, "rightUrl is required")
+            return
+
+        try:
+            left_wiki = parse_english_wikipedia_url(left_url)
+            right_wiki = parse_english_wikipedia_url(right_url)
+        except WikiUrlError as error:
+            self.write_error_json(400, str(error))
+            return
+
+        status_code, payload = await tornado.ioloop.IOLoop.current().run_in_executor(
+            BLOCKING_EXECUTOR,
+            _create_compare_session_payload,
+            left_wiki,
+            right_wiki,
+        )
+        if status_code != 200:
+            self.write_error_json(status_code, payload["error"])
+            return
+        self.write(json.dumps(payload, ensure_ascii=False))
+
+
+def _create_compare_session_payload(left_wiki, right_wiki) -> tuple[int, dict]:
+    warnings = []
+    config = get_llm_config()
+    llm_client = LLMClient(config) if config.enabled else None
+    if not config.enabled:
+        warnings.append("OPENAI_API_KEY is not configured; text attribute extraction is disabled")
+
+    try:
+        left_article = parse_article_html(
+            fetch_article_html(left_wiki.title, left_wiki.revision),
+            side="left",
+            title=left_wiki.title,
+            url=left_wiki.normalized_url,
+            revision=left_wiki.revision,
+        )
+        right_article = parse_article_html(
+            fetch_article_html(right_wiki.title, right_wiki.revision),
+            side="right",
+            title=right_wiki.title,
+            url=right_wiki.normalized_url,
+            revision=right_wiki.revision,
+        )
+    except Exception as error:
+        return 502, {"error": f"Failed to load Wikipedia articles: {error}"}
+
+    left_pool = build_attribute_pool(left_article, "left", llm_client)
+    right_pool = build_attribute_pool(right_article, "right", llm_client)
+    outline_matches = build_outline_matches(
+        left_article.get("outline", []),
+        right_article.get("outline", []),
+    )
+    aligned_attributes = _align_exact_lowercase_keys(left_pool, right_pool)
+    rows = [
+        normalize_attribute_pair(alignment["left"], alignment["right"], alignment["label"])
+        for alignment in aligned_attributes
+    ]
+    ranked_rows = rank_rows(rows)
+
+    source_map = {}
+    left_article = dict(left_article)
+    right_article = dict(right_article)
+    source_map.update(left_article.pop("sourceMap", {}) or {})
+    source_map.update(right_article.pop("sourceMap", {}) or {})
+
+    session = CompareSession(
+        session_id=str(uuid.uuid4()),
+        articles={"left": left_article, "right": right_article},
+        outline_matches=outline_matches,
+        attribute_pools={"left": left_pool, "right": right_pool},
+        aligned_attributes=[
+            {
+                "leftId": alignment["left"]["id"],
+                "rightId": alignment["right"]["id"],
+                "label": alignment["label"],
+            }
+            for alignment in aligned_attributes
+        ],
+        ranked_rows=ranked_rows,
+        source_map=source_map,
+        warnings=warnings,
+    )
+    SESSION_STORE.save(session)
+    return 200, session.to_dict()
+
+
+def _align_exact_lowercase_keys(
+    left_pool: list[dict],
+    right_pool: list[dict],
+) -> list[dict]:
+    right_by_key = {
+        _alignment_key(attribute.get("key")): attribute
+        for attribute in right_pool
+        if _alignment_key(attribute.get("key"))
+    }
+    alignments = []
+    for left_attribute in left_pool:
+        key = _alignment_key(left_attribute.get("key"))
+        if not key or key not in right_by_key:
+            continue
+        alignments.append(
+            {
+                "left": left_attribute,
+                "right": right_by_key[key],
+                "label": left_attribute.get("key") or right_by_key[key].get("key") or key,
+            }
+        )
+    return alignments
+
+
+def _alignment_key(value) -> str:
+    return str(value or "").strip().lower()
+
+
+class AnalyzeAttributeHandler(ApiHandler):
+    def post(self):
+        data = self.read_json()
+        if data is None:
+            return
+
+        session_id = str(data.get("sessionId") or "").strip()
+        attribute_id = str(data.get("attributeId") or "").strip()
+        if not session_id:
+            self.write_error_json(400, "sessionId is required")
+            return
+        if not attribute_id:
+            self.write_error_json(400, "attributeId is required")
+            return
+
+        session = SESSION_STORE.get(session_id)
+        if session is None:
+            self.write_error_json(404, "Session not found")
+            return
+
+        row = row_context(session, attribute_id)
+        if row is None:
+            self.write_error_json(404, "Attribute not found")
+            return
+
+        result = None
+        config = get_llm_config()
+        if config.enabled:
+            try:
+                result = llm_attribute_summary(LLMClient(config), row, session.source_map)
+            except Exception as error:
+                print(f"LLM attribute analysis failed, using fallback: {error}")
+        if result is None:
+            result = fallback_attribute_summary(row, session.source_map)
+        self.write(json.dumps(result, ensure_ascii=False))
+
+
+class AskHandlerV2(ApiHandler):
+    def post(self):
+        data = self.read_json()
+        if data is None:
+            return
+
+        session_id = str(data.get("sessionId") or "").strip()
+        question = str(data.get("question") or "").strip()
+        if not session_id:
+            self.write_error_json(400, "sessionId is required")
+            return
+        if not question:
+            self.write_error_json(400, "question is required")
+            return
+
+        session = SESSION_STORE.get(session_id)
+        if session is None:
+            self.write_error_json(404, "Session not found")
+            return
+
+        result = None
+        config = get_llm_config()
+        if config.enabled:
+            try:
+                result = llm_answer(LLMClient(config), session, question)
+            except Exception as error:
+                print(f"LLM question answering failed, using fallback: {error}")
+        if result is None:
+            result = fallback_answer(session, question)
+        self.write(json.dumps(result, ensure_ascii=False))
 
 class GPTCompareHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
@@ -518,195 +768,6 @@ class OutlineMatchHandler(tornado.web.RequestHandler):
 
 
 
-class CompareAttributesHandler(tornado.web.RequestHandler):
-    def set_default_headers(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
-        self.set_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.set_header("Access-Control-Allow-Headers", "Content-Type")
-
-    def options(self):
-        self.set_status(204)
-        self.finish()
-
-    def post(self):
-        try:
-            data = json.loads(self.request.body)
-            chart_data = data.get("chartData")
-            chart_type = data.get("chartType")
-            follow_up = data.get("followUp", False)
-            previous_analysis = data.get("previousAnalysis", "")
-
-            if not chart_data or not chart_type:
-                raise ValueError("缺少必要参数")
-
-            if chart_type == "comparison":
-                if follow_up:
-                    # 处理追问请求
-                    analysis_result = self.handle_followup_request(
-                        chart_data, 
-                        previous_analysis
-                    )
-                else:
-                    # 处理初始对比请求
-                    analysis_result = self.handle_initial_comparison(chart_data)
-                
-                self.write(json.dumps({
-                    "analysis": analysis_result
-                }))
-                return
-            
-            self.write(json.dumps({
-                "error": "Unsupported chart type",
-                "message": "不支持的分析类型"
-            }))
-        except Exception as e:
-            self.write(json.dumps({
-                "error": str(e),
-                "message": "分析失败"
-            }))
-
-    def handle_initial_comparison(self, chart_data):
-        """处理初始属性对比请求"""
-        left_data = chart_data.get("leftData", [])
-        right_data = chart_data.get("rightData", [])
-        left_title = chart_data.get("leftTitle", "左侧数据")
-        right_title = chart_data.get("rightTitle", "右侧数据")
-        field_key = chart_data.get("fieldKey", "当前属性")
-
-
-        prompt = f"""
-        请对比分析以下两组数据的{field_key}属性：
-        {left_title} 数据: {json.dumps(left_data, ensure_ascii=False)}
-        {right_title} 数据: {json.dumps(right_data, ensure_ascii=False)}
-        
-        要求：
-        1. 只输出最终结论，不要列出具体数据或分析过程
-        2. 结论需简明扼要，突出差异点
-        3. 使用Markdown格式，可加粗关键词
-        4. 结论必须基于以上数据，不能添加额外信息
-        5.照着下面格式输出：结论：
-韩国经济增长较为稳定，增长率在1.4%到2.3%之间。
-日本经济增长波动较大，增长率从1.5%下降至0.6%。
-        """
-        
-        return chat(prompt)
-
-  
-
-    def handle_followup_request(self, chart_data, previous_analysis):
-            field_key = chart_data.get("fieldKey")
-            left_infobox = chart_data.get("leftInfobox", {})
-            right_infobox = chart_data.get("rightInfobox", {})
-            
-            prompt = f"""
-前面对比了单个属性"{field_key}"，得出了"{previous_analysis}"的结论。请你综合左侧和右侧infobox的其他属性，从宏观经济因素出发，构建每个国家的经济因果链条，**解释为何会得出这个结论**。
-
-请以如下**严格的 JSON 格式**输出内容，不需要任何解释或自然语言描述，仅返回合法的 JSON：
-
-{{
-  "country": "korea",
-  "steps": [
-    {{
-      "text": "低失业率+高就业率",
-      "evidence": ["Unemployment: 3.7%", "Labor force: 65.8%"],
-      "used_fields": ["Unemployment", "Labor force"]
-    }},
-    {{
-      "text": "劳动力市场稳定",
-      "evidence": [],
-      "used_fields": []
-    }},
-    {{
-      "text": "人均工资增长",
-      "evidence": ["Average gross salary: 4,583,525 ₩ / US$3,190 monthly"],
-      "used_fields": ["Average gross salary"]
-    }},
-    {{
-      "text": "消费能力提升",
-      "evidence": ["Average net salary: 3,835,828 ₩ / US$2,670 monthly"],
-      "used_fields": ["Average net salary"]
-    }},
-    {{
-      "text": "服务业增长",
-      "evidence": ["GDP by sector: services: 58.4%"],
-      "used_fields": ["GDP by sector"]
-    }},
-    {{
-      "text": "经济稳定增长",
-      "evidence": ["GDP growth: 1.4% (2023)", "GDP growth: 2.3% (2024)"],
-      "used_fields": ["GDP growth"]
-    }}
-  ]
-}},
-{{
-  "country": "japan",
-  "steps": [
-    {{
-      "text": "高政府债务",
-      "evidence": ["Government debt: 263.9% of GDP (2022)"],
-      "used_fields": ["Government debt"]
-    }},
-    {{
-      "text": "财政紧缩",
-      "evidence": ["Budget balance: 1.35% of GDP (2022 est.)"],
-      "used_fields": ["Budget balance"]
-    }},
-    {{
-      "text": "公共支出受限",
-      "evidence": ["Expenses: 43.4% of GDP (2022)"],
-      "used_fields": ["Expenses"]
-    }},
-    {{
-      "text": "内需不足",
-      "evidence": ["GDP by component: Household consumption: 55.6%"],
-      "used_fields": ["GDP by component"]
-    }},
-    {{
-      "text": "经济增长放缓",
-      "evidence": ["GDP growth: 1.5% (2023)", "GDP growth: 0.8% (2024)", "GDP growth: 0.6% (2025)"],
-      "used_fields": ["GDP growth"]
-    }}
-  ]
-}}
-
-### 要求：
-- 每个国家仅输出一条因果链。
-- 每条链条包含 4~6 个逻辑环节。
-- **每个环节只写单个阶段或因素，不要使用“→”连接前后步骤。**
-- `text` 字段应使用**中文总结性表达**，相关数据支撑应该写在`evidence`数组中，格式为“属性名: 属性值”。
-- 如果在`text`中用到了两个总结性表达，用“+”隔开。
-- 如果用到了 infobox 中的属性，要在 `used_fields` 中列出字段名，未用则为空数组。
-- `evidence` 中每个值都必须是 infobox 中真实存在的字段及其值，不能编造。
-- `evidence` 必须为数组，每个数据点单独作为字符串元素，如果没有，则应为 `[]`。
-- 返回时**不要包含任何额外说明文字，仅是纯粹合法的 JSON 对象。**
-
-左侧infobox数据（韩国）:
-{json.dumps(left_infobox, indent=2, ensure_ascii=False)}
-
-右侧infobox数据（日本）:
-{json.dumps(right_infobox, indent=2, ensure_ascii=False)}
-"""
-
-
-            
-            result = chat(prompt)
-            print("res:",chat(prompt))
-            # 清理Markdown代码块标记和前后空白
-            cleaned_result = re.sub(r'```(json)?|```', '', result).strip()
-            print("clean:",cleaned_result)
-            
-                # 加中括号包成 JSON 数组（如果本来不是的话）
-            json_like = f"[{cleaned_result}]"
-
-            try:
-                json_obj = json.loads(json_like)
-            except json.JSONDecodeError as e:
-                print("❌ JSON解析失败:", e)
-                return {"error": "格式解析失败", "raw": cleaned_result}
-
-            # 成功：转为字符串返回给前端
-            return json.dumps(json_obj, ensure_ascii=False, indent=2)
-
 class AskInfoboxHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
         self.set_header("Access-Control-Allow-Origin", "*")
@@ -752,6 +813,9 @@ class AskInfoboxHandler(tornado.web.RequestHandler):
 def make_app():
     return tornado.web.Application([
         (r"/", MainHandler),
+        (r"/api/compare-session", CompareSessionHandler),
+        (r"/api/analyze-attribute", AnalyzeAttributeHandler),
+        (r"/api/ask", AskHandlerV2),
         (r"/html", HtmlHandler),
         (r"/gpt_compare", GPTCompareHandler),
         (r"/gpt_ask", GPTAskHandler),
@@ -760,8 +824,6 @@ def make_app():
         (r"/analyze_chart", AnalyzeChartHandler),
         (r"/gpt_ask_chart", GPTAskChartHandler),
         (r"/outline_match", OutlineMatchHandler),
-        (r"/compare_attributes", CompareAttributesHandler),
-        (r"/ask_infobox",AskInfoboxHandler),
     ], debug=True)
 
 if __name__ == "__main__":
