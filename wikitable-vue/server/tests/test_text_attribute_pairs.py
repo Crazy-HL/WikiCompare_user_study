@@ -1142,3 +1142,189 @@ def test_build_paired_text_attributes_creates_aligned_attributes():
             "label": "Historical emergence",
         }
     ]
+
+
+def _paired_articles_with_paragraphs():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "AI was founded in 1956."},
+                    {"id": "left-s-1-2", "text": "AI grew from a summer workshop."},
+                ],
+            },
+            {
+                "id": "left-p-2",
+                "sentences": [{"id": "left-s-2-1", "text": "AI adoption accelerated later."}],
+            },
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {"id": "right-s-1-1", "text": "ML emerged in the 1950s."},
+                    {"id": "right-s-1-2", "text": "ML developed from statistical methods."},
+                ],
+            }
+        ]
+    }
+    return left_article, right_article
+
+
+def _pair_response(label="Historical emergence", *, data_priority=True, data_role="emergence_time"):
+    return {
+        "pairs": [
+            {
+                "dimensionLabel": label,
+                "comparisonQuestion": "When did it emerge?",
+                "left": {"valueText": "founded in 1956", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "emerged in the 1950s", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": data_priority,
+                "dataRole": data_role,
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+
+def test_build_paired_text_attributes_rejects_cross_paragraph_sentence_ids():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response()
+    pair_response["pairs"][0]["left"]["sentenceIds"] = ["left-s-1-1", "left-s-2-1"]
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_accepts_multi_sentence_same_paragraph():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response()
+    pair_response["pairs"][0]["left"]["sentenceIds"] = ["left-s-1-1", "left-s-1-2"]
+
+    left_attrs, _, _ = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["sourceIds"] == ["left-s-1-1", "left-s-1-2"]
+    assert left_attrs[0]["paragraphId"] == "left-p-1"
+
+
+def test_build_paired_text_attributes_deduplicates_repeated_sentence_ids():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response()
+    pair_response["pairs"][0]["left"]["sentenceIds"] = ["left-s-1-1", "left-s-1-1", "left-s-1-2"]
+
+    left_attrs, _, _ = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["sourceIds"] == ["left-s-1-1", "left-s-1-2"]
+    assert left_attrs[0]["paragraphId"] == "left-p-1"
+
+
+def test_build_paired_text_attributes_drops_normalized_infobox_key_duplicates():
+    left_article, right_article = _paired_articles_with_paragraphs()
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        [
+            {
+                "dimensionLabel": "GDP (PPP)",
+                "comparisonQuestion": "What is GDP by PPP?",
+                "left": {"valueText": "$1 trillion", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "$2 trillion", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "scale",
+                "confidence": 0.9,
+            },
+            {
+                "dimensionLabel": "Founded",
+                "comparisonQuestion": "When was it founded?",
+                "left": {"valueText": "1956", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "1950s", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "emergence_time",
+                "confidence": 0.9,
+            },
+        ],
+        [{"key": "GDP PPP"}, {"key": "Foundation"}],
+        [{"key": "GDP PPP"}, {"key": "Foundation"}],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_rejects_non_bool_data_priority():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response(data_priority="false", data_role="emergence_time")
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_rejects_unknown_data_role_when_priority_true():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response(data_priority=True, data_role="timeline")
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_allows_blank_data_role_when_priority_false():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response(data_priority=False, data_role=None)
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["dataPriority"] is False
+    assert "dataRole" not in left_attrs[0]
+    assert right_attrs[0]["dataPriority"] is False
+    assert "dataRole" not in right_attrs[0]
+    assert alignments[0]["label"] == "Historical emergence"

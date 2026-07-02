@@ -9,6 +9,12 @@ MEASUREMENT_TERMS = (
 )
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
 MIN_PAIR_CONFIDENCE = 0.55
+KNOWN_DATA_ROLES = {"emergence_time", "proportion", "ranking", "scale", "quantity"}
+INFOBOX_KEY_SYNONYMS = {
+    "founded": "foundation",
+    "founding": "foundation",
+    "foundation": "foundation",
+}
 NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
     re.I,
@@ -150,8 +156,12 @@ def _validated_pair(
     right = _validated_pair_side(raw_pair.get("right"), right_sources)
     if left is None or right is None:
         return None
-    data_priority = bool(raw_pair.get("dataPriority"))
+    data_priority = raw_pair.get("dataPriority")
+    if not isinstance(data_priority, bool):
+        return None
     data_role = _clean_text(raw_pair.get("dataRole"))
+    if data_role and data_role not in KNOWN_DATA_ROLES:
+        return None
     if data_priority and not data_role:
         return None
     return {
@@ -173,10 +183,16 @@ def _validated_pair_side(raw_side: Any, sources: dict[str, dict[str, Any]]) -> d
     if not value_text or not isinstance(sentence_ids, list) or not sentence_ids:
         return None
     clean_ids = []
+    seen_ids = set()
     for sentence_id in sentence_ids:
         if not isinstance(sentence_id, str) or sentence_id not in sources:
             return None
-        clean_ids.append(sentence_id)
+        if sentence_id not in seen_ids:
+            clean_ids.append(sentence_id)
+            seen_ids.add(sentence_id)
+    paragraph_ids = {sources[sentence_id].get("paragraphId") for sentence_id in clean_ids}
+    if len(paragraph_ids) > 1:
+        return None
     return {"valueText": value_text, "sentenceIds": clean_ids}
 
 
@@ -233,10 +249,15 @@ def _duplicates_infobox(
     left_infobox_pool: list[dict[str, Any]],
     right_infobox_pool: list[dict[str, Any]],
 ) -> bool:
-    label = pair["dimensionLabel"].lower()
-    left_keys = {_clean_text(item.get("key")).lower() for item in left_infobox_pool}
-    right_keys = {_clean_text(item.get("key")).lower() for item in right_infobox_pool}
+    label = _normalized_infobox_key(pair["dimensionLabel"])
+    left_keys = {_normalized_infobox_key(item.get("key")) for item in left_infobox_pool}
+    right_keys = {_normalized_infobox_key(item.get("key")) for item in right_infobox_pool}
     return label in left_keys and label in right_keys
+
+
+def _normalized_infobox_key(value: Any) -> str:
+    tokens = re.sub(r"[^a-z0-9]+", " ", _clean_text(value).lower()).split()
+    return " ".join(INFOBOX_KEY_SYNONYMS.get(token, token) for token in tokens)
 
 
 def _sentence_candidate(sentence: Any, paragraph: dict[str, Any], side: str) -> dict[str, Any] | None:
