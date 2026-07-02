@@ -22,18 +22,8 @@ CLAIM_CUE_RE = re.compile(
     r"techniques|consists|types|risks|limitations|impact|effects)\b",
     re.I,
 )
-PUBLICATION_NOISE_RE = re.compile(r"\b(published|paper|study|article|journal|conference)\b", re.I)
-PUBLICATION_YEAR_FOLLOW_RE = re.compile(r"^\s*(study|paper|article|journal|conference)\b", re.I)
-PUBLICATION_YEAR_PRECEDE_RE = re.compile(
-    r"\b(study|paper|article|journal|conference)(?:\s+published)?\s+(in|from)\s*$",
-    re.I,
-)
-LEADING_PUBLICATION_YEAR_RE = re.compile(
-    r"^\s*in\s+$",
-    re.I,
-)
-PUBLICATION_AFTER_LEADING_YEAR_RE = re.compile(
-    r"^\s*,?\s*(the\s+)?(study|paper|article)\b",
+PUBLICATION_NOISE_RE = re.compile(
+    r"\b(study|paper|article|journal|conference|published|conducted)\b",
     re.I,
 )
 EMERGENCE_CONTEXT_RE = re.compile(
@@ -41,9 +31,13 @@ EMERGENCE_CONTEXT_RE = re.compile(
     re.I,
 )
 PROPORTION_CONTEXT_RE = re.compile(r"\b(accuracy|score|share|rate|percent)\b", re.I)
-PROPORTION_PREFIX_RE = re.compile(r"\b(accuracy|score|share|rate|percent)(?:\s+\w+){0,3}\s+of\s+$", re.I)
+PROPORTION_PREFIX_RE = re.compile(
+    r"\b(accuracy|share|rate|percent)(?:\s+score)?\s+(?:of\s+)?$|\bscore\s+(?:of\s+)?$",
+    re.I,
+)
 RANKING_CONTEXT_RE = re.compile(r"\brank\b", re.I)
 MEASUREMENT_CONTEXT_RE = re.compile(rf"\b({MEASUREMENT_TERMS})\b", re.I)
+DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(rf"^\s*({MEASUREMENT_TERMS})\b", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
 
@@ -151,15 +145,9 @@ def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match
         return False
     if EMERGENCE_CONTEXT_RE.search(_role_context(text, match)):
         return False
-    if PUBLICATION_YEAR_FOLLOW_RE.search(text[match.end() :]):
-        return True
-    if PUBLICATION_YEAR_PRECEDE_RE.search(text[: match.start()]):
-        return True
-    if LEADING_PUBLICATION_YEAR_RE.search(text[: match.start()]) and PUBLICATION_AFTER_LEADING_YEAR_RE.search(
-        text[match.end() :]
-    ):
-        return True
-    return not _has_measurement_context(text, match)
+    if _has_direct_measurement_context(text, match):
+        return False
+    return _has_publication_context(text, match)
 
 
 def _role_context(text: str, match: re.Match) -> str:
@@ -195,9 +183,13 @@ def _has_local_proportion_prefix(text: str, match: re.Match) -> bool:
     return bool(PROPORTION_PREFIX_RE.search(text[max(0, match.start() - 48) : match.start()]))
 
 
-def _has_measurement_context(text: str, match: re.Match) -> bool:
-    context = text[match.end() : min(len(text), match.end() + 32)]
-    return bool(MEASUREMENT_CONTEXT_RE.search(context))
+def _has_publication_context(text: str, match: re.Match) -> bool:
+    window = text[max(0, match.start() - 40) : min(len(text), match.end() + 40)]
+    return bool(PUBLICATION_NOISE_RE.search(window))
+
+
+def _has_direct_measurement_context(text: str, match: re.Match) -> bool:
+    return bool(DIRECT_MEASUREMENT_CONTEXT_RE.search(text[match.end() :]))
 
 
 def _semantic_cue(text: str) -> str:

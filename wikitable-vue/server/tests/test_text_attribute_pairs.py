@@ -402,3 +402,77 @@ def test_build_text_evidence_candidates_ignores_published_in_year_before_reporte
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": 42, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_ignores_adjectival_publication_years():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "A 2020 clinical study reported 42 cases."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 42, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_ignores_conducted_in_publication_years():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "A study conducted in 2020 reported 42 cases."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 42, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_direct_accuracy_values_locally():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The model introduced in 2019 reached accuracy 95."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "emergence_time"},
+        {"value": 95, "role": "proportion"},
+    ]
+
+
+def test_build_text_evidence_candidates_classifies_direct_accuracy_score_values_locally():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The model introduced in 2019 reached accuracy score 95."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "emergence_time"},
+        {"value": 95, "role": "proportion"},
+    ]
