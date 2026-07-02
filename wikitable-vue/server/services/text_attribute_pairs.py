@@ -52,7 +52,8 @@ DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(
     rf"^\s*(?:({MEASUREMENT_DESCRIPTORS})\s+){{0,3}}({MEASUREMENT_TERMS})\b",
     re.I,
 )
-RANKING_PREFIX_RE = re.compile(r"\brank\s+$", re.I)
+RANKING_PREFIX_RE = re.compile(r"\b(rank|ranked|ranking|placed)\s+$", re.I)
+RANKING_SUFFIX_CONTEXT_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b\s*(?:in|overall|place|rank|ranking)\b", re.I)
 ORDINAL_SUFFIX_RE = re.compile(r"^\s*(st|nd|rd|th)\b", re.I)
 LEADING_TEMPORAL_PREFIX_RE = re.compile(r"^\s*in\s+$", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
@@ -220,7 +221,7 @@ def _is_embedded_token_number(text: str, match: re.Match) -> bool:
 
 def _has_local_ranking_context(text: str, match: re.Match) -> bool:
     prefix, suffix = _local_prefix_suffix(text, match)
-    return bool(RANKING_PREFIX_RE.search(prefix) or ORDINAL_SUFFIX_RE.search(suffix))
+    return bool(RANKING_PREFIX_RE.search(prefix) or RANKING_SUFFIX_CONTEXT_RE.search(suffix))
 
 
 def _has_local_proportion_context(text: str, match: re.Match) -> bool:

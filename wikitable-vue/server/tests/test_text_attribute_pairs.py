@@ -1,6 +1,23 @@
 from services.text_attribute_pairs import build_text_evidence_candidates
 
 
+def _data_items_for_text(text):
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": text},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    return [item for candidate in candidates for item in candidate["dataItems"]]
+
+
 def test_build_text_evidence_candidates_marks_data_roles():
     article = {
         "paragraphs": [
@@ -854,6 +871,18 @@ def test_build_text_evidence_candidates_keeps_second_place_ordinals_as_rankings(
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": 2, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_ignores_century_ordinals_as_rankings():
+    assert _data_items_for_text("The 21st century changed the field.") == []
+
+
+def test_build_text_evidence_candidates_ignores_generation_ordinals_as_rankings():
+    assert _data_items_for_text("The 3rd generation system uses neural networks.") == []
+
+
+def test_build_text_evidence_candidates_ignores_edition_ordinals_as_rankings():
+    assert _data_items_for_text("The 1st edition includes a glossary.") == []
 
 
 def test_build_text_evidence_candidates_preserves_negative_sign_before_currency():
