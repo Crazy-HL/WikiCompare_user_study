@@ -22,12 +22,15 @@ CLAIM_CUE_RE = re.compile(
     re.I,
 )
 PUBLICATION_NOISE_RE = re.compile(r"\b(published|paper|study|article|journal|conference)\b", re.I)
+PUBLICATION_YEAR_FOLLOW_RE = re.compile(r"^\s*(study|paper|article|journal|conference)\b", re.I)
 EMERGENCE_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged)\b",
     re.I,
 )
 PROPORTION_CONTEXT_RE = re.compile(r"\b(accuracy|share|rate|percent)\b", re.I)
 RANKING_CONTEXT_RE = re.compile(r"\brank\b", re.I)
+MEASUREMENT_CONTEXT_RE = re.compile(r"\b(cases|employees|population|samples|users|revenue|accuracy)\b", re.I)
+CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
 
 
@@ -87,13 +90,13 @@ def _data_items(text: str) -> list[dict[str, Any]]:
     for match in NUMBER_RE.finditer(text):
         raw = match.group(1)
         unit = (match.group(2) or "").lower()
-        if _is_publication_context_year(raw, unit, text):
+        if _is_publication_context_year(raw, unit, text, match):
             continue
         try:
             value = float(raw.replace(",", ""))
         except ValueError:
             continue
-        role = _data_role(text, unit)
+        role = _data_role(text, unit, match)
         item: dict[str, Any] = {"value": int(value) if value.is_integer() else value, "role": role}
         if unit:
             item["unit"] = unit
@@ -101,26 +104,65 @@ def _data_items(text: str) -> list[dict[str, Any]]:
     return items
 
 
-def _data_role(text: str, unit: str) -> str:
-    if MONEY_RE.search(text) or unit in SCALE_UNITS:
+def _data_role(text: str, unit: str, match: re.Match) -> str:
+    context = _role_context(text, match)
+    if _has_currency_symbol(text, match) or unit in SCALE_UNITS:
         return "scale"
-    if unit in {"%", "percent"} or PROPORTION_CONTEXT_RE.search(text):
+    if unit in {"%", "percent"} or PROPORTION_CONTEXT_RE.search(context):
         return "proportion"
-    if EMERGENCE_CONTEXT_RE.search(text):
+    if EMERGENCE_CONTEXT_RE.search(context):
         return "emergence_time"
-    if RANKING_CONTEXT_RE.search(text) or ORDINAL_RE.search(text):
+    if RANKING_CONTEXT_RE.search(context) or ORDINAL_RE.search(context):
         return "ranking"
     return "quantity"
 
 
-def _is_publication_context_year(raw: str, unit: str, text: str) -> bool:
-    if unit or not PUBLICATION_NOISE_RE.search(text):
+def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match) -> bool:
+    if unit or _has_currency_symbol(text, match) or not PUBLICATION_NOISE_RE.search(text):
         return False
     try:
         value = int(raw.replace(",", ""))
     except ValueError:
         return False
-    return 1800 <= value <= 2100 and len(raw.replace(",", "")) == 4
+    if not 1800 <= value <= 2100 or len(raw.replace(",", "")) != 4:
+        return False
+    if PUBLICATION_YEAR_FOLLOW_RE.search(text[match.end() :]):
+        return True
+    return not _has_measurement_context(text, match)
+
+
+def _role_context(text: str, match: re.Match) -> str:
+    start = match.start()
+    end = match.end()
+    left = _last_boundary(text, start)
+    right = _next_boundary(text, end)
+    return text[left:right]
+
+
+def _last_boundary(text: str, index: int) -> int:
+    boundary = 0
+    for pattern in [r"[;,]\s*", r"\s+and\s+", r"\s+with\s+"]:
+        for match in re.finditer(pattern, text[:index], re.I):
+            boundary = max(boundary, match.end())
+    return boundary
+
+
+def _next_boundary(text: str, index: int) -> int:
+    boundary = len(text)
+    for pattern in [r"[;,]\s*", r"\s+and\s+", r"\s+with\s+"]:
+        match = re.search(pattern, text[index:], re.I)
+        if match:
+            boundary = min(boundary, index + match.start())
+    return boundary
+
+
+def _has_currency_symbol(text: str, match: re.Match) -> bool:
+    return bool(CURRENCY_SYMBOL_RE.search(text[max(0, match.start() - 4) : match.start()]))
+
+
+def _has_measurement_context(text: str, match: re.Match) -> bool:
+    context = text[match.end() : min(len(text), match.end() + 32)]
+    return bool(MEASUREMENT_CONTEXT_RE.search(context))
 
 
 def _semantic_cue(text: str) -> str:
