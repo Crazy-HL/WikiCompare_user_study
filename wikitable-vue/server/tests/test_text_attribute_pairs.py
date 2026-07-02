@@ -923,6 +923,18 @@ def test_build_text_evidence_candidates_keeps_cardinal_placements_before_contest
     assert _data_items_for_text("The model placed 2 in the contest.") == [{"value": 2, "role": "ranking"}]
 
 
+def test_build_text_evidence_candidates_classifies_placed_job_counts_as_quantity():
+    assert _data_items_for_text("The program placed 2,000 in jobs.") == [{"value": 2000, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_placed_service_counts_as_quantity():
+    assert _data_items_for_text("The airline placed 2 in service.") == [{"value": 2, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_placed_training_counts_as_quantity():
+    assert _data_items_for_text("The company placed 200 in training.") == [{"value": 200, "role": "quantity"}]
+
+
 def test_build_text_evidence_candidates_classifies_ranked_algorithm_counts_as_quantity():
     assert _data_items_for_text("The study ranked 10 algorithms.") == [{"value": 10, "role": "quantity"}]
 

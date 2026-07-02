@@ -59,6 +59,11 @@ CARDINAL_RANKING_SUFFIX_RE = re.compile(
     r"^\s*(?:$|[.,;:!?)]|among\b|in\b|overall\b|place\b|rank\b|ranking\b)",
     re.I,
 )
+PLACED_CARDINAL_RANKING_SUFFIX_RE = re.compile(
+    r"^\s*(?:$|[.,;:!?)]|among\b|overall\b|place\b|rank\b|ranking\b|"
+    r"in\s+(?:the\s+)?(?:contest|competition|race|ranking|rankings|standings|overall|place)\b)",
+    re.I,
+)
 LEADING_TEMPORAL_PREFIX_RE = re.compile(r"^\s*in\s+$", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
@@ -229,24 +234,29 @@ def _has_local_ranking_context(text: str, match: re.Match) -> bool:
         return False
     if RANKING_SUFFIX_CONTEXT_RE.search(suffix):
         return True
-    if not _has_ranking_prefix_context(text, match):
+    prefix_context = _ranking_prefix_context(text, match)
+    if prefix_context is None:
         return False
-    return bool(
-        ORDINAL_RANKING_SUFFIX_RE.search(suffix)
-        or CARDINAL_RANKING_SUFFIX_RE.search(suffix)
-        or _has_rank_marker_prefix(text, match)
-    )
-
-
-def _has_ranking_prefix_context(text: str, match: re.Match) -> bool:
-    prefix, _ = _local_prefix_suffix(text, match)
-    if RANKING_PREFIX_RE.search(prefix):
+    if ORDINAL_RANKING_SUFFIX_RE.search(suffix) or _has_rank_marker_prefix(text, match):
         return True
+    if prefix_context == "placed":
+        return bool(PLACED_CARDINAL_RANKING_SUFFIX_RE.search(suffix))
+    return bool(CARDINAL_RANKING_SUFFIX_RE.search(suffix))
+
+
+def _ranking_prefix_context(text: str, match: re.Match) -> str | None:
+    prefix, _ = _local_prefix_suffix(text, match)
+    prefix_match = RANKING_PREFIX_RE.search(prefix)
+    if prefix_match:
+        return prefix_match.group(1).lower()
     start, _ = match.span(1)
     if start == 0 or text[start - 1] != "#":
-        return False
+        return None
     marker_prefix = text[max(0, start - 49) : start - 1]
-    return bool(RANKING_PREFIX_RE.search(marker_prefix))
+    marker_prefix_match = RANKING_PREFIX_RE.search(marker_prefix)
+    if marker_prefix_match:
+        return marker_prefix_match.group(1).lower()
+    return None
 
 
 def _has_rank_marker_prefix(text: str, match: re.Match) -> bool:
