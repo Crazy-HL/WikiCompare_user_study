@@ -450,6 +450,18 @@ def test_build_text_evidence_candidates_ignores_revenue_descriptor_publication_y
     ]
 
 
+def test_build_text_evidence_candidates_ignores_publication_year_when_study_introduces_method():
+    assert _data_items_for_text("A 2020 clinical study introduced a method with 42 cases.") == [
+        {"value": 42, "role": "quantity"}
+    ]
+
+
+def test_build_text_evidence_candidates_ignores_leading_publication_year_when_study_introduces_method():
+    assert _data_items_for_text("In 2020, the study introduced a method with 42 cases.") == [
+        {"value": 42, "role": "quantity"}
+    ]
+
+
 def test_build_text_evidence_candidates_ignores_conducted_in_publication_years():
     article = {
         "paragraphs": [

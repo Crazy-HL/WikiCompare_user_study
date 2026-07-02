@@ -42,6 +42,12 @@ EMERGENCE_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged)\b",
     re.I,
 )
+ENTITY_EMERGENCE_SUFFIX_RE = re.compile(
+    r"^\s*,?\s*(?:the\s+)?(?:\w+\s+){0,3}"
+    r"(?:journal|conference|field|company|service|system|model)\s+"
+    r"(?:was\s+|were\s+)?(?:founded|introduced|launched|released|created|developed|emerged)\b",
+    re.I,
+)
 PROPORTION_PREFIX_RE = re.compile(
     r"\b(accuracy|share|rate|percent)(?:\s+score)?\s+(?:of\s+)?$|\bscore\s+(?:of\s+)?$",
     re.I,
@@ -168,7 +174,7 @@ def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match
         return False
     if not _is_year_like_match(raw, unit):
         return False
-    if EMERGENCE_CONTEXT_RE.search(_role_context(text, match)) or _has_local_emergence_context(text, match):
+    if _has_entity_emergence_context(text, match):
         return False
     return _has_publication_context(text, match)
 
@@ -270,6 +276,11 @@ def _has_local_proportion_context(text: str, match: re.Match) -> bool:
 def _has_local_emergence_context(text: str, match: re.Match) -> bool:
     prefix, suffix = _local_prefix_suffix(text, match)
     return bool(EMERGENCE_CONTEXT_RE.search(prefix) or EMERGENCE_CONTEXT_RE.search(suffix))
+
+
+def _has_entity_emergence_context(text: str, match: re.Match) -> bool:
+    _, suffix = _local_prefix_suffix(text, match)
+    return bool(ENTITY_EMERGENCE_SUFFIX_RE.search(suffix))
 
 
 def _local_prefix_suffix(text: str, match: re.Match) -> tuple[str, str]:
