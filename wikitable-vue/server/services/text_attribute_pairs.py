@@ -4,7 +4,9 @@ import re
 from typing import Any
 
 
-MEASUREMENT_TERMS = "cases|employees|features|members|models|population|samples|users|revenue|accuracy"
+MEASUREMENT_TERMS = (
+    "cases|employees|features|members|models|participants|population|samples|users|revenue|accuracy"
+)
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
 NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
@@ -118,6 +120,8 @@ def _data_items(text: str) -> list[dict[str, Any]]:
     for match in NUMBER_RE.finditer(text):
         raw = match.group(1)
         unit = (match.group(2) or "").lower()
+        if _is_embedded_token_number(text, match):
+            continue
         if _is_publication_context_year(raw, unit, text, match):
             continue
         try:
@@ -153,11 +157,7 @@ def _data_role(text: str, unit: str, match: re.Match) -> str:
 def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match) -> bool:
     if unit or _has_currency_symbol(text, match) or not PUBLICATION_NOISE_RE.search(text):
         return False
-    try:
-        value = int(raw.replace(",", ""))
-    except ValueError:
-        return False
-    if not 1800 <= value <= 2100 or len(raw.replace(",", "")) != 4:
+    if not _is_year_like_match(raw, unit):
         return False
     if EMERGENCE_CONTEXT_RE.search(_role_context(text, match)):
         return False
@@ -193,6 +193,14 @@ def _next_boundary(text: str, index: int) -> int:
 
 def _has_currency_symbol(text: str, match: re.Match) -> bool:
     return bool(CURRENCY_SYMBOL_RE.search(text[max(0, match.start() - 4) : match.start()]))
+
+
+def _is_embedded_token_number(text: str, match: re.Match) -> bool:
+    start, end = match.span(1)
+    before = text[start - 1] if start > 0 else ""
+    before_before = text[start - 2] if start > 1 else ""
+    after = text[end] if end < len(text) else ""
+    return bool(before.isalpha() or (before == "-" and before_before.isalpha()) or after.isalpha())
 
 
 def _has_local_ranking_context(text: str, match: re.Match) -> bool:

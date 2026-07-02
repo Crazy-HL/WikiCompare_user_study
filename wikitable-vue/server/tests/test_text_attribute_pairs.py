@@ -749,3 +749,74 @@ def test_build_text_evidence_candidates_keeps_comma_grouped_leading_active_users
         {"value": 2019, "role": "quantity"},
         {"value": 5, "role": "proportion", "unit": "%"},
     ]
+
+
+def test_build_text_evidence_candidates_keeps_comma_grouped_participants_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "A study from 2,019 participants reported 95% accuracy."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "quantity"},
+        {"value": 95, "role": "proportion", "unit": "%"},
+    ]
+
+
+def test_build_text_evidence_candidates_ignores_hyphenated_model_token_numbers():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "GPT-4 reached 95% accuracy."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 95, "role": "proportion", "unit": "%"}]
+
+
+def test_build_text_evidence_candidates_ignores_alphanumeric_token_numbers():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "XGBoost2 reached 95% accuracy."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 95, "role": "proportion", "unit": "%"}]
+
+
+def test_build_text_evidence_candidates_ignores_score_name_digits():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "F1 score of 95 was reported."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 95, "role": "proportion"}]
