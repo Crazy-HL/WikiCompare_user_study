@@ -52,6 +52,7 @@ DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(
 )
 RANKING_PREFIX_RE = re.compile(r"\brank\s+$", re.I)
 ORDINAL_SUFFIX_RE = re.compile(r"^\s*(st|nd|rd|th)\b", re.I)
+LEADING_TEMPORAL_PREFIX_RE = re.compile(r"^\s*in\s+$", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
 
@@ -140,6 +141,8 @@ def _data_role(text: str, unit: str, match: re.Match) -> str:
         return "ranking"
     if _has_local_proportion_context(text, match):
         return "proportion"
+    if _is_year_like_match(match.group(1), unit) and _has_leading_temporal_prefix(text, match):
+        return "emergence_time"
     if _has_direct_measurement_context(text, match):
         return "quantity"
     if _is_year_like_match(match.group(1), unit) and _has_local_emergence_context(text, match):
@@ -218,6 +221,10 @@ def _has_publication_context(text: str, match: re.Match) -> bool:
 
 def _has_direct_measurement_context(text: str, match: re.Match) -> bool:
     return bool(DIRECT_MEASUREMENT_CONTEXT_RE.search(text[match.end() :]))
+
+
+def _has_leading_temporal_prefix(text: str, match: re.Match) -> bool:
+    return bool(LEADING_TEMPORAL_PREFIX_RE.search(text[: match.start()]))
 
 
 def _is_year_like_match(raw: str, unit: str) -> bool:

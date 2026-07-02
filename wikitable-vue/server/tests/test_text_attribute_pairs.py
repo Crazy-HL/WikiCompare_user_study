@@ -672,3 +672,40 @@ def test_build_text_evidence_candidates_classifies_trained_model_counts_as_quant
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": 2019, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_keeps_leading_year_before_new_features_as_emergence():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "In 2019 new features were introduced."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2019, "role": "emergence_time"}]
+
+
+def test_build_text_evidence_candidates_keeps_leading_year_before_active_users_as_temporal():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "In 2019 active users grew to 2 million."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "emergence_time"},
+        {"value": 2, "role": "scale", "unit": "million"},
+    ]
