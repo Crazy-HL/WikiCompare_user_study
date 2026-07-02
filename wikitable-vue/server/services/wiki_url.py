@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 
 class WikiUrlError(ValueError):
@@ -12,6 +12,7 @@ class WikiUrlError(ValueError):
 class ParsedWikiUrl:
     title: str
     normalized_url: str
+    display_url: str
     revision: str | None
 
 
@@ -28,6 +29,7 @@ def parse_english_wikipedia_url(url: str) -> ParsedWikiUrl:
         return ParsedWikiUrl(
             title=title,
             normalized_url=_normalized_article_url(title),
+            display_url=_normalized_article_url(title),
             revision=None,
         )
 
@@ -43,6 +45,7 @@ def parse_english_wikipedia_url(url: str) -> ParsedWikiUrl:
         return ParsedWikiUrl(
             title=title,
             normalized_url=_normalized_article_url(title),
+            display_url=_display_article_url(title, revision),
             revision=revision,
         )
 
@@ -65,3 +68,10 @@ def _is_allowed_english_wikipedia_host(parsed) -> bool:
 
 def _normalized_article_url(title: str) -> str:
     return f"https://en.wikipedia.org/wiki/{quote(title, safe=':_()')}"
+
+
+def _display_article_url(title: str, revision: str | None) -> str:
+    if not revision:
+        return _normalized_article_url(title)
+    query = urlencode({"title": title, "oldid": revision}, safe=":_()")
+    return f"https://en.wikipedia.org/w/index.php?{query}"
