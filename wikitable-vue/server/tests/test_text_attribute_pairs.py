@@ -959,6 +959,18 @@ def test_build_text_evidence_candidates_keeps_cardinal_placements_before_contest
     assert _data_items_for_text("The model placed 2 in the contest.") == [{"value": 2, "role": "ranking"}]
 
 
+def test_build_text_evidence_candidates_keeps_rankings_with_out_of_denominators():
+    assert _data_items_for_text("The model ranked 1 out of 10 teams.") == [{"value": 1, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_keeps_rankings_with_of_denominators():
+    assert _data_items_for_text("The model ranked 1 of 10 teams.") == [{"value": 1, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_keeps_placements_with_out_of_denominators():
+    assert _data_items_for_text("The model placed 2 out of 20 contestants.") == [{"value": 2, "role": "ranking"}]
+
+
 def test_build_text_evidence_candidates_classifies_placed_job_counts_as_quantity():
     assert _data_items_for_text("The program placed 2,000 in jobs.") == [{"value": 2000, "role": "quantity"}]
 

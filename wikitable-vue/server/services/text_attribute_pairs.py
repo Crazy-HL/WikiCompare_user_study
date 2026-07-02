@@ -62,12 +62,19 @@ RANKING_PREFIX_RE = re.compile(r"\b(rank|ranked|ranking|placed)\s+$", re.I)
 RANKING_SUFFIX_CONTEXT_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b\s*(?:overall|place|rank|ranking)\b", re.I)
 ORDINAL_RANKING_SUFFIX_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b", re.I)
 CARDINAL_RANKING_SUFFIX_RE = re.compile(
-    r"^\s*(?:$|[.,;:!?)]|among\b|in\b|overall\b|place\b|rank\b|ranking\b)",
+    r"^\s*(?:$|[.,;:!?)]|among\b|in\b|of\b|out\s+of\b|overall\b|place\b|rank\b|ranking\b)",
     re.I,
 )
 PLACED_CARDINAL_RANKING_SUFFIX_RE = re.compile(
     r"^\s*(?:$|[.,;:!?)]|among\b|overall\b|place\b|rank\b|ranking\b|"
+    r"of\b|out\s+of\b|"
     r"in\s+(?:the\s+)?(?:contest|competition|race|ranking|rankings|standings|overall|place)\b)",
+    re.I,
+)
+RANKING_DENOMINATOR_PREFIX_RE = re.compile(
+    r"\b(?:rank|ranked|ranking|placed)\s+#?"
+    r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:st|nd|rd|th)?\s+"
+    r"(?:out\s+of|of)\s+$",
     re.I,
 )
 LEADING_TEMPORAL_PREFIX_RE = re.compile(r"^\s*in\s+$", re.I)
@@ -137,6 +144,8 @@ def _data_items(text: str) -> list[dict[str, Any]]:
         raw = match.group(1)
         unit = (match.group(2) or "").lower()
         if _is_embedded_token_number(text, match):
+            continue
+        if _is_ranking_denominator(text, match):
             continue
         if _is_publication_context_year(raw, unit, text, match):
             continue
@@ -220,6 +229,11 @@ def _numeric_value(raw: str, text: str, match: re.Match) -> float | None:
 
 def _has_negative_currency_prefix(text: str, match: re.Match) -> bool:
     return bool(re.search(r"-\s*[$€£¥₩]\s*$", text[max(0, match.start() - 8) : match.start()]))
+
+
+def _is_ranking_denominator(text: str, match: re.Match) -> bool:
+    prefix = text[max(0, match.start() - 72) : match.start()]
+    return bool(RANKING_DENOMINATOR_PREFIX_RE.search(prefix))
 
 
 def _is_embedded_token_number(text: str, match: re.Match) -> bool:
