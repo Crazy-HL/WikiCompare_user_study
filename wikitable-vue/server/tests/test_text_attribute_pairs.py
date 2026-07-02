@@ -1446,6 +1446,62 @@ def test_build_paired_text_attributes_rejects_missing_paragraph_ids_from_differe
     assert alignments == []
 
 
+def test_build_paired_text_attributes_rejects_blank_paragraph_ids_from_different_paragraphs():
+    left_article = {
+        "paragraphs": [
+            {"id": "", "sentences": [{"id": "left-s-1-1", "text": "AI was founded in 1956."}]},
+            {"id": "", "sentences": [{"id": "left-s-2-1", "text": "AI grew from a workshop."}]},
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {"id": "", "sentences": [{"id": "right-s-1-1", "text": "ML emerged in the 1950s."}]},
+        ]
+    }
+    pair_response = _pair_response()
+    pair_response["pairs"][0]["left"]["sentenceIds"] = ["left-s-1-1", "left-s-2-1"]
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_handles_unhashable_paragraph_ids():
+    left_article = {
+        "paragraphs": [
+            {"id": ["left-p-1"], "sentences": [{"id": "left-s-1-1", "text": "AI was founded in 1956."}]},
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": {"name": "right-p-1"},
+                "sentences": [{"id": "right-s-1-1", "text": "ML emerged in the 1950s."}],
+            },
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        _pair_response(),
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["sourceIds"] == ["left-s-1-1"]
+    assert right_attrs[0]["sourceIds"] == ["right-s-1-1"]
+    assert alignments[0]["label"] == "Historical emergence"
+
+
 def test_build_paired_text_attributes_keeps_distinct_pairs_with_same_label():
     left_article, right_article = _paired_articles_with_paragraphs()
     pair_response = {
@@ -1522,6 +1578,45 @@ def test_build_paired_text_attributes_drops_exact_duplicate_evidence_pairs():
     assert len(right_attrs) == 1
     assert len(alignments) == 1
     assert left_attrs[0]["key"] == "Revenue"
+
+
+def test_build_paired_text_attributes_deduplicates_reordered_multi_sentence_evidence():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Origins",
+                "comparisonQuestion": "What origin evidence is reported?",
+                "left": {"valueText": "founded in 1956", "sentenceIds": ["left-s-1-1", "left-s-1-2"]},
+                "right": {"valueText": "emerged in the 1950s", "sentenceIds": ["right-s-1-1", "right-s-1-2"]},
+                "dataPriority": True,
+                "dataRole": "emergence_time",
+                "confidence": 0.9,
+            },
+            {
+                "dimensionLabel": "Historical background",
+                "comparisonQuestion": "What origin evidence is reported?",
+                "left": {"valueText": "founded in 1956", "sentenceIds": ["left-s-1-2", "left-s-1-1"]},
+                "right": {"valueText": "emerged in the 1950s", "sentenceIds": ["right-s-1-2", "right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "emergence_time",
+                "confidence": 0.9,
+            },
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert len(left_attrs) == 1
+    assert len(right_attrs) == 1
+    assert len(alignments) == 1
+    assert left_attrs[0]["sourceIds"] == ["left-s-1-1", "left-s-1-2"]
 
 
 def test_build_paired_text_attributes_strips_data_role_when_priority_false():

@@ -191,7 +191,7 @@ def _validated_pair_side(raw_side: Any, sources: dict[str, dict[str, Any]]) -> d
         if sentence_id not in seen_ids:
             clean_ids.append(sentence_id)
             seen_ids.add(sentence_id)
-    paragraph_keys = {sources[sentence_id].get("paragraphKey") for sentence_id in clean_ids}
+    paragraph_keys = {str(sources[sentence_id].get("paragraphKey")) for sentence_id in clean_ids}
     if len(paragraph_keys) > 1:
         return None
     return {"valueText": value_text, "sentenceIds": clean_ids}
@@ -228,7 +228,11 @@ def _source_lookup(article: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if not isinstance(paragraph, dict):
             continue
         paragraph_id = paragraph.get("id")
-        paragraph_key = paragraph_id if paragraph_id is not None else f"__paragraph_{paragraph_index}"
+        paragraph_key = (
+            paragraph_id
+            if isinstance(paragraph_id, str) and paragraph_id.strip()
+            else f"__paragraph_{paragraph_index}"
+        )
         for sentence in paragraph.get("sentences", []) or []:
             if not isinstance(sentence, dict):
                 continue
@@ -274,9 +278,9 @@ def _normalized_infobox_key(value: Any) -> str:
 
 def _pair_dedupe_key(pair: dict[str, Any]) -> tuple[Any, ...]:
     return (
-        tuple(pair["left"]["sentenceIds"]),
+        tuple(sorted(pair["left"]["sentenceIds"])),
         _normalized_evidence_text(pair["left"]["valueText"]),
-        tuple(pair["right"]["sentenceIds"]),
+        tuple(sorted(pair["right"]["sentenceIds"])),
         _normalized_evidence_text(pair["right"]["valueText"]),
     )
 
