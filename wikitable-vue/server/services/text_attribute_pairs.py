@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -120,17 +121,17 @@ def build_paired_text_attributes(
     left_attrs: list[dict[str, Any]] = []
     right_attrs: list[dict[str, Any]] = []
     alignments: list[dict[str, Any]] = []
-    seen_labels: set[str] = set()
+    seen_pairs: set[tuple[Any, ...]] = set()
     for raw_pair in pairs:
         clean_pair = _validated_pair(raw_pair, left_sources, right_sources)
         if clean_pair is None:
             continue
-        label_key = clean_pair["dimensionLabel"].lower()
-        if label_key in seen_labels:
+        pair_key = _pair_dedupe_key(clean_pair)
+        if pair_key in seen_pairs:
             continue
         if _duplicates_infobox(clean_pair, left_infobox_pool, right_infobox_pool):
             continue
-        seen_labels.add(label_key)
+        seen_pairs.add(pair_key)
         index = len(left_attrs) + 1
         left_attr = _attribute_from_pair_side(clean_pair, "left", index, left_sources)
         right_attr = _attribute_from_pair_side(clean_pair, "right", index, right_sources)
@@ -147,10 +148,10 @@ def _validated_pair(
 ) -> dict[str, Any] | None:
     if not isinstance(raw_pair, dict):
         return None
-    label = _clean_text(raw_pair.get("dimensionLabel"))
-    question = _clean_text(raw_pair.get("comparisonQuestion"))
+    label = _clean_string(raw_pair.get("dimensionLabel"))
+    question = _clean_string(raw_pair.get("comparisonQuestion"))
     confidence = _confidence(raw_pair.get("confidence"))
-    if not label or confidence < MIN_PAIR_CONFIDENCE:
+    if not label or question is None or confidence is None or confidence < MIN_PAIR_CONFIDENCE:
         return None
     left = _validated_pair_side(raw_pair.get("left"), left_sources)
     right = _validated_pair_side(raw_pair.get("right"), right_sources)
@@ -160,10 +161,11 @@ def _validated_pair(
     if not isinstance(data_priority, bool):
         return None
     data_role = _clean_text(raw_pair.get("dataRole"))
-    if data_role and data_role not in KNOWN_DATA_ROLES:
-        return None
-    if data_priority and not data_role:
-        return None
+    if data_priority:
+        if not data_role or data_role not in KNOWN_DATA_ROLES:
+            return None
+    else:
+        data_role = ""
     return {
         "dimensionLabel": label,
         "comparisonQuestion": question,
@@ -178,7 +180,7 @@ def _validated_pair(
 def _validated_pair_side(raw_side: Any, sources: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
     if not isinstance(raw_side, dict):
         return None
-    value_text = _clean_text(raw_side.get("valueText"))
+    value_text = _clean_string(raw_side.get("valueText"))
     sentence_ids = raw_side.get("sentenceIds")
     if not value_text or not isinstance(sentence_ids, list) or not sentence_ids:
         return None
@@ -236,11 +238,15 @@ def _source_lookup(article: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return lookup
 
 
-def _confidence(value: Any) -> float:
+def _confidence(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
     try:
         parsed = float(value)
     except (TypeError, ValueError):
-        return 0.0
+        return None
+    if not math.isfinite(parsed):
+        return None
     return max(0.0, min(parsed, 1.0))
 
 
@@ -258,6 +264,26 @@ def _duplicates_infobox(
 def _normalized_infobox_key(value: Any) -> str:
     tokens = re.sub(r"[^a-z0-9]+", " ", _clean_text(value).lower()).split()
     return " ".join(INFOBOX_KEY_SYNONYMS.get(token, token) for token in tokens)
+
+
+def _pair_dedupe_key(pair: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        _normalized_infobox_key(pair["dimensionLabel"]),
+        tuple(pair["left"]["sentenceIds"]),
+        _normalized_evidence_text(pair["left"]["valueText"]),
+        tuple(pair["right"]["sentenceIds"]),
+        _normalized_evidence_text(pair["right"]["valueText"]),
+    )
+
+
+def _normalized_evidence_text(value: str) -> str:
+    return _clean_text(value).lower()
+
+
+def _clean_string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return _clean_text(value)
 
 
 def _sentence_candidate(sentence: Any, paragraph: dict[str, Any], side: str) -> dict[str, Any] | None:

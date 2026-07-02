@@ -1328,3 +1328,148 @@ def test_build_paired_text_attributes_allows_blank_data_role_when_priority_false
     assert right_attrs[0]["dataPriority"] is False
     assert "dataRole" not in right_attrs[0]
     assert alignments[0]["label"] == "Historical emergence"
+
+
+def test_build_paired_text_attributes_rejects_malformed_scalar_fields():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    cases = [
+        ("list label", {"dimensionLabel": ["Revenue"]}),
+        ("dict label", {"dimensionLabel": {"text": "Revenue"}}),
+        ("dict value", {"left": {"valueText": {"text": "1956"}, "sentenceIds": ["left-s-1-1"]}}),
+        ("list value", {"left": {"valueText": ["1956"], "sentenceIds": ["left-s-1-1"]}}),
+        ("non-string question", {"comparisonQuestion": ["When?"]}),
+    ]
+
+    for name, override in cases:
+        pair_response = _pair_response(label=f"Malformed {name}")
+        pair_response["pairs"][0].update(override)
+
+        left_attrs, right_attrs, alignments = build_paired_text_attributes(
+            left_article,
+            right_article,
+            pair_response,
+            [],
+            [],
+        )
+
+        assert (name, left_attrs, right_attrs, alignments) == (name, [], [], [])
+
+
+def test_build_paired_text_attributes_rejects_bool_and_non_finite_confidence():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    cases = [
+        ("bool", True),
+        ("string infinity", "Infinity"),
+        ("float infinity", float("inf")),
+        ("nan", float("nan")),
+    ]
+
+    for name, confidence in cases:
+        pair_response = _pair_response(label=f"Bad confidence {name}")
+        pair_response["pairs"][0]["confidence"] = confidence
+
+        left_attrs, right_attrs, alignments = build_paired_text_attributes(
+            left_article,
+            right_article,
+            pair_response,
+            [],
+            [],
+        )
+
+        assert (name, left_attrs, right_attrs, alignments) == (name, [], [], [])
+
+
+def test_build_paired_text_attributes_keeps_distinct_pairs_with_same_label():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Revenue",
+                "comparisonQuestion": "What revenue was reported?",
+                "left": {"valueText": "$1 million", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "$2 million", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "scale",
+                "confidence": 0.9,
+            },
+            {
+                "dimensionLabel": "Revenue",
+                "comparisonQuestion": "What revenue was reported?",
+                "left": {"valueText": "$3 million", "sentenceIds": ["left-s-1-2"]},
+                "right": {"valueText": "$4 million", "sentenceIds": ["right-s-1-2"]},
+                "dataPriority": True,
+                "dataRole": "scale",
+                "confidence": 0.9,
+            },
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert [attr["id"] for attr in left_attrs] == ["left-attr-paired-text-1", "left-attr-paired-text-2"]
+    assert [attr["id"] for attr in right_attrs] == ["right-attr-paired-text-1", "right-attr-paired-text-2"]
+    assert [attr["valueText"] for attr in left_attrs] == ["$1 million", "$3 million"]
+    assert [alignment["label"] for alignment in alignments] == ["Revenue", "Revenue"]
+
+
+def test_build_paired_text_attributes_drops_exact_duplicate_evidence_pairs():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Revenue",
+                "comparisonQuestion": "What revenue was reported?",
+                "left": {"valueText": "$1 million", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "$2 million", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "scale",
+                "confidence": 0.9,
+            },
+            {
+                "dimensionLabel": "Revenue!",
+                "comparisonQuestion": "What revenue was reported?",
+                "left": {"valueText": "$1 million", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "$2 million", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "scale",
+                "confidence": 0.9,
+            },
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert len(left_attrs) == 1
+    assert len(right_attrs) == 1
+    assert len(alignments) == 1
+    assert left_attrs[0]["key"] == "Revenue"
+
+
+def test_build_paired_text_attributes_strips_data_role_when_priority_false():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response(data_priority=False, data_role="scale")
+
+    left_attrs, right_attrs, _ = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["dataPriority"] is False
+    assert "dataRole" not in left_attrs[0]
+    assert right_attrs[0]["dataPriority"] is False
+    assert "dataRole" not in right_attrs[0]
