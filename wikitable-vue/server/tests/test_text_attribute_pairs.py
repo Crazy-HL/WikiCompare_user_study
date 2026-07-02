@@ -1379,6 +1379,28 @@ def test_build_paired_text_attributes_rejects_bool_and_non_finite_confidence():
         assert (name, left_attrs, right_attrs, alignments) == (name, [], [], [])
 
 
+def test_build_paired_text_attributes_rejects_out_of_range_confidence():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    cases = [
+        ("negative", -0.1),
+        ("above one", 2),
+    ]
+
+    for name, confidence in cases:
+        pair_response = _pair_response(label=f"Out of range confidence {name}")
+        pair_response["pairs"][0]["confidence"] = confidence
+
+        left_attrs, right_attrs, alignments = build_paired_text_attributes(
+            left_article,
+            right_article,
+            pair_response,
+            [],
+            [],
+        )
+
+        assert (name, left_attrs, right_attrs, alignments) == (name, [], [], [])
+
+
 def test_build_paired_text_attributes_preserves_finite_confidence_values():
     left_article, right_article = _paired_articles_with_paragraphs()
     pair_response = _pair_response()
@@ -1396,12 +1418,22 @@ def test_build_paired_text_attributes_preserves_finite_confidence_values():
     assert right_attrs[0]["confidence"] == 0.25
 
 
-def test_build_paired_text_attributes_does_not_clamp_finite_confidence():
-    left_article, right_article = _paired_articles_with_paragraphs()
+def test_build_paired_text_attributes_rejects_missing_paragraph_ids_from_different_paragraphs():
+    left_article = {
+        "paragraphs": [
+            {"sentences": [{"id": "left-s-1-1", "text": "AI was founded in 1956."}]},
+            {"sentences": [{"id": "left-s-2-1", "text": "AI grew from a workshop."}]},
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {"sentences": [{"id": "right-s-1-1", "text": "ML emerged in the 1950s."}]},
+        ]
+    }
     pair_response = _pair_response()
-    pair_response["pairs"][0]["confidence"] = 2
+    pair_response["pairs"][0]["left"]["sentenceIds"] = ["left-s-1-1", "left-s-2-1"]
 
-    left_attrs, right_attrs, _ = build_paired_text_attributes(
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
         left_article,
         right_article,
         pair_response,
@@ -1409,8 +1441,9 @@ def test_build_paired_text_attributes_does_not_clamp_finite_confidence():
         [],
     )
 
-    assert left_attrs[0]["confidence"] == 2.0
-    assert right_attrs[0]["confidence"] == 2.0
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
 
 
 def test_build_paired_text_attributes_keeps_distinct_pairs_with_same_label():

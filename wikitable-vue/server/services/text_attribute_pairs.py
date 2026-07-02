@@ -191,8 +191,8 @@ def _validated_pair_side(raw_side: Any, sources: dict[str, dict[str, Any]]) -> d
         if sentence_id not in seen_ids:
             clean_ids.append(sentence_id)
             seen_ids.add(sentence_id)
-    paragraph_ids = {sources[sentence_id].get("paragraphId") for sentence_id in clean_ids}
-    if len(paragraph_ids) > 1:
+    paragraph_keys = {sources[sentence_id].get("paragraphKey") for sentence_id in clean_ids}
+    if len(paragraph_keys) > 1:
         return None
     return {"valueText": value_text, "sentenceIds": clean_ids}
 
@@ -224,16 +224,21 @@ def _attribute_from_pair_side(
 
 def _source_lookup(article: dict[str, Any]) -> dict[str, dict[str, Any]]:
     lookup: dict[str, dict[str, Any]] = {}
-    for paragraph in article.get("paragraphs", []) or []:
+    for paragraph_index, paragraph in enumerate(article.get("paragraphs", []) or []):
         if not isinstance(paragraph, dict):
             continue
         paragraph_id = paragraph.get("id")
+        paragraph_key = paragraph_id if paragraph_id is not None else f"__paragraph_{paragraph_index}"
         for sentence in paragraph.get("sentences", []) or []:
             if not isinstance(sentence, dict):
                 continue
             sentence_id = sentence.get("id")
             if isinstance(sentence_id, str) and sentence_id:
-                lookup[sentence_id] = {"paragraphId": paragraph_id, "text": sentence.get("text")}
+                lookup[sentence_id] = {
+                    "paragraphId": paragraph_id,
+                    "paragraphKey": paragraph_key,
+                    "text": sentence.get("text"),
+                }
     return lookup
 
 
@@ -245,6 +250,8 @@ def _confidence(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     if not math.isfinite(parsed):
+        return None
+    if not 0.0 <= parsed <= 1.0:
         return None
     return parsed
 
