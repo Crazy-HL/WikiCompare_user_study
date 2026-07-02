@@ -3,7 +3,7 @@ import sys
 import time
 from types import SimpleNamespace
 
-from services.attribute_pool import build_attribute_pool
+from services.attribute_pool import build_attribute_pool, _text_attribute_timeout
 from services.config import LLMConfig
 from services.llm_client import LLMClient
 from services.llm_client import MAX_PROMPT_PARAGRAPHS, MAX_SENTENCES_PER_PARAGRAPH
@@ -61,6 +61,185 @@ def test_build_attribute_pool_includes_infobox_and_main_text():
     text_attr = next(item for item in pool if item["source"] == "main_text")
     assert text_attr["sourceIds"] == ["left-s-1-2"]
     assert text_attr["paragraphId"] == "left-p-1"
+
+
+def test_build_attribute_pool_merges_duplicate_text_attribute_as_related_evidence():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "GDP growth",
+                "valueText": "2.3% (2024)",
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "GDP growth was 2.3% in 2024.",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "GDP growth was 2.3% in 2024."},
+                ],
+            }
+        ],
+    }
+
+    class DuplicateLLM:
+        def extract_text_attributes(self, side, paragraphs):
+            return [
+                {
+                    "key": "GDP growth",
+                    "valueText": "2.3% in 2024",
+                    "paragraphId": "left-p-1",
+                    "sentenceIds": ["left-s-1-1"],
+                }
+            ]
+
+    pool = build_attribute_pool(article, "left", DuplicateLLM())
+
+    assert len(pool) == 1
+    assert pool[0]["sourceIds"] == ["left-info-1"]
+    assert pool[0]["relatedSourceIds"] == ["left-s-1-1"]
+
+
+def test_build_attribute_pool_links_infobox_to_matching_text_without_llm():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "GDP growth",
+                "valueText": "2.3% (2024)",
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "GDP growth was 2.3% in 2024. Exports expanded later.",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "GDP growth was 2.3% in 2024."},
+                    {"id": "left-s-1-2", "text": "Exports expanded later."},
+                ],
+            }
+        ],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    assert len(pool) == 1
+    assert pool[0]["sourceIds"] == ["left-info-1"]
+    assert pool[0]["relatedSourceIds"] == ["left-s-1-1"]
+
+
+def test_build_attribute_pool_links_infobox_to_acronym_text_evidence():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "Human Development Index",
+                "valueText": "0.929 very high (2023) (19th)",
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "The country recorded an HDI of 0.929 in 2023, ranking 19th globally.",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "The country recorded an HDI of 0.929 in 2023, ranking 19th globally.",
+                    },
+                ],
+            }
+        ],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    assert pool[0]["relatedSourceIds"] == ["left-s-1-1"]
+
+
+def test_build_attribute_pool_preserves_structured_values_from_infobox_and_text():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "Main industries",
+                "valueText": "Electronics Telecommunications Shipbuilding",
+                "structuredValues": [
+                    {"label": "Electronics", "value": "Electronics", "kind": "list_item"},
+                    {"label": "Telecommunications", "value": "Telecommunications", "kind": "list_item"},
+                ],
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "The main industries are electronics and shipbuilding.",
+                "sentences": [{"id": "left-s-1-1", "text": "The main industries are electronics and shipbuilding."}],
+            }
+        ],
+    }
+
+    class StructuredLLM:
+        def extract_text_attributes(self, side, paragraphs):
+            return [
+                {
+                    "key": "Main industries",
+                    "valueText": "electronics; shipbuilding",
+                    "paragraphId": "left-p-1",
+                    "sentenceIds": ["left-s-1-1"],
+                    "structuredValues": [
+                        {"label": "electronics", "value": "electronics", "kind": "list_item"},
+                        {"label": "shipbuilding", "value": "shipbuilding", "kind": "list_item"},
+                    ],
+                }
+            ]
+
+    pool = build_attribute_pool(article, "left", StructuredLLM())
+
+    assert pool[0]["structuredValues"] == [
+        {"label": "Electronics", "value": "Electronics", "kind": "list_item"},
+        {"label": "Telecommunications", "value": "Telecommunications", "kind": "list_item"},
+    ]
+    assert pool[1]["structuredValues"] == [
+        {"label": "electronics", "value": "electronics", "kind": "list_item"},
+        {"label": "shipbuilding", "value": "shipbuilding", "kind": "list_item"},
+    ]
+
+
+def test_llm_client_refines_extracted_values_from_items_response():
+    client = LLMClient(LLMConfig(model="test", base_url="http://example.test", api_key=None))
+
+    def fake_chat_json(messages):
+        assert "ruleValues" in messages[-1]["content"]
+        assert "lowest 10%" in messages[-1]["content"]
+        return {
+            "items": [
+                {
+                    "value": 2.7,
+                    "label": "lowest 10%",
+                    "year": 2016,
+                    "rawText": "lowest 10%: 2.7%",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+    client.chat_json = fake_chat_json
+
+    assert client.refine_extracted_values(
+        key="Income share",
+        value_text="lowest 10%: 2.7%",
+        rule_values=[{"value": 10.0}, {"value": 2.7}],
+        data_type="Proportional",
+    ) == [
+        {
+            "value": 2.7,
+            "label": "lowest 10%",
+            "year": 2016,
+            "rawText": "lowest 10%: 2.7%",
+            "confidence": 0.9,
+        }
+    ]
 
 
 def test_llm_client_extracts_paired_text_attributes_with_data_first_prompt():
@@ -285,6 +464,43 @@ def test_build_attribute_pool_rejects_blank_text_key_or_value_and_missing_senten
     assert build_attribute_pool(article, "left", NoisyLLM()) == []
 
 
+def test_build_attribute_pool_adds_rule_text_attributes_without_llm_for_concept_articles():
+    article = {
+        "infobox": [],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": (
+                    "Artificial intelligence is intelligence exhibited by machines. "
+                    "The field was founded as an academic discipline in 1956."
+                ),
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "Artificial intelligence is intelligence exhibited by machines."},
+                    {"id": "left-s-1-2", "text": "The field was founded as an academic discipline in 1956."},
+                ],
+            },
+            {
+                "id": "left-p-2",
+                "text": "Applications include search engines, recommendation systems, and robotics.",
+                "sentences": [
+                    {
+                        "id": "left-s-2-1",
+                        "text": "Applications include search engines, recommendation systems, and robotics.",
+                    },
+                ],
+            },
+        ],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    assert [(item["key"], item["sourceIds"]) for item in pool] == [
+        ("Overview", ["left-s-1-1"]),
+        ("History", ["left-s-1-2"]),
+        ("Applications", ["left-s-2-1"]),
+    ]
+
+
 def test_build_attribute_pool_ignores_non_list_llm_output():
     article = {
         "infobox": [],
@@ -341,6 +557,13 @@ def test_build_attribute_pool_times_out_slow_text_attribute_extraction():
 
     assert time.monotonic() - started < 0.15
     assert [item["key"] for item in pool] == ["GDP growth"]
+
+
+def test_text_attribute_timeout_caps_slow_provider_for_initial_compare():
+    class SlowProviderLLM:
+        config = SimpleNamespace(timeout_seconds=20)
+
+    assert _text_attribute_timeout(SlowProviderLLM()) == 8.0
 
 
 def test_prompt_paragraphs_prioritizes_numeric_text_and_limits_payload():

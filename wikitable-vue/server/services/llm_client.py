@@ -134,6 +134,54 @@ class LLMClient:
             raise ValueError("Expected paired text attribute response to contain a pairs list")
         return result
 
+    def refine_extracted_values(
+        self,
+        *,
+        key: str,
+        value_text: str,
+        rule_values: list[dict[str, Any]],
+        data_type: str,
+    ) -> list[dict[str, Any]]:
+        result = self.chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You correct rule-extracted comparable values from Wikipedia attributes. "
+                        "Use only the provided valueText and ruleValues. Return JSON only."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Review the rule extraction below and return corrected comparable values.\n\n"
+                        "Goals:\n"
+                        "1. Preserve or add labels that define comparable dimensions, such as nominal, PPP, "
+                        "exports, imports, revenues, expenditures, male, female, agriculture, industry, "
+                        "services, lowest 10%, highest 10%, countries, sectors, or categories.\n"
+                        "2. Remove numbers that are part of labels or context rather than values, such as the "
+                        "10% in 'lowest 10%'.\n"
+                        "3. Keep the numeric value field on the same scale as ruleValues when correcting an "
+                        "existing item. Do not convert units.\n"
+                        "4. Do not invent values. If unsure, return ruleValues unchanged.\n"
+                        "5. Keep original order.\n"
+                        "6. rawText must be the exact source fragment supporting the item.\n\n"
+                        "Return this JSON object shape only:\n"
+                        '{"items":[{"value":number,"label":string|null,"year":number|null,'
+                        '"rawText":string,"confidence":number}]}\n\n'
+                        f"attributeKey: {key}\n"
+                        f"dataType: {data_type}\n"
+                        f"valueText: {value_text}\n"
+                        f"ruleValues: {json.dumps(rule_values, ensure_ascii=False)}"
+                    ),
+                },
+            ]
+        )
+        items = result.get("items") if isinstance(result, dict) else result
+        if not isinstance(items, list):
+            raise ValueError("Expected LLM value refinement response to contain an items list")
+        return items
+
 
 def _prompt_paragraphs(paragraphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates = sorted(
