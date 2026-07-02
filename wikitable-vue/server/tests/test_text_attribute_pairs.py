@@ -907,6 +907,20 @@ def test_build_text_evidence_candidates_keeps_cardinal_placed_values_as_rankings
     assert candidates[0]["dataItems"] == [{"value": 2, "role": "ranking"}]
 
 
+def test_build_text_evidence_candidates_classifies_ranked_algorithm_counts_as_quantity():
+    assert _data_items_for_text("The study ranked 10 algorithms.") == [{"value": 10, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_placed_employee_counts_as_quantity():
+    assert _data_items_for_text("The company placed 2,000 employees on leave.") == [
+        {"value": 2000, "role": "quantity"}
+    ]
+
+
+def test_build_text_evidence_candidates_classifies_placed_model_counts_as_quantity():
+    assert _data_items_for_text("The system placed 2 models into production.") == [{"value": 2, "role": "quantity"}]
+
+
 def test_build_text_evidence_candidates_ignores_century_ordinals_as_rankings():
     assert _data_items_for_text("The 21st century changed the field.") == []
 

@@ -5,7 +5,7 @@ from typing import Any
 
 
 MEASUREMENT_TERMS = (
-    "cases|employees|features|members|models|participants|population|samples|users|revenue|accuracy"
+    "algorithms|cases|employees|features|members|models|participants|population|samples|users|revenue|accuracy"
 )
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
 NUMBER_RE = re.compile(
@@ -54,6 +54,8 @@ DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(
 )
 RANKING_PREFIX_RE = re.compile(r"\b(rank|ranked|ranking|placed)\s+$", re.I)
 RANKING_SUFFIX_CONTEXT_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b\s*(?:overall|place|rank|ranking)\b", re.I)
+ORDINAL_RANKING_SUFFIX_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b", re.I)
+CARDINAL_RANKING_SUFFIX_RE = re.compile(r"^\s*(?:$|[.,;:!?)]|overall\b|place\b|rank\b|ranking\b)", re.I)
 LEADING_TEMPORAL_PREFIX_RE = re.compile(r"^\s*in\s+$", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
@@ -220,7 +222,20 @@ def _is_embedded_token_number(text: str, match: re.Match) -> bool:
 
 def _has_local_ranking_context(text: str, match: re.Match) -> bool:
     prefix, suffix = _local_prefix_suffix(text, match)
-    return bool(RANKING_PREFIX_RE.search(prefix) or RANKING_SUFFIX_CONTEXT_RE.search(suffix))
+    if RANKING_SUFFIX_CONTEXT_RE.search(suffix):
+        return True
+    if not RANKING_PREFIX_RE.search(prefix):
+        return False
+    return bool(
+        ORDINAL_RANKING_SUFFIX_RE.search(suffix)
+        or CARDINAL_RANKING_SUFFIX_RE.search(suffix)
+        or _has_rank_marker_prefix(text, match)
+    )
+
+
+def _has_rank_marker_prefix(text: str, match: re.Match) -> bool:
+    start, _ = match.span(1)
+    return start > 0 and text[start - 1] == "#"
 
 
 def _has_local_proportion_context(text: str, match: re.Match) -> bool:
