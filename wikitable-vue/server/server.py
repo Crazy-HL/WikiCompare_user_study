@@ -315,9 +315,9 @@ def _build_paired_text_alignments(left_article, right_article, left_pool, right_
     }
     try:
         pair_response = llm_client.extract_text_attribute_pairs(
-            left_candidates,
-            right_candidates,
-            infobox_context,
+            left_candidates=left_candidates,
+            right_candidates=right_candidates,
+            infobox_context=infobox_context,
         )
     except Exception:
         return [], [], []

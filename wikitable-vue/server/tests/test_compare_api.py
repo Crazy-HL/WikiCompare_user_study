@@ -167,7 +167,11 @@ class CompareApiTest(AsyncHTTPTestCase):
             def extract_text_attributes(self, _side, _paragraphs):
                 return []
 
-            def extract_text_attribute_pairs(self, _left_candidates, _right_candidates, _infobox_context):
+            def extract_text_attribute_pairs(self, *, left_candidates, right_candidates, infobox_context):
+                assert left_candidates
+                assert right_candidates
+                assert "left" in infobox_context
+                assert "right" in infobox_context
                 return {
                     "pairs": [
                         {
