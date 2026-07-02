@@ -368,3 +368,37 @@ def test_build_text_evidence_candidates_classifies_non_percent_accuracy_scores_l
         {"value": 2019, "role": "emergence_time"},
         {"value": 95, "role": "proportion"},
     ]
+
+
+def test_build_text_evidence_candidates_ignores_leading_publication_years():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "In 2020, the study reported 42 cases."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 42, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_ignores_published_in_year_before_reported_cases():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "A paper published in 2019 reported 42 cases."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 42, "role": "quantity"}]

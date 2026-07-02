@@ -25,7 +25,15 @@ CLAIM_CUE_RE = re.compile(
 PUBLICATION_NOISE_RE = re.compile(r"\b(published|paper|study|article|journal|conference)\b", re.I)
 PUBLICATION_YEAR_FOLLOW_RE = re.compile(r"^\s*(study|paper|article|journal|conference)\b", re.I)
 PUBLICATION_YEAR_PRECEDE_RE = re.compile(
-    r"\b(study|paper|article|journal|conference)\s+(in|from)\s*$",
+    r"\b(study|paper|article|journal|conference)(?:\s+published)?\s+(in|from)\s*$",
+    re.I,
+)
+LEADING_PUBLICATION_YEAR_RE = re.compile(
+    r"^\s*in\s+$",
+    re.I,
+)
+PUBLICATION_AFTER_LEADING_YEAR_RE = re.compile(
+    r"^\s*,?\s*(the\s+)?(study|paper|article)\b",
     re.I,
 )
 EMERGENCE_CONTEXT_RE = re.compile(
@@ -146,6 +154,10 @@ def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match
     if PUBLICATION_YEAR_FOLLOW_RE.search(text[match.end() :]):
         return True
     if PUBLICATION_YEAR_PRECEDE_RE.search(text[: match.start()]):
+        return True
+    if LEADING_PUBLICATION_YEAR_RE.search(text[: match.start()]) and PUBLICATION_AFTER_LEADING_YEAR_RE.search(
+        text[match.end() :]
+    ):
         return True
     return not _has_measurement_context(text, match)
 
