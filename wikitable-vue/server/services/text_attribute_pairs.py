@@ -4,8 +4,11 @@ import re
 from typing import Any
 
 
-NUMBER_RE = re.compile(r"([-+]?\d+(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?", re.I)
-MONEY_RE = re.compile(r"[$€£¥₩]\s*[-+]?\d+(?:\.\d+)?", re.I)
+NUMBER_RE = re.compile(
+    r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
+    re.I,
+)
+MONEY_RE = re.compile(r"[$€£¥₩]\s*[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", re.I)
 ORDINAL_RE = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.I)
 DATA_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged|"
@@ -19,9 +22,18 @@ CLAIM_CUE_RE = re.compile(
     re.I,
 )
 PUBLICATION_NOISE_RE = re.compile(r"\b(published|paper|study|article|journal|conference)\b", re.I)
+EMERGENCE_CONTEXT_RE = re.compile(
+    r"\b(founded|introduced|launched|released|created|developed|grew|emerged)\b",
+    re.I,
+)
+PROPORTION_CONTEXT_RE = re.compile(r"\b(accuracy|share|rate|percent)\b", re.I)
+RANKING_CONTEXT_RE = re.compile(r"\brank\b", re.I)
+SCALE_UNITS = {"million", "billion", "trillion"}
 
 
 def build_text_evidence_candidates(article: dict[str, Any], side: str, limit: int = 24) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
     candidates: list[dict[str, Any]] = []
     for paragraph in article.get("paragraphs", []) or []:
         if not isinstance(paragraph, dict):
@@ -71,19 +83,17 @@ def _sentence_candidate(sentence: Any, paragraph: dict[str, Any], side: str) -> 
 def _data_items(text: str) -> list[dict[str, Any]]:
     if not DATA_CONTEXT_RE.search(text) and not MONEY_RE.search(text) and not ORDINAL_RE.search(text):
         return []
-    if PUBLICATION_NOISE_RE.search(text) and not re.search(r"%|accuracy|score|rank", text, re.I):
-        return []
     items: list[dict[str, Any]] = []
     for match in NUMBER_RE.finditer(text):
         raw = match.group(1)
         unit = (match.group(2) or "").lower()
+        if _is_publication_context_year(raw, unit, text):
+            continue
         try:
-            value = float(raw)
+            value = float(raw.replace(",", ""))
         except ValueError:
             continue
         role = _data_role(text, unit)
-        if role == "context_year" and PUBLICATION_NOISE_RE.search(text):
-            continue
         item: dict[str, Any] = {"value": int(value) if value.is_integer() else value, "role": role}
         if unit:
             item["unit"] = unit
@@ -92,16 +102,25 @@ def _data_items(text: str) -> list[dict[str, Any]]:
 
 
 def _data_role(text: str, unit: str) -> str:
-    lower = text.lower()
-    if unit in {"%", "percent"} or "accuracy" in lower or "share" in lower or "rate" in lower:
-        return "proportion"
-    if re.search(r"\b(founded|introduced|launched|released|created|developed|grew|emerged)\b", lower):
-        return "emergence_time"
-    if "rank" in lower or ORDINAL_RE.search(text):
-        return "ranking"
-    if MONEY_RE.search(text) or unit in {"million", "billion", "trillion"}:
+    if MONEY_RE.search(text) or unit in SCALE_UNITS:
         return "scale"
+    if unit in {"%", "percent"} or PROPORTION_CONTEXT_RE.search(text):
+        return "proportion"
+    if EMERGENCE_CONTEXT_RE.search(text):
+        return "emergence_time"
+    if RANKING_CONTEXT_RE.search(text) or ORDINAL_RE.search(text):
+        return "ranking"
     return "quantity"
+
+
+def _is_publication_context_year(raw: str, unit: str, text: str) -> bool:
+    if unit or not PUBLICATION_NOISE_RE.search(text):
+        return False
+    try:
+        value = int(raw.replace(",", ""))
+    except ValueError:
+        return False
+    return 1800 <= value <= 2100 and len(raw.replace(",", "")) == 4
 
 
 def _semantic_cue(text: str) -> str:
