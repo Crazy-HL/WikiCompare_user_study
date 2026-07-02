@@ -907,6 +907,22 @@ def test_build_text_evidence_candidates_keeps_cardinal_placed_values_as_rankings
     assert candidates[0]["dataItems"] == [{"value": 2, "role": "ranking"}]
 
 
+def test_build_text_evidence_candidates_keeps_hash_marked_cardinal_rankings():
+    assert _data_items_for_text("The model ranked #1.") == [{"value": 1, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_keeps_cardinal_rankings_before_accuracy_context():
+    assert _data_items_for_text("The model ranked 1 in accuracy.") == [{"value": 1, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_keeps_cardinal_rankings_before_among_context():
+    assert _data_items_for_text("The model ranked 1 among baselines.") == [{"value": 1, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_keeps_cardinal_placements_before_contest_context():
+    assert _data_items_for_text("The model placed 2 in the contest.") == [{"value": 2, "role": "ranking"}]
+
+
 def test_build_text_evidence_candidates_classifies_ranked_algorithm_counts_as_quantity():
     assert _data_items_for_text("The study ranked 10 algorithms.") == [{"value": 10, "role": "quantity"}]
 

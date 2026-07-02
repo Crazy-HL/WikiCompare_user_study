@@ -55,7 +55,10 @@ DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(
 RANKING_PREFIX_RE = re.compile(r"\b(rank|ranked|ranking|placed)\s+$", re.I)
 RANKING_SUFFIX_CONTEXT_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b\s*(?:overall|place|rank|ranking)\b", re.I)
 ORDINAL_RANKING_SUFFIX_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b", re.I)
-CARDINAL_RANKING_SUFFIX_RE = re.compile(r"^\s*(?:$|[.,;:!?)]|overall\b|place\b|rank\b|ranking\b)", re.I)
+CARDINAL_RANKING_SUFFIX_RE = re.compile(
+    r"^\s*(?:$|[.,;:!?)]|among\b|in\b|overall\b|place\b|rank\b|ranking\b)",
+    re.I,
+)
 LEADING_TEMPORAL_PREFIX_RE = re.compile(r"^\s*in\s+$", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
@@ -222,15 +225,28 @@ def _is_embedded_token_number(text: str, match: re.Match) -> bool:
 
 def _has_local_ranking_context(text: str, match: re.Match) -> bool:
     prefix, suffix = _local_prefix_suffix(text, match)
+    if _has_direct_measurement_context(text, match):
+        return False
     if RANKING_SUFFIX_CONTEXT_RE.search(suffix):
         return True
-    if not RANKING_PREFIX_RE.search(prefix):
+    if not _has_ranking_prefix_context(text, match):
         return False
     return bool(
         ORDINAL_RANKING_SUFFIX_RE.search(suffix)
         or CARDINAL_RANKING_SUFFIX_RE.search(suffix)
         or _has_rank_marker_prefix(text, match)
     )
+
+
+def _has_ranking_prefix_context(text: str, match: re.Match) -> bool:
+    prefix, _ = _local_prefix_suffix(text, match)
+    if RANKING_PREFIX_RE.search(prefix):
+        return True
+    start, _ = match.span(1)
+    if start == 0 or text[start - 1] != "#":
+        return False
+    marker_prefix = text[max(0, start - 49) : start - 1]
+    return bool(RANKING_PREFIX_RE.search(marker_prefix))
 
 
 def _has_rank_marker_prefix(text: str, match: re.Match) -> bool:
