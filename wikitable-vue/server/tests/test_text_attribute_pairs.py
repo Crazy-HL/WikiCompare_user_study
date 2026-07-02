@@ -600,4 +600,75 @@ def test_build_text_evidence_candidates_classifies_introduced_model_counts_as_qu
 
     candidates = build_text_evidence_candidates(article, "left")
 
-    assert {"value": 2, "role": "quantity"} in candidates[0]["dataItems"]
+    assert candidates[0]["dataItems"] == [
+        {"value": 2, "role": "quantity"},
+        {"value": 2019, "role": "emergence_time"},
+    ]
+
+
+def test_build_text_evidence_candidates_classifies_active_user_counts_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The service introduced 2,019 active users."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2019, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_monthly_active_user_counts_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The service introduced 2,019 monthly active users."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2019, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_new_feature_counts_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The release introduced 2,019 new features."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2019, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_trained_model_counts_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The system introduced 2,019 trained models."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2019, "role": "quantity"}]

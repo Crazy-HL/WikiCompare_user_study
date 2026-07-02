@@ -5,6 +5,7 @@ from typing import Any
 
 
 MEASUREMENT_TERMS = "cases|employees|features|members|models|population|samples|users|revenue|accuracy"
+MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
 NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
     re.I,
@@ -45,7 +46,10 @@ PROPORTION_PREFIX_RE = re.compile(
 )
 PROPORTION_SUFFIX_RE = re.compile(r"^\s*(accuracy|score|share|rate|percent)\b", re.I)
 MEASUREMENT_CONTEXT_RE = re.compile(rf"\b({MEASUREMENT_TERMS})\b", re.I)
-DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(rf"^\s*(?:(confirmed|total)\s+){{0,2}}({MEASUREMENT_TERMS})\b", re.I)
+DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(
+    rf"^\s*(?:({MEASUREMENT_DESCRIPTORS})\s+){{0,3}}({MEASUREMENT_TERMS})\b",
+    re.I,
+)
 RANKING_PREFIX_RE = re.compile(r"\brank\s+$", re.I)
 ORDINAL_SUFFIX_RE = re.compile(r"^\s*(st|nd|rd|th)\b", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
