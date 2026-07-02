@@ -237,3 +237,77 @@ def test_build_text_evidence_candidates_keeps_standalone_sample_measurements():
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": 1000, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_ignores_publication_year_before_reported_cases():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "A study in 2020 reported 42 cases."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 42, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_ignores_publication_year_before_reported_samples():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "A paper from 2019 reported 1,000 samples."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 1000, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_isolates_introduced_year_from_later_accuracy():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "The model introduced in 2019 reached 95% accuracy.",
+                    },
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "emergence_time"},
+        {"value": 95, "role": "proportion", "unit": "%"},
+    ]
+
+
+def test_build_text_evidence_candidates_ignores_rate_substrings_for_proportion():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The ratepayer group had 200 members."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 200, "role": "quantity"}]

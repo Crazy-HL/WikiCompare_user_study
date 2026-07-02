@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 
-MEASUREMENT_TERMS = "cases|employees|population|samples|users|revenue|accuracy"
+MEASUREMENT_TERMS = "cases|employees|members|population|samples|users|revenue|accuracy"
 NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
     re.I,
@@ -24,6 +24,10 @@ CLAIM_CUE_RE = re.compile(
 )
 PUBLICATION_NOISE_RE = re.compile(r"\b(published|paper|study|article|journal|conference)\b", re.I)
 PUBLICATION_YEAR_FOLLOW_RE = re.compile(r"^\s*(study|paper|article|journal|conference)\b", re.I)
+PUBLICATION_YEAR_PRECEDE_RE = re.compile(
+    r"\b(study|paper|article|journal|conference)\s+(in|from)\s*$",
+    re.I,
+)
 EMERGENCE_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged)\b",
     re.I,
@@ -114,10 +118,12 @@ def _data_role(text: str, unit: str, match: re.Match) -> str:
     context = _role_context(text, match)
     if _has_currency_symbol(text, match) or unit in SCALE_UNITS:
         return "scale"
-    if unit in {"%", "percent"} or PROPORTION_CONTEXT_RE.search(context):
+    if unit in {"%", "percent"}:
         return "proportion"
     if EMERGENCE_CONTEXT_RE.search(context):
         return "emergence_time"
+    if PROPORTION_CONTEXT_RE.search(context):
+        return "proportion"
     if RANKING_CONTEXT_RE.search(context) or ORDINAL_RE.search(context):
         return "ranking"
     return "quantity"
@@ -133,6 +139,8 @@ def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match
     if not 1800 <= value <= 2100 or len(raw.replace(",", "")) != 4:
         return False
     if PUBLICATION_YEAR_FOLLOW_RE.search(text[match.end() :]):
+        return True
+    if PUBLICATION_YEAR_PRECEDE_RE.search(text[: match.start()]):
         return True
     return not _has_measurement_context(text, match)
 
