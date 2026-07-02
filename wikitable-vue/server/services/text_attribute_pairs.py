@@ -150,7 +150,7 @@ def _validated_pair(
     label = _clean_string(raw_pair.get("dimensionLabel"))
     question = _clean_string(raw_pair.get("comparisonQuestion"))
     confidence = _confidence(raw_pair.get("confidence"))
-    if not label or question is None or confidence is None:
+    if not label or not question or confidence is None:
         return None
     left = _validated_pair_side(raw_pair.get("left"), left_sources)
     right = _validated_pair_side(raw_pair.get("right"), right_sources)
@@ -227,10 +227,11 @@ def _source_lookup(article: dict[str, Any]) -> dict[str, dict[str, Any]]:
     for paragraph_index, paragraph in enumerate(article.get("paragraphs", []) or []):
         if not isinstance(paragraph, dict):
             continue
-        paragraph_id = paragraph.get("id")
+        raw_paragraph_id = paragraph.get("id")
+        paragraph_id = raw_paragraph_id if isinstance(raw_paragraph_id, str) and raw_paragraph_id.strip() else None
         paragraph_key = (
             paragraph_id
-            if isinstance(paragraph_id, str) and paragraph_id.strip()
+            if paragraph_id is not None
             else f"__paragraph_{paragraph_index}"
         )
         for sentence in paragraph.get("sentences", []) or []:

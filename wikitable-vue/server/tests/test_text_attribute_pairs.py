@@ -1338,6 +1338,7 @@ def test_build_paired_text_attributes_rejects_malformed_scalar_fields():
         ("dict value", {"left": {"valueText": {"text": "1956"}, "sentenceIds": ["left-s-1-1"]}}),
         ("list value", {"left": {"valueText": ["1956"], "sentenceIds": ["left-s-1-1"]}}),
         ("non-string question", {"comparisonQuestion": ["When?"]}),
+        ("blank question", {"comparisonQuestion": "   "}),
     ]
 
     for name, override in cases:
@@ -1498,7 +1499,9 @@ def test_build_paired_text_attributes_handles_unhashable_paragraph_ids():
     )
 
     assert left_attrs[0]["sourceIds"] == ["left-s-1-1"]
+    assert left_attrs[0]["paragraphId"] is None
     assert right_attrs[0]["sourceIds"] == ["right-s-1-1"]
+    assert right_attrs[0]["paragraphId"] is None
     assert alignments[0]["label"] == "Historical emergence"
 
 
