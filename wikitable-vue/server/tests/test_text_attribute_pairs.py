@@ -709,3 +709,43 @@ def test_build_text_evidence_candidates_keeps_leading_year_before_active_users_a
         {"value": 2019, "role": "emergence_time"},
         {"value": 2, "role": "scale", "unit": "million"},
     ]
+
+
+def test_build_text_evidence_candidates_keeps_comma_grouped_leading_case_counts_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "In 2,019 cases, the rate was 5%."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "quantity"},
+        {"value": 5, "role": "proportion", "unit": "%"},
+    ]
+
+
+def test_build_text_evidence_candidates_keeps_comma_grouped_leading_active_users_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "In 2,019 active users, engagement increased by 5%."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "quantity"},
+        {"value": 5, "role": "proportion", "unit": "%"},
+    ]

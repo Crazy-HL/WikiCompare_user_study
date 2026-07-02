@@ -228,7 +228,7 @@ def _has_leading_temporal_prefix(text: str, match: re.Match) -> bool:
 
 
 def _is_year_like_match(raw: str, unit: str) -> bool:
-    if unit:
+    if unit or "," in raw:
         return False
     try:
         value = int(raw.replace(",", ""))
