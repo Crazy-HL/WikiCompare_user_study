@@ -30,14 +30,15 @@ EMERGENCE_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged)\b",
     re.I,
 )
-PROPORTION_CONTEXT_RE = re.compile(r"\b(accuracy|score|share|rate|percent)\b", re.I)
 PROPORTION_PREFIX_RE = re.compile(
     r"\b(accuracy|share|rate|percent)(?:\s+score)?\s+(?:of\s+)?$|\bscore\s+(?:of\s+)?$",
     re.I,
 )
-RANKING_CONTEXT_RE = re.compile(r"\brank\b", re.I)
+PROPORTION_SUFFIX_RE = re.compile(r"^\s*(accuracy|score|share|rate|percent)\b", re.I)
 MEASUREMENT_CONTEXT_RE = re.compile(rf"\b({MEASUREMENT_TERMS})\b", re.I)
-DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(rf"^\s*({MEASUREMENT_TERMS})\b", re.I)
+DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(rf"^\s*(?:(confirmed|total)\s+){{0,2}}({MEASUREMENT_TERMS})\b", re.I)
+RANKING_PREFIX_RE = re.compile(r"\brank\s+$", re.I)
+ORDINAL_SUFFIX_RE = re.compile(r"^\s*(st|nd|rd|th)\b", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
 
@@ -118,19 +119,18 @@ def _data_items(text: str) -> list[dict[str, Any]]:
 
 
 def _data_role(text: str, unit: str, match: re.Match) -> str:
-    context = _role_context(text, match)
     if _has_currency_symbol(text, match) or unit in SCALE_UNITS:
         return "scale"
     if unit in {"%", "percent"}:
         return "proportion"
-    if _has_local_proportion_prefix(text, match):
-        return "proportion"
-    if EMERGENCE_CONTEXT_RE.search(context):
-        return "emergence_time"
-    if PROPORTION_CONTEXT_RE.search(context):
-        return "proportion"
-    if RANKING_CONTEXT_RE.search(context) or ORDINAL_RE.search(context):
+    if _has_local_ranking_context(text, match):
         return "ranking"
+    if _has_local_proportion_context(text, match):
+        return "proportion"
+    if _has_direct_measurement_context(text, match):
+        return "quantity"
+    if _has_local_emergence_context(text, match):
+        return "emergence_time"
     return "quantity"
 
 
@@ -179,8 +179,23 @@ def _has_currency_symbol(text: str, match: re.Match) -> bool:
     return bool(CURRENCY_SYMBOL_RE.search(text[max(0, match.start() - 4) : match.start()]))
 
 
-def _has_local_proportion_prefix(text: str, match: re.Match) -> bool:
-    return bool(PROPORTION_PREFIX_RE.search(text[max(0, match.start() - 48) : match.start()]))
+def _has_local_ranking_context(text: str, match: re.Match) -> bool:
+    prefix, suffix = _local_prefix_suffix(text, match)
+    return bool(RANKING_PREFIX_RE.search(prefix) or ORDINAL_SUFFIX_RE.search(suffix))
+
+
+def _has_local_proportion_context(text: str, match: re.Match) -> bool:
+    prefix, suffix = _local_prefix_suffix(text, match)
+    return bool(PROPORTION_PREFIX_RE.search(prefix) or PROPORTION_SUFFIX_RE.search(suffix))
+
+
+def _has_local_emergence_context(text: str, match: re.Match) -> bool:
+    prefix, suffix = _local_prefix_suffix(text, match)
+    return bool(EMERGENCE_CONTEXT_RE.search(prefix) or EMERGENCE_CONTEXT_RE.search(suffix[:24]))
+
+
+def _local_prefix_suffix(text: str, match: re.Match) -> tuple[str, str]:
+    return text[max(0, match.start() - 48) : match.start()], text[match.end() : min(len(text), match.end() + 48)]
 
 
 def _has_publication_context(text: str, match: re.Match) -> bool:
