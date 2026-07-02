@@ -12,7 +12,7 @@ NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
     re.I,
 )
-MONEY_RE = re.compile(r"[$€£¥₩]\s*[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", re.I)
+MONEY_RE = re.compile(r"[-+]?\s*[$€£¥₩]\s*[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", re.I)
 ORDINAL_RE = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.I)
 DATA_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged|"
@@ -124,9 +124,8 @@ def _data_items(text: str) -> list[dict[str, Any]]:
             continue
         if _is_publication_context_year(raw, unit, text, match):
             continue
-        try:
-            value = float(raw.replace(",", ""))
-        except ValueError:
+        value = _numeric_value(raw, text, match)
+        if value is None:
             continue
         role = _data_role(text, unit, match)
         item: dict[str, Any] = {"value": int(value) if value.is_integer() else value, "role": role}
@@ -195,11 +194,27 @@ def _has_currency_symbol(text: str, match: re.Match) -> bool:
     return bool(CURRENCY_SYMBOL_RE.search(text[max(0, match.start() - 4) : match.start()]))
 
 
+def _numeric_value(raw: str, text: str, match: re.Match) -> float | None:
+    try:
+        value = float(raw.replace(",", ""))
+    except ValueError:
+        return None
+    if value > 0 and _has_negative_currency_prefix(text, match):
+        return -value
+    return value
+
+
+def _has_negative_currency_prefix(text: str, match: re.Match) -> bool:
+    return bool(re.search(r"-\s*[$€£¥₩]\s*$", text[max(0, match.start() - 8) : match.start()]))
+
+
 def _is_embedded_token_number(text: str, match: re.Match) -> bool:
     start, end = match.span(1)
     before = text[start - 1] if start > 0 else ""
     before_before = text[start - 2] if start > 1 else ""
     after = text[end] if end < len(text) else ""
+    if after.isalpha() and _has_local_ranking_context(text, match):
+        return False
     return bool(before.isalpha() or (before == "-" and before_before.isalpha()) or after.isalpha())
 
 

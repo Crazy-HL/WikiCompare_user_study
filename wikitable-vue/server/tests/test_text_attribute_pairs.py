@@ -820,3 +820,71 @@ def test_build_text_evidence_candidates_ignores_score_name_digits():
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": 95, "role": "proportion"}]
+
+
+def test_build_text_evidence_candidates_keeps_first_place_ordinals_as_rankings():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The model ranked 1st in accuracy."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 1, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_keeps_second_place_ordinals_as_rankings():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The system ranked 2nd overall."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_preserves_negative_sign_before_currency():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The company generated -$2,019 in revenue."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": -2019, "role": "scale"}]
+
+
+def test_build_text_evidence_candidates_preserves_negative_sign_before_currency_units():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The company generated -$2.5 million in revenue."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": -2.5, "role": "scale", "unit": "million"}]
