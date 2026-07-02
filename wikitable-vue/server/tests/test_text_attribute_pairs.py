@@ -203,3 +203,37 @@ def test_build_text_evidence_candidates_classifies_accuracy_and_sample_items_loc
         {"value": 95, "role": "proportion", "unit": "%"},
         {"value": 1000, "role": "quantity"},
     ]
+
+
+def test_build_text_evidence_candidates_keeps_standalone_employee_measurements():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The company had 200 employees."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 200, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_keeps_standalone_sample_measurements():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The dataset included 1,000 samples."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 1000, "role": "quantity"}]

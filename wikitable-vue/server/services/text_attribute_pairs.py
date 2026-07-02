@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 
+MEASUREMENT_TERMS = "cases|employees|population|samples|users|revenue|accuracy"
 NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
     re.I,
@@ -29,7 +30,7 @@ EMERGENCE_CONTEXT_RE = re.compile(
 )
 PROPORTION_CONTEXT_RE = re.compile(r"\b(accuracy|share|rate|percent)\b", re.I)
 RANKING_CONTEXT_RE = re.compile(r"\brank\b", re.I)
-MEASUREMENT_CONTEXT_RE = re.compile(r"\b(cases|employees|population|samples|users|revenue|accuracy)\b", re.I)
+MEASUREMENT_CONTEXT_RE = re.compile(rf"\b({MEASUREMENT_TERMS})\b", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}
 
@@ -84,7 +85,12 @@ def _sentence_candidate(sentence: Any, paragraph: dict[str, Any], side: str) -> 
 
 
 def _data_items(text: str) -> list[dict[str, Any]]:
-    if not DATA_CONTEXT_RE.search(text) and not MONEY_RE.search(text) and not ORDINAL_RE.search(text):
+    if (
+        not DATA_CONTEXT_RE.search(text)
+        and not MEASUREMENT_CONTEXT_RE.search(text)
+        and not MONEY_RE.search(text)
+        and not ORDINAL_RE.search(text)
+    ):
         return []
     items: list[dict[str, Any]] = []
     for match in NUMBER_RE.finditer(text):
