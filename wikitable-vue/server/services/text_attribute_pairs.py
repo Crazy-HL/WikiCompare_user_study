@@ -8,6 +8,7 @@ MEASUREMENT_TERMS = (
     "algorithms|cases|employees|features|members|models|participants|population|samples|users|revenue|accuracy"
 )
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
+MIN_PAIR_CONFIDENCE = 0.55
 NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
     re.I,
@@ -96,6 +97,146 @@ def build_text_evidence_candidates(article: dict[str, Any], side: str, limit: in
             if len(candidates) >= limit:
                 return candidates
     return candidates
+
+
+def build_paired_text_attributes(
+    left_article: dict[str, Any],
+    right_article: dict[str, Any],
+    pair_response: Any,
+    left_infobox_pool: list[dict[str, Any]],
+    right_infobox_pool: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    pairs = pair_response.get("pairs") if isinstance(pair_response, dict) else pair_response
+    if not isinstance(pairs, list):
+        return [], [], []
+    left_sources = _source_lookup(left_article)
+    right_sources = _source_lookup(right_article)
+    left_attrs: list[dict[str, Any]] = []
+    right_attrs: list[dict[str, Any]] = []
+    alignments: list[dict[str, Any]] = []
+    seen_labels: set[str] = set()
+    for raw_pair in pairs:
+        clean_pair = _validated_pair(raw_pair, left_sources, right_sources)
+        if clean_pair is None:
+            continue
+        label_key = clean_pair["dimensionLabel"].lower()
+        if label_key in seen_labels:
+            continue
+        if _duplicates_infobox(clean_pair, left_infobox_pool, right_infobox_pool):
+            continue
+        seen_labels.add(label_key)
+        index = len(left_attrs) + 1
+        left_attr = _attribute_from_pair_side(clean_pair, "left", index, left_sources)
+        right_attr = _attribute_from_pair_side(clean_pair, "right", index, right_sources)
+        left_attrs.append(left_attr)
+        right_attrs.append(right_attr)
+        alignments.append({"left": left_attr, "right": right_attr, "label": clean_pair["dimensionLabel"]})
+    return left_attrs, right_attrs, alignments
+
+
+def _validated_pair(
+    raw_pair: Any,
+    left_sources: dict[str, dict[str, Any]],
+    right_sources: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not isinstance(raw_pair, dict):
+        return None
+    label = _clean_text(raw_pair.get("dimensionLabel"))
+    question = _clean_text(raw_pair.get("comparisonQuestion"))
+    confidence = _confidence(raw_pair.get("confidence"))
+    if not label or confidence < MIN_PAIR_CONFIDENCE:
+        return None
+    left = _validated_pair_side(raw_pair.get("left"), left_sources)
+    right = _validated_pair_side(raw_pair.get("right"), right_sources)
+    if left is None or right is None:
+        return None
+    data_priority = bool(raw_pair.get("dataPriority"))
+    data_role = _clean_text(raw_pair.get("dataRole"))
+    if data_priority and not data_role:
+        return None
+    return {
+        "dimensionLabel": label,
+        "comparisonQuestion": question,
+        "left": left,
+        "right": right,
+        "dataPriority": data_priority,
+        "dataRole": data_role,
+        "confidence": confidence,
+    }
+
+
+def _validated_pair_side(raw_side: Any, sources: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    if not isinstance(raw_side, dict):
+        return None
+    value_text = _clean_text(raw_side.get("valueText"))
+    sentence_ids = raw_side.get("sentenceIds")
+    if not value_text or not isinstance(sentence_ids, list) or not sentence_ids:
+        return None
+    clean_ids = []
+    for sentence_id in sentence_ids:
+        if not isinstance(sentence_id, str) or sentence_id not in sources:
+            return None
+        clean_ids.append(sentence_id)
+    return {"valueText": value_text, "sentenceIds": clean_ids}
+
+
+def _attribute_from_pair_side(
+    pair: dict[str, Any],
+    side: str,
+    index: int,
+    sources: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    side_pair = pair[side]
+    first_source = sources[side_pair["sentenceIds"][0]]
+    attribute = {
+        "id": f"{side}-attr-paired-text-{index}",
+        "side": side,
+        "key": pair["dimensionLabel"],
+        "valueText": side_pair["valueText"],
+        "source": "main_text",
+        "sourceIds": side_pair["sentenceIds"],
+        "paragraphId": first_source.get("paragraphId"),
+        "confidence": pair["confidence"],
+        "dataPriority": pair["dataPriority"],
+        "comparisonQuestion": pair["comparisonQuestion"],
+    }
+    if pair["dataRole"]:
+        attribute["dataRole"] = pair["dataRole"]
+    return attribute
+
+
+def _source_lookup(article: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    lookup: dict[str, dict[str, Any]] = {}
+    for paragraph in article.get("paragraphs", []) or []:
+        if not isinstance(paragraph, dict):
+            continue
+        paragraph_id = paragraph.get("id")
+        for sentence in paragraph.get("sentences", []) or []:
+            if not isinstance(sentence, dict):
+                continue
+            sentence_id = sentence.get("id")
+            if isinstance(sentence_id, str) and sentence_id:
+                lookup[sentence_id] = {"paragraphId": paragraph_id, "text": sentence.get("text")}
+    return lookup
+
+
+def _confidence(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(parsed, 1.0))
+
+
+def _duplicates_infobox(
+    pair: dict[str, Any],
+    left_infobox_pool: list[dict[str, Any]],
+    right_infobox_pool: list[dict[str, Any]],
+) -> bool:
+    label = pair["dimensionLabel"].lower()
+    left_keys = {_clean_text(item.get("key")).lower() for item in left_infobox_pool}
+    right_keys = {_clean_text(item.get("key")).lower() for item in right_infobox_pool}
+    return label in left_keys and label in right_keys
 
 
 def _sentence_candidate(sentence: Any, paragraph: dict[str, Any], side: str) -> dict[str, Any] | None:

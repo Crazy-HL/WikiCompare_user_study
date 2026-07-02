@@ -1,4 +1,4 @@
-from services.text_attribute_pairs import build_text_evidence_candidates
+from services.text_attribute_pairs import build_paired_text_attributes, build_text_evidence_candidates
 
 
 def _data_items_for_text(text):
@@ -1045,3 +1045,100 @@ def test_build_text_evidence_candidates_preserves_negative_sign_before_currency_
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": -2.5, "role": "scale", "unit": "million"}]
+
+
+def test_build_paired_text_attributes_rejects_invalid_sentence_ids():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "AI was founded in 1956."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "ML emerged in the 1950s."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Historical emergence",
+                "comparisonQuestion": "When did it emerge?",
+                "left": {"valueText": "founded in 1956", "sentenceIds": ["left-s-missing"]},
+                "right": {"valueText": "emerged in the 1950s", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "emergence_time",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_creates_aligned_attributes():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "AI was founded in 1956."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "ML emerged in the 1950s."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Historical emergence",
+                "comparisonQuestion": "When did it emerge?",
+                "left": {"valueText": "founded in 1956", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "emerged in the 1950s", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "emergence_time",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["key"] == "Historical emergence"
+    assert left_attrs[0]["source"] == "main_text"
+    assert left_attrs[0]["sourceIds"] == ["left-s-1-1"]
+    assert left_attrs[0]["dataPriority"] is True
+    assert right_attrs[0]["sourceIds"] == ["right-s-1-1"]
+    assert alignments == [
+        {
+            "left": left_attrs[0],
+            "right": right_attrs[0],
+            "label": "Historical emergence",
+        }
+    ]
