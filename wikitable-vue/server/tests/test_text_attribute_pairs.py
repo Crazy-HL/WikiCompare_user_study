@@ -1379,6 +1379,40 @@ def test_build_paired_text_attributes_rejects_bool_and_non_finite_confidence():
         assert (name, left_attrs, right_attrs, alignments) == (name, [], [], [])
 
 
+def test_build_paired_text_attributes_preserves_finite_confidence_values():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response()
+    pair_response["pairs"][0]["confidence"] = 0.25
+
+    left_attrs, right_attrs, _ = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["confidence"] == 0.25
+    assert right_attrs[0]["confidence"] == 0.25
+
+
+def test_build_paired_text_attributes_does_not_clamp_finite_confidence():
+    left_article, right_article = _paired_articles_with_paragraphs()
+    pair_response = _pair_response()
+    pair_response["pairs"][0]["confidence"] = 2
+
+    left_attrs, right_attrs, _ = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["confidence"] == 2.0
+    assert right_attrs[0]["confidence"] == 2.0
+
+
 def test_build_paired_text_attributes_keeps_distinct_pairs_with_same_label():
     left_article, right_article = _paired_articles_with_paragraphs()
     pair_response = {

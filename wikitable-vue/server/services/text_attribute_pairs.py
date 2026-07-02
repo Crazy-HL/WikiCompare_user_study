@@ -9,7 +9,6 @@ MEASUREMENT_TERMS = (
     "algorithms|cases|employees|features|members|models|participants|population|samples|users|revenue|accuracy"
 )
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
-MIN_PAIR_CONFIDENCE = 0.55
 KNOWN_DATA_ROLES = {"emergence_time", "proportion", "ranking", "scale", "quantity"}
 INFOBOX_KEY_SYNONYMS = {
     "founded": "foundation",
@@ -151,7 +150,7 @@ def _validated_pair(
     label = _clean_string(raw_pair.get("dimensionLabel"))
     question = _clean_string(raw_pair.get("comparisonQuestion"))
     confidence = _confidence(raw_pair.get("confidence"))
-    if not label or question is None or confidence is None or confidence < MIN_PAIR_CONFIDENCE:
+    if not label or question is None or confidence is None:
         return None
     left = _validated_pair_side(raw_pair.get("left"), left_sources)
     right = _validated_pair_side(raw_pair.get("right"), right_sources)
@@ -247,7 +246,7 @@ def _confidence(value: Any) -> float | None:
         return None
     if not math.isfinite(parsed):
         return None
-    return max(0.0, min(parsed, 1.0))
+    return parsed
 
 
 def _duplicates_infobox(
