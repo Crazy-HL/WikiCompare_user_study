@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 
-MEASUREMENT_TERMS = "cases|employees|members|population|samples|users|revenue|accuracy"
+MEASUREMENT_TERMS = "cases|employees|features|members|models|population|samples|users|revenue|accuracy"
 NUMBER_RE = re.compile(
     r"([-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|percent|million|billion|trillion)?",
     re.I,
@@ -24,6 +24,15 @@ CLAIM_CUE_RE = re.compile(
 )
 PUBLICATION_NOISE_RE = re.compile(
     r"\b(study|paper|article|journal|conference|published|conducted)\b",
+    re.I,
+)
+PUBLICATION_YEAR_PREFIX_RE = re.compile(
+    r"(\b(study|paper|article|journal|conference)(\s+(published|conducted))?\s+(in|from)|"
+    r"\b(published|conducted)(\s+\w+){0,3}\s+in)\s*$",
+    re.I,
+)
+PUBLICATION_YEAR_SUFFIX_RE = re.compile(
+    r"^\s*,?\s*(the\s+)?(?:\w+\s+){0,3}(study|paper|article|journal|conference)\b",
     re.I,
 )
 EMERGENCE_CONTEXT_RE = re.compile(
@@ -129,7 +138,7 @@ def _data_role(text: str, unit: str, match: re.Match) -> str:
         return "proportion"
     if _has_direct_measurement_context(text, match):
         return "quantity"
-    if _has_local_emergence_context(text, match):
+    if _is_year_like_match(match.group(1), unit) and _has_local_emergence_context(text, match):
         return "emergence_time"
     return "quantity"
 
@@ -199,12 +208,22 @@ def _local_prefix_suffix(text: str, match: re.Match) -> tuple[str, str]:
 
 
 def _has_publication_context(text: str, match: re.Match) -> bool:
-    window = text[max(0, match.start() - 40) : min(len(text), match.end() + 40)]
-    return bool(PUBLICATION_NOISE_RE.search(window))
+    prefix, suffix = _local_prefix_suffix(text, match)
+    return bool(PUBLICATION_YEAR_PREFIX_RE.search(prefix) or PUBLICATION_YEAR_SUFFIX_RE.search(suffix))
 
 
 def _has_direct_measurement_context(text: str, match: re.Match) -> bool:
     return bool(DIRECT_MEASUREMENT_CONTEXT_RE.search(text[match.end() :]))
+
+
+def _is_year_like_match(raw: str, unit: str) -> bool:
+    if unit:
+        return False
+    try:
+        value = int(raw.replace(",", ""))
+    except ValueError:
+        return False
+    return 1800 <= value <= 2100 and len(raw.replace(",", "")) == 4
 
 
 def _semantic_cue(text: str) -> str:

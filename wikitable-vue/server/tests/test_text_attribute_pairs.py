@@ -550,3 +550,54 @@ def test_build_text_evidence_candidates_keeps_rank_values_after_introduced_years
         {"value": 2019, "role": "emergence_time"},
         {"value": 1, "role": "ranking"},
     ]
+
+
+def test_build_text_evidence_candidates_keeps_later_decline_year_after_publication_year():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "A 2020 clinical study found cases declined in 2019."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2019, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_introduced_feature_counts_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The release introduced 200 features."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 200, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_classifies_introduced_model_counts_as_quantity():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The model introduced 2 models in 2019."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert {"value": 2, "role": "quantity"} in candidates[0]["dataItems"]
