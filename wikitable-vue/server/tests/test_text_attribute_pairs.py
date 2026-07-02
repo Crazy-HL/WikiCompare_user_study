@@ -1499,7 +1499,7 @@ def test_build_paired_text_attributes_drops_exact_duplicate_evidence_pairs():
                 "confidence": 0.9,
             },
             {
-                "dimensionLabel": "Revenue!",
+                "dimensionLabel": "Market size",
                 "comparisonQuestion": "What revenue was reported?",
                 "left": {"valueText": "$1 million", "sentenceIds": ["left-s-1-1"]},
                 "right": {"valueText": "$2 million", "sentenceIds": ["right-s-1-1"]},

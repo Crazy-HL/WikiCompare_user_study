@@ -274,7 +274,6 @@ def _normalized_infobox_key(value: Any) -> str:
 
 def _pair_dedupe_key(pair: dict[str, Any]) -> tuple[Any, ...]:
     return (
-        _normalized_infobox_key(pair["dimensionLabel"]),
         tuple(pair["left"]["sentenceIds"]),
         _normalized_evidence_text(pair["left"]["valueText"]),
         tuple(pair["right"]["sentenceIds"]),
