@@ -168,9 +168,7 @@ def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match
         return False
     if not _is_year_like_match(raw, unit):
         return False
-    if EMERGENCE_CONTEXT_RE.search(_role_context(text, match)):
-        return False
-    if _has_direct_measurement_context(text, match):
+    if EMERGENCE_CONTEXT_RE.search(_role_context(text, match)) or _has_local_emergence_context(text, match):
         return False
     return _has_publication_context(text, match)
 
@@ -271,7 +269,7 @@ def _has_local_proportion_context(text: str, match: re.Match) -> bool:
 
 def _has_local_emergence_context(text: str, match: re.Match) -> bool:
     prefix, suffix = _local_prefix_suffix(text, match)
-    return bool(EMERGENCE_CONTEXT_RE.search(prefix) or EMERGENCE_CONTEXT_RE.search(suffix[:24]))
+    return bool(EMERGENCE_CONTEXT_RE.search(prefix) or EMERGENCE_CONTEXT_RE.search(suffix))
 
 
 def _local_prefix_suffix(text: str, match: re.Match) -> tuple[str, str]:

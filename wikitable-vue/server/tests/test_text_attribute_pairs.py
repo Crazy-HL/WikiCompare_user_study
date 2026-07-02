@@ -438,6 +438,18 @@ def test_build_text_evidence_candidates_ignores_adjectival_publication_years():
     assert candidates[0]["dataItems"] == [{"value": 42, "role": "quantity"}]
 
 
+def test_build_text_evidence_candidates_ignores_measurement_descriptor_publication_years():
+    assert _data_items_for_text("A 2020 population study reported 42 cases.") == [
+        {"value": 42, "role": "quantity"}
+    ]
+
+
+def test_build_text_evidence_candidates_ignores_revenue_descriptor_publication_years():
+    assert _data_items_for_text("A 2020 revenue study reported $42 million.") == [
+        {"value": 42, "role": "scale", "unit": "million"}
+    ]
+
+
 def test_build_text_evidence_candidates_ignores_conducted_in_publication_years():
     article = {
         "paragraphs": [
@@ -584,6 +596,18 @@ def test_build_text_evidence_candidates_keeps_later_decline_year_after_publicati
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": 2019, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_keeps_leading_journal_founding_years():
+    assert _data_items_for_text("In 1880, the journal was founded.") == [
+        {"value": 1880, "role": "emergence_time"}
+    ]
+
+
+def test_build_text_evidence_candidates_keeps_leading_conference_launch_years():
+    assert _data_items_for_text("In 1995, the conference was launched.") == [
+        {"value": 1995, "role": "emergence_time"}
+    ]
 
 
 def test_build_text_evidence_candidates_classifies_introduced_feature_counts_as_quantity():
