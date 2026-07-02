@@ -873,6 +873,40 @@ def test_build_text_evidence_candidates_keeps_second_place_ordinals_as_rankings(
     assert candidates[0]["dataItems"] == [{"value": 2, "role": "ranking"}]
 
 
+def test_build_text_evidence_candidates_keeps_cardinal_ranked_values_as_rankings():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The model ranked 1."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 1, "role": "ranking"}]
+
+
+def test_build_text_evidence_candidates_keeps_cardinal_placed_values_as_rankings():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The system placed 2."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 2, "role": "ranking"}]
+
+
 def test_build_text_evidence_candidates_ignores_century_ordinals_as_rankings():
     assert _data_items_for_text("The 21st century changed the field.") == []
 

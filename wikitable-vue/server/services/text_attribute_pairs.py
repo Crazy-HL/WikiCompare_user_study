@@ -16,7 +16,7 @@ MONEY_RE = re.compile(r"[-+]?\s*[$€£¥₩]\s*[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(
 ORDINAL_RE = re.compile(r"\b\d+(?:st|nd|rd|th)\b", re.I)
 DATA_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged|"
-    r"accuracy|rate|share|percent|rank|score|revenue|population|users|models|cases|"
+    r"accuracy|rate|share|percent|rank|ranked|ranking|placed|score|revenue|population|users|models|cases|"
     r"growth|decline|increase|decrease|duration)\b",
     re.I,
 )
