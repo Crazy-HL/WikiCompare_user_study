@@ -63,6 +63,51 @@ def test_build_attribute_pool_includes_infobox_and_main_text():
     assert text_attr["paragraphId"] == "left-p-1"
 
 
+def test_llm_client_extracts_paired_text_attributes_with_data_first_prompt():
+    client = LLMClient(LLMConfig(model="test", base_url="http://example.test", api_key=None))
+    captured = {}
+    pair = {
+        "dimensionLabel": "Historical emergence",
+        "comparisonQuestion": "When did it emerge?",
+        "left": {"valueText": "founded in 1956", "sentenceIds": ["left-s-1-1"]},
+        "right": {"valueText": "emerged in the 1950s", "sentenceIds": ["right-s-1-1"]},
+        "dataPriority": True,
+        "dataRole": "emergence_time",
+        "confidence": 0.9,
+    }
+
+    def fake_chat_json(messages):
+        captured["messages"] = messages
+        return {"pairs": [pair]}
+
+    client.chat_json = fake_chat_json
+
+    result = client.extract_text_attribute_pairs(
+        left_candidates=[{"claimText": "AI was founded in 1956.", "sentenceIds": ["left-s-1-1"]}],
+        right_candidates=[{"claimText": "ML emerged in the 1950s.", "sentenceIds": ["right-s-1-1"]}],
+        infobox_context={"left": [], "right": []},
+    )
+
+    assert result == {"pairs": [pair]}
+    assert [message["role"] for message in captured["messages"]] == ["system", "user"]
+    system_prompt = captured["messages"][0]["content"]
+    prompt = captured["messages"][-1]["content"]
+    assert "Return JSON only" in system_prompt
+    assert "Return this JSON shape only" in prompt
+    assert "Do not classify the article pair before extraction" in prompt
+    assert "Do not fill or follow a fixed template" in prompt
+    assert "Discover comparison dimensions from the evidence" in prompt
+    assert "Prioritize data-bearing evidence" in prompt
+    assert "same semantic role" in prompt
+    assert "Return only dimensions that have evidence on both sides" in prompt
+    assert "Use only provided sentence IDs" in prompt
+    assert "Do not invent values" in prompt
+    assert "Keep valueText short and directly supported" in prompt
+    assert "leftCandidates" in prompt
+    assert "rightCandidates" in prompt
+    assert "infoboxContext" in prompt
+
+
 def test_build_attribute_pool_drops_text_attribute_with_invalid_source_id():
     article = {
         "infobox": [],
