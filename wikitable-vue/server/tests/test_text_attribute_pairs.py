@@ -311,3 +311,60 @@ def test_build_text_evidence_candidates_ignores_rate_substrings_for_proportion()
     candidates = build_text_evidence_candidates(article, "left")
 
     assert candidates[0]["dataItems"] == [{"value": 200, "role": "quantity"}]
+
+
+def test_build_text_evidence_candidates_keeps_journal_founding_years():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The journal was founded in 1880."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 1880, "role": "emergence_time"}]
+
+
+def test_build_text_evidence_candidates_keeps_conference_launch_years():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The conference was launched in 1995."},
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [{"value": 1995, "role": "emergence_time"}]
+
+
+def test_build_text_evidence_candidates_classifies_non_percent_accuracy_scores_locally():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "The model introduced in 2019 reached an accuracy score of 95.",
+                    },
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert candidates[0]["dataItems"] == [
+        {"value": 2019, "role": "emergence_time"},
+        {"value": 95, "role": "proportion"},
+    ]

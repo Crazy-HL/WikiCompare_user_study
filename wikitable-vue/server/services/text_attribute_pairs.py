@@ -32,7 +32,8 @@ EMERGENCE_CONTEXT_RE = re.compile(
     r"\b(founded|introduced|launched|released|created|developed|grew|emerged)\b",
     re.I,
 )
-PROPORTION_CONTEXT_RE = re.compile(r"\b(accuracy|share|rate|percent)\b", re.I)
+PROPORTION_CONTEXT_RE = re.compile(r"\b(accuracy|score|share|rate|percent)\b", re.I)
+PROPORTION_PREFIX_RE = re.compile(r"\b(accuracy|score|share|rate|percent)(?:\s+\w+){0,3}\s+of\s+$", re.I)
 RANKING_CONTEXT_RE = re.compile(r"\brank\b", re.I)
 MEASUREMENT_CONTEXT_RE = re.compile(rf"\b({MEASUREMENT_TERMS})\b", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
@@ -120,6 +121,8 @@ def _data_role(text: str, unit: str, match: re.Match) -> str:
         return "scale"
     if unit in {"%", "percent"}:
         return "proportion"
+    if _has_local_proportion_prefix(text, match):
+        return "proportion"
     if EMERGENCE_CONTEXT_RE.search(context):
         return "emergence_time"
     if PROPORTION_CONTEXT_RE.search(context):
@@ -137,6 +140,8 @@ def _is_publication_context_year(raw: str, unit: str, text: str, match: re.Match
     except ValueError:
         return False
     if not 1800 <= value <= 2100 or len(raw.replace(",", "")) != 4:
+        return False
+    if EMERGENCE_CONTEXT_RE.search(_role_context(text, match)):
         return False
     if PUBLICATION_YEAR_FOLLOW_RE.search(text[match.end() :]):
         return True
@@ -172,6 +177,10 @@ def _next_boundary(text: str, index: int) -> int:
 
 def _has_currency_symbol(text: str, match: re.Match) -> bool:
     return bool(CURRENCY_SYMBOL_RE.search(text[max(0, match.start() - 4) : match.start()]))
+
+
+def _has_local_proportion_prefix(text: str, match: re.Match) -> bool:
+    return bool(PROPORTION_PREFIX_RE.search(text[max(0, match.start() - 48) : match.start()]))
 
 
 def _has_measurement_context(text: str, match: re.Match) -> bool:
