@@ -53,8 +53,7 @@ DIRECT_MEASUREMENT_CONTEXT_RE = re.compile(
     re.I,
 )
 RANKING_PREFIX_RE = re.compile(r"\b(rank|ranked|ranking|placed)\s+$", re.I)
-RANKING_SUFFIX_CONTEXT_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b\s*(?:in|overall|place|rank|ranking)\b", re.I)
-ORDINAL_SUFFIX_RE = re.compile(r"^\s*(st|nd|rd|th)\b", re.I)
+RANKING_SUFFIX_CONTEXT_RE = re.compile(r"^\s*(?:st|nd|rd|th)\b\s*(?:overall|place|rank|ranking)\b", re.I)
 LEADING_TEMPORAL_PREFIX_RE = re.compile(r"^\s*in\s+$", re.I)
 CURRENCY_SYMBOL_RE = re.compile(r"[$€£¥₩]\s*$")
 SCALE_UNITS = {"million", "billion", "trillion"}

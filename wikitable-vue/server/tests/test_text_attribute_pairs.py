@@ -885,6 +885,10 @@ def test_build_text_evidence_candidates_ignores_edition_ordinals_as_rankings():
     assert _data_items_for_text("The 1st edition includes a glossary.") == []
 
 
+def test_build_text_evidence_candidates_ignores_series_ordinals_as_rankings():
+    assert _data_items_for_text("The 5th in the series uses neural networks.") == []
+
+
 def test_build_text_evidence_candidates_preserves_negative_sign_before_currency():
     article = {
         "paragraphs": [
