@@ -1,5 +1,6 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 import tornado.ioloop
 import tornado.web
 import json
@@ -18,8 +19,9 @@ from services.config import get_llm_config
 from services.llm_client import LLMClient
 from services.models import CompareSession
 from services.outline_matcher import build_outline_matches
-from services.pipeline import normalize_attribute_pair, rank_rows
+from services.pipeline import align_attribute_pools, normalize_attribute_pair, rank_rows
 from services.session_store import SessionStore
+from services.text_attribute_pairs import build_paired_text_attributes, build_text_evidence_candidates
 from services.wiki_url import WikiUrlError, parse_english_wikipedia_url
 from tool.obtainHtml import obtain_html
 from tool.chart_formats import (
@@ -45,6 +47,9 @@ system_messages = [
 comparison_result = ""  # 对比后的文章内容
 SESSION_STORE = SessionStore()
 BLOCKING_EXECUTOR = ThreadPoolExecutor(max_workers=4)
+ARTICLE_HTML_CACHE: dict[str, str] = {}
+ARTICLE_HTML_CACHE_LOCK = Lock()
+COMPARE_CACHE_VERSION = "compare-session-v1"
 
 def make_messages(input: str, n: int = 20) -> list:
     """
@@ -158,11 +163,23 @@ class CompareSessionHandler(ApiHandler):
             self.write_error_json(400, str(error))
             return
 
+        force_refresh = data.get("forceRefresh") is True
+        pair_key = _pair_cache_key(left_wiki, right_wiki)
+        if not force_refresh:
+            cached_session = SESSION_STORE.get_by_pair_key(pair_key)
+            if cached_session is not None:
+                payload = cached_session.to_dict()
+                payload["fromCache"] = True
+                self.write(json.dumps(payload, ensure_ascii=False))
+                return
+
         status_code, payload = await tornado.ioloop.IOLoop.current().run_in_executor(
             BLOCKING_EXECUTOR,
             _create_compare_session_payload,
             left_wiki,
             right_wiki,
+            force_refresh,
+            pair_key,
         )
         if status_code != 200:
             self.write_error_json(status_code, payload["error"])
@@ -170,7 +187,7 @@ class CompareSessionHandler(ApiHandler):
         self.write(json.dumps(payload, ensure_ascii=False))
 
 
-def _create_compare_session_payload(left_wiki, right_wiki) -> tuple[int, dict]:
+def _create_compare_session_payload(left_wiki, right_wiki, force_refresh=False, pair_key=None) -> tuple[int, dict]:
     warnings = []
     config = get_llm_config()
     llm_client = LLMClient(config) if config.enabled else None
@@ -179,31 +196,42 @@ def _create_compare_session_payload(left_wiki, right_wiki) -> tuple[int, dict]:
 
     try:
         left_article = parse_article_html(
-            fetch_article_html(left_wiki.title, left_wiki.revision),
+            _fetch_article_html_cached(left_wiki, force_refresh),
             side="left",
             title=left_wiki.title,
-            url=left_wiki.normalized_url,
+            url=left_wiki.display_url,
             revision=left_wiki.revision,
         )
         right_article = parse_article_html(
-            fetch_article_html(right_wiki.title, right_wiki.revision),
+            _fetch_article_html_cached(right_wiki, force_refresh),
             side="right",
             title=right_wiki.title,
-            url=right_wiki.normalized_url,
+            url=right_wiki.display_url,
             revision=right_wiki.revision,
         )
     except Exception as error:
         return 502, {"error": f"Failed to load Wikipedia articles: {error}"}
 
-    left_pool = build_attribute_pool(left_article, "left", llm_client)
-    right_pool = build_attribute_pool(right_article, "right", llm_client)
+    left_pool, right_pool = _build_attribute_pools(left_article, right_article, llm_client)
+    paired_left_attrs, paired_right_attrs, paired_alignments = _build_paired_text_alignments(
+        left_article,
+        right_article,
+        left_pool,
+        right_pool,
+        llm_client,
+    )
+    left_pool = left_pool + paired_left_attrs
+    right_pool = right_pool + paired_right_attrs
     outline_matches = build_outline_matches(
         left_article.get("outline", []),
         right_article.get("outline", []),
     )
-    aligned_attributes = _align_exact_lowercase_keys(left_pool, right_pool)
+    aligned_attributes = paired_alignments + _without_duplicate_alignments(
+        align_attribute_pools(left_pool, right_pool),
+        paired_alignments,
+    )
     rows = [
-        normalize_attribute_pair(alignment["left"], alignment["right"], alignment["label"])
+        _normalize_session_alignment(alignment)
         for alignment in aligned_attributes
     ]
     ranked_rows = rank_rows(rows)
@@ -231,8 +259,117 @@ def _create_compare_session_payload(left_wiki, right_wiki) -> tuple[int, dict]:
         source_map=source_map,
         warnings=warnings,
     )
-    SESSION_STORE.save(session)
-    return 200, session.to_dict()
+    SESSION_STORE.save(session, pair_key=pair_key)
+    payload = session.to_dict()
+    payload["fromCache"] = False
+    return 200, payload
+
+
+def _fetch_article_html_cached(wiki, force_refresh=False) -> str:
+    cache_key = _article_cache_key(wiki)
+    if not force_refresh:
+        with ARTICLE_HTML_CACHE_LOCK:
+            cached_html = ARTICLE_HTML_CACHE.get(cache_key)
+        if cached_html is not None:
+            return cached_html
+
+    html = fetch_article_html(wiki.title, wiki.revision)
+    with ARTICLE_HTML_CACHE_LOCK:
+        ARTICLE_HTML_CACHE[cache_key] = html
+    return html
+
+
+def _article_cache_key(wiki) -> str:
+    return f"{wiki.normalized_url}|revision={wiki.revision or ''}"
+
+
+def _pair_cache_key(left_wiki, right_wiki) -> str:
+    return "|".join(
+        [
+            COMPARE_CACHE_VERSION,
+            _article_cache_key(left_wiki),
+            _article_cache_key(right_wiki),
+        ]
+    )
+
+
+def _build_attribute_pools(left_article, right_article, llm_client):
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        left_future = executor.submit(build_attribute_pool, left_article, "left", llm_client)
+        right_future = executor.submit(build_attribute_pool, right_article, "right", llm_client)
+        return left_future.result(), right_future.result()
+
+
+def _build_paired_text_alignments(left_article, right_article, left_pool, right_pool, llm_client):
+    if llm_client is None or not hasattr(llm_client, "extract_text_attribute_pairs"):
+        return [], [], []
+
+    left_candidates = build_text_evidence_candidates(left_article, "left")
+    right_candidates = build_text_evidence_candidates(right_article, "right")
+    if not left_candidates or not right_candidates:
+        return [], [], []
+
+    infobox_context = {
+        "left": _pool_context(left_pool),
+        "right": _pool_context(right_pool),
+    }
+    try:
+        pair_response = llm_client.extract_text_attribute_pairs(
+            left_candidates,
+            right_candidates,
+            infobox_context,
+        )
+    except Exception:
+        return [], [], []
+
+    return build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        left_pool,
+        right_pool,
+    )
+
+
+def _pool_context(pool):
+    context = []
+    for item in pool:
+        if not isinstance(item, dict):
+            continue
+        context.append(
+            {
+                "key": item.get("key"),
+                "valueText": item.get("valueText"),
+                "source": item.get("source"),
+            }
+        )
+        if len(context) >= 24:
+            break
+    return context
+
+
+def _without_duplicate_alignments(alignments, paired_alignments):
+    paired_pairs = {
+        (alignment.get("left", {}).get("id"), alignment.get("right", {}).get("id"))
+        for alignment in paired_alignments
+        if isinstance(alignment, dict)
+    }
+    return [
+        alignment
+        for alignment in alignments
+        if (alignment.get("left", {}).get("id"), alignment.get("right", {}).get("id")) not in paired_pairs
+    ]
+
+
+def _normalize_session_alignment(alignment):
+    row = normalize_attribute_pair(
+        alignment["left"],
+        alignment["right"],
+        alignment["label"],
+    )
+    if alignment["left"].get("source") == "main_text" and alignment["right"].get("source") == "main_text":
+        row["sourceKind"] = "main_text"
+    return row
 
 
 def _align_exact_lowercase_keys(
@@ -292,11 +429,11 @@ class AnalyzeAttributeHandler(ApiHandler):
         config = get_llm_config()
         if config.enabled:
             try:
-                result = llm_attribute_summary(LLMClient(config), row, session.source_map)
+                result = llm_attribute_summary(LLMClient(config), row, session.source_map, session.articles)
             except Exception as error:
                 print(f"LLM attribute analysis failed, using fallback: {error}")
         if result is None:
-            result = fallback_attribute_summary(row, session.source_map)
+            result = fallback_attribute_summary(row, session.source_map, session.articles)
         self.write(json.dumps(result, ensure_ascii=False))
 
 
