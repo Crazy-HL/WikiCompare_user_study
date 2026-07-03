@@ -10,6 +10,20 @@ MEASUREMENT_TERMS = (
 )
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
 KNOWN_DATA_ROLES = {"emergence_time", "proportion", "ranking", "scale", "quantity"}
+ROLE_LABELS = {
+    "emergence_time": "Historical emergence",
+    "proportion": "Proportion / rate",
+    "ranking": "Ranking",
+    "scale": "Scale",
+    "quantity": "Quantity",
+}
+ROLE_QUESTIONS = {
+    "emergence_time": "When did it emerge or become established?",
+    "proportion": "What proportion, rate, or percentage is reported?",
+    "ranking": "What rank or index score is reported?",
+    "scale": "What scale or monetary value is reported?",
+    "quantity": "What quantity is reported?",
+}
 INFOBOX_KEY_SYNONYMS = {
     "founded": "foundation",
     "founding": "foundation",
@@ -138,6 +152,75 @@ def build_paired_text_attributes(
         right_attrs.append(right_attr)
         alignments.append({"left": left_attr, "right": right_attr, "label": clean_pair["dimensionLabel"]})
     return left_attrs, right_attrs, alignments
+
+
+def build_rule_paired_text_attributes(
+    left_article: dict[str, Any],
+    right_article: dict[str, Any],
+    left_infobox_pool: list[dict[str, Any]],
+    right_infobox_pool: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    left_candidates = _data_candidates(left_article, "left")
+    right_candidates = _data_candidates(right_article, "right")
+    pairs: list[dict[str, Any]] = []
+    used_right: set[int] = set()
+    for left_candidate in left_candidates:
+        left_role = _primary_role(left_candidate)
+        if not left_role:
+            continue
+        for right_index, right_candidate in enumerate(right_candidates):
+            if right_index in used_right:
+                continue
+            if _primary_role(right_candidate) != left_role:
+                continue
+            used_right.add(right_index)
+            pairs.append(_rule_pair(left_candidate, right_candidate, left_role))
+            break
+    return build_paired_text_attributes(
+        left_article,
+        right_article,
+        {"pairs": pairs},
+        left_infobox_pool,
+        right_infobox_pool,
+    )
+
+
+def _data_candidates(article: dict[str, Any], side: str) -> list[dict[str, Any]]:
+    return [
+        candidate
+        for candidate in build_text_evidence_candidates(article, side)
+        if candidate.get("kind") == "data"
+    ]
+
+
+def _rule_pair(
+    left_candidate: dict[str, Any],
+    right_candidate: dict[str, Any],
+    role: str,
+) -> dict[str, Any]:
+    return {
+        "dimensionLabel": ROLE_LABELS[role],
+        "comparisonQuestion": ROLE_QUESTIONS[role],
+        "left": {
+            "valueText": left_candidate["claimText"],
+            "sentenceIds": left_candidate["sentenceIds"],
+        },
+        "right": {
+            "valueText": right_candidate["claimText"],
+            "sentenceIds": right_candidate["sentenceIds"],
+        },
+        "dataPriority": True,
+        "dataRole": role,
+        "confidence": 0.62,
+    }
+
+
+def _primary_role(candidate: dict[str, Any]) -> str:
+    data_items = candidate.get("dataItems") or []
+    if not data_items or not isinstance(data_items[0], dict):
+        return ""
+    role = _clean_text(data_items[0].get("role"))
+    return role if role in ROLE_LABELS else ""
 
 
 def _validated_pair(
@@ -439,6 +522,8 @@ def _is_embedded_token_number(text: str, match: re.Match) -> bool:
     before = text[start - 1] if start > 0 else ""
     before_before = text[start - 2] if start > 1 else ""
     after = text[end] if end < len(text) else ""
+    if after.lower() == "s" and _is_decade_like_match(match.group(1)) and _has_local_emergence_context(text, match):
+        return False
     if after.isalpha() and _has_local_ranking_context(text, match):
         return False
     return bool(before.isalpha() or (before == "-" and before_before.isalpha()) or after.isalpha())
@@ -520,6 +605,16 @@ def _is_year_like_match(raw: str, unit: str) -> bool:
     except ValueError:
         return False
     return 1800 <= value <= 2100 and len(raw.replace(",", "")) == 4
+
+
+def _is_decade_like_match(raw: str) -> bool:
+    if "," in raw:
+        return False
+    try:
+        value = int(raw)
+    except ValueError:
+        return False
+    return 1800 <= value <= 2100 and value % 10 == 0 and len(raw) == 4
 
 
 def _semantic_cue(text: str) -> str:

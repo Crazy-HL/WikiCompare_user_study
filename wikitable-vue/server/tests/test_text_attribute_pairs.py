@@ -1,4 +1,8 @@
-from services.text_attribute_pairs import build_paired_text_attributes, build_text_evidence_candidates
+from services.text_attribute_pairs import (
+    build_paired_text_attributes,
+    build_rule_paired_text_attributes,
+    build_text_evidence_candidates,
+)
 
 
 def _data_items_for_text(text):
@@ -1638,3 +1642,53 @@ def test_build_paired_text_attributes_strips_data_role_when_priority_false():
     assert "dataRole" not in left_attrs[0]
     assert right_attrs[0]["dataPriority"] is False
     assert "dataRole" not in right_attrs[0]
+
+
+def test_build_rule_paired_text_attributes_pairs_compatible_data_roles():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "The field was founded in 1956."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "The method emerged in the 1950s."}],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert alignments[0]["label"] == "Historical emergence"
+    assert left_attrs[0]["dataRole"] == "emergence_time"
+    assert right_attrs[0]["dataRole"] == "emergence_time"
+
+
+def test_build_rule_paired_text_attributes_does_not_pair_different_data_roles():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "The model reached 95% accuracy."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "The field was founded in 1956."}],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
