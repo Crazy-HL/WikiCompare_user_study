@@ -467,3 +467,33 @@ class CompareApiTest(AsyncHTTPTestCase):
         assert first.code == 200
         assert second.code == 200
         assert fetch_article.call_count == 3
+
+    def test_paired_text_alignments_do_not_get_cross_matched_by_same_label(self):
+        paired_alignments = [
+            {
+                "left": {"id": "left-paired-1", "key": "Revenue"},
+                "right": {"id": "right-paired-1", "key": "Revenue"},
+                "label": "Revenue",
+            },
+            {
+                "left": {"id": "left-paired-2", "key": "Revenue"},
+                "right": {"id": "right-paired-2", "key": "Revenue"},
+                "label": "Revenue",
+            },
+        ]
+        general_alignments = [
+            {
+                "left": {"id": "left-paired-1", "key": "Revenue"},
+                "right": {"id": "right-paired-2", "key": "Revenue"},
+                "label": "Revenue",
+            },
+            {
+                "left": {"id": "left-other", "key": "GDP"},
+                "right": {"id": "right-other", "key": "GDP"},
+                "label": "GDP",
+            },
+        ]
+
+        assert server._without_duplicate_alignments(general_alignments, paired_alignments) == [
+            general_alignments[1]
+        ]

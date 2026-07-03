@@ -354,10 +354,22 @@ def _without_duplicate_alignments(alignments, paired_alignments):
         for alignment in paired_alignments
         if isinstance(alignment, dict)
     }
+    paired_left_ids = {
+        alignment.get("left", {}).get("id")
+        for alignment in paired_alignments
+        if isinstance(alignment, dict)
+    }
+    paired_right_ids = {
+        alignment.get("right", {}).get("id")
+        for alignment in paired_alignments
+        if isinstance(alignment, dict)
+    }
     return [
         alignment
         for alignment in alignments
         if (alignment.get("left", {}).get("id"), alignment.get("right", {}).get("id")) not in paired_pairs
+        and alignment.get("left", {}).get("id") not in paired_left_ids
+        and alignment.get("right", {}).get("id") not in paired_right_ids
     ]
 
 
