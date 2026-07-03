@@ -146,6 +146,42 @@ class CompareApiTest(AsyncHTTPTestCase):
         assert "Applications" in labels
         assert len(payload["rankedRows"]) >= 2
 
+    def test_compare_session_uses_rule_paired_data_when_llm_disabled(self):
+        left_html = """
+        <html><body><main>
+          <p>Artificial intelligence was founded as an academic discipline in 1956.</p>
+        </main></body></html>
+        """
+        right_html = """
+        <html><body><main>
+          <p>Machine learning emerged from pattern recognition in 1959.</p>
+        </main></body></html>
+        """
+
+        server.SESSION_STORE.clear()
+        server.ARTICLE_HTML_CACHE.clear()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False), patch.object(
+            server,
+            "fetch_article_html",
+            side_effect=[left_html, right_html],
+        ):
+            response = self.fetch(
+                "/api/compare-session",
+                method="POST",
+                body=json.dumps(
+                    {
+                        "leftUrl": "https://en.wikipedia.org/wiki/Artificial_intelligence_rule_paired",
+                        "rightUrl": "https://en.wikipedia.org/wiki/Machine_learning_rule_paired",
+                    }
+                ),
+                headers={"Content-Type": "application/json"},
+            )
+
+        payload = json.loads(response.body)
+        labels = [row["label"] for row in payload["rankedRows"]]
+        assert response.code == 200
+        assert "Historical emergence" in labels
+
     def test_compare_session_uses_paired_text_attributes_from_llm(self):
         left_html = """
         <html><body><main>

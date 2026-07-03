@@ -21,7 +21,11 @@ from services.models import CompareSession
 from services.outline_matcher import build_outline_matches
 from services.pipeline import align_attribute_pools, normalize_attribute_pair, rank_rows
 from services.session_store import SessionStore
-from services.text_attribute_pairs import build_paired_text_attributes, build_text_evidence_candidates
+from services.text_attribute_pairs import (
+    build_paired_text_attributes,
+    build_rule_paired_text_attributes,
+    build_text_evidence_candidates,
+)
 from services.wiki_url import WikiUrlError, parse_english_wikipedia_url
 from tool.obtainHtml import obtain_html
 from tool.chart_formats import (
@@ -302,12 +306,12 @@ def _build_attribute_pools(left_article, right_article, llm_client):
 
 def _build_paired_text_alignments(left_article, right_article, left_pool, right_pool, llm_client):
     if llm_client is None or not hasattr(llm_client, "extract_text_attribute_pairs"):
-        return [], [], []
+        return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
 
     left_candidates = build_text_evidence_candidates(left_article, "left")
     right_candidates = build_text_evidence_candidates(right_article, "right")
     if not left_candidates or not right_candidates:
-        return [], [], []
+        return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
 
     infobox_context = {
         "left": _pool_context(left_pool),
@@ -320,15 +324,18 @@ def _build_paired_text_alignments(left_article, right_article, left_pool, right_
             infobox_context=infobox_context,
         )
     except Exception:
-        return [], [], []
+        return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
 
-    return build_paired_text_attributes(
+    paired_result = build_paired_text_attributes(
         left_article,
         right_article,
         pair_response,
         left_pool,
         right_pool,
     )
+    if paired_result[2]:
+        return paired_result
+    return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
 
 
 def _pool_context(pool):
