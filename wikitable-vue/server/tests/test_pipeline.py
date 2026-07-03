@@ -268,6 +268,36 @@ def test_rank_rows_prioritizes_paired_data_text_over_generic_text():
     assert [row["label"] for row in ranked] == ["Historical emergence", "Overview"]
 
 
+def test_rank_rows_prioritizes_paired_data_main_text_even_when_chart_type_is_text():
+    rows = [
+        {
+            "id": "overview",
+            "label": "Overview",
+            "dataType": "Text",
+            "chartType": "text",
+            "score": 0.8,
+            "sourceKind": "main_text",
+            "comparisonQuality": "text",
+            "visualization": {"left": {"raw": "A is a concept."}, "right": {"raw": "B is a concept."}},
+        },
+        {
+            "id": "history",
+            "label": "Historical emergence",
+            "dataType": "Ordinal",
+            "chartType": "text",
+            "score": 0.1,
+            "sourceKind": "main_text",
+            "dataPriority": True,
+            "dataRole": "emergence_time",
+            "visualization": {"left": {"values": [{"value": 1956}]}, "right": {"values": [{"value": 1950}]}},
+        },
+    ]
+
+    ranked = rank_rows(rows)
+
+    assert [row["label"] for row in ranked] == ["Historical emergence", "Overview"]
+
+
 def test_rank_rows_does_not_prioritize_generic_text_with_data_priority_flag():
     rows = [
         {
