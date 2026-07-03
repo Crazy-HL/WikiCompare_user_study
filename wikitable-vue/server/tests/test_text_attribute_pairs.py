@@ -1692,3 +1692,78 @@ def test_build_rule_paired_text_attributes_does_not_pair_different_data_roles():
     assert left_attrs == []
     assert right_attrs == []
     assert alignments == []
+
+
+def test_build_rule_paired_text_attributes_pairs_matching_quantity_cues():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "The company had 200 employees."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "The organization had 500 employees."}],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert alignments[0]["label"] == "Quantity"
+    assert left_attrs[0]["dataRole"] == "quantity"
+    assert right_attrs[0]["dataRole"] == "quantity"
+
+
+def test_build_rule_paired_text_attributes_does_not_pair_mismatched_quantity_cues():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "The company had 200 employees."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "The experiment included 500 samples."}],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_rule_paired_text_attributes_prefers_metric_role_over_context_year():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "In 2019 active users grew to 2 million."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "In 2020 active users grew to 5 million."}],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert alignments[0]["label"] == "Scale"
+    assert left_attrs[0]["dataRole"] == "scale"
+    assert right_attrs[0]["dataRole"] == "scale"

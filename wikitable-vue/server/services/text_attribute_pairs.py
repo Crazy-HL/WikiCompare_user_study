@@ -10,6 +10,7 @@ MEASUREMENT_TERMS = (
 )
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
 KNOWN_DATA_ROLES = {"emergence_time", "proportion", "ranking", "scale", "quantity"}
+STRICT_CUE_ROLES = {"proportion", "scale", "quantity"}
 ROLE_LABELS = {
     "emergence_time": "Historical emergence",
     "proportion": "Proportion / rate",
@@ -173,6 +174,8 @@ def build_rule_paired_text_attributes(
                 continue
             if _primary_role(right_candidate) != left_role:
                 continue
+            if not _rule_candidates_are_compatible(left_candidate, right_candidate, left_role):
+                continue
             used_right.add(right_index)
             pairs.append(_rule_pair(left_candidate, right_candidate, left_role))
             break
@@ -217,10 +220,50 @@ def _rule_pair(
 
 def _primary_role(candidate: dict[str, Any]) -> str:
     data_items = candidate.get("dataItems") or []
-    if not data_items or not isinstance(data_items[0], dict):
+    if not data_items:
         return ""
-    role = _clean_text(data_items[0].get("role"))
+    valid_roles = [
+        _clean_text(item.get("role"))
+        for item in data_items
+        if isinstance(item, dict) and _clean_text(item.get("role")) in ROLE_LABELS
+    ]
+    if not valid_roles:
+        return ""
+    role = next((item for item in valid_roles if item != "emergence_time"), valid_roles[0])
     return role if role in ROLE_LABELS else ""
+
+
+def _rule_candidates_are_compatible(
+    left_candidate: dict[str, Any],
+    right_candidate: dict[str, Any],
+    role: str,
+) -> bool:
+    if role not in STRICT_CUE_ROLES:
+        return True
+    left_cue = _measurement_cue(left_candidate.get("claimText"))
+    right_cue = _measurement_cue(right_candidate.get("claimText"))
+    return bool(left_cue and right_cue and left_cue == right_cue)
+
+
+def _measurement_cue(text: Any) -> str:
+    normalized = _clean_text(text).lower()
+    cue_groups = [
+        ("accuracy", r"\baccuracy|score\b"),
+        ("revenue", r"\brevenue|revenues|sales\b"),
+        ("population", r"\bpopulation|inhabitants\b"),
+        ("users", r"\busers|subscribers|customers\b"),
+        ("employees", r"\bemployees|workers|staff\b"),
+        ("samples", r"\bsamples|participants\b"),
+        ("cases", r"\bcases\b"),
+        ("models", r"\bmodels\b"),
+        ("features", r"\bfeatures\b"),
+        ("growth", r"\bgrowth|grew|increase|decrease|decline\b"),
+        ("share", r"\bshare|rate|percent|percentage\b"),
+    ]
+    for label, pattern in cue_groups:
+        if re.search(pattern, normalized):
+            return label
+    return ""
 
 
 def _validated_pair(
