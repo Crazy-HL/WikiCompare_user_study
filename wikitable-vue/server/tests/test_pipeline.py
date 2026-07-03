@@ -130,6 +130,7 @@ def test_normalize_attribute_pair_preserves_data_first_text_metadata():
     assert row["dataPriority"] is True
     assert row["dataRole"] == "emergence_time"
     assert row["comparisonQuestion"] == "When did it emerge?"
+    assert row["sourceKind"] == "main_text"
 
 
 def test_normalize_attribute_pair_structures_currency_name_code_and_symbol():
@@ -265,6 +266,35 @@ def test_rank_rows_prioritizes_paired_data_text_over_generic_text():
     ranked = rank_rows(rows)
 
     assert [row["label"] for row in ranked] == ["Historical emergence", "Overview"]
+
+
+def test_rank_rows_does_not_prioritize_generic_text_with_data_priority_flag():
+    rows = [
+        {
+            "id": "revenue",
+            "label": "Revenue",
+            "dataType": "Numerical",
+            "chartType": "bar",
+            "score": 0.2,
+            "sourceKind": "Infobox",
+            "visualization": {"left": {"values": [{"value": 100}]}, "right": {"values": [{"value": 120}]}},
+        },
+        {
+            "id": "overview",
+            "label": "Overview",
+            "dataType": "Text",
+            "chartType": "text",
+            "score": 0.9,
+            "sourceKind": "main_text",
+            "dataPriority": True,
+            "comparisonQuality": "text",
+            "visualization": {"left": {"raw": "A is a concept."}, "right": {"raw": "B is a concept."}},
+        },
+    ]
+
+    ranked = rank_rows(rows)
+
+    assert [row["label"] for row in ranked] == ["Revenue", "Overview"]
 
 
 def test_extract_numeric_values_handles_currency_magnitude_and_years():

@@ -1134,6 +1134,8 @@ def _source_kind(left_source: str | None, right_source: str | None) -> str:
         return "Both"
     if "infobox" in sources:
         return "Infobox"
+    if sources == {"main_text"}:
+        return "main_text"
     return "Text"
 
 
@@ -1422,9 +1424,18 @@ def _row_with_rank_score(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _visual_rank_bucket(row: dict[str, Any]) -> int:
-    if row.get("dataPriority") and row.get("sourceKind") == "main_text":
+    if _is_data_priority_main_text_row(row):
         return 0
     return 0 if _is_chartable_row(row) else 1
+
+
+def _is_data_priority_main_text_row(row: dict[str, Any]) -> bool:
+    if not row.get("dataPriority") or row.get("sourceKind") != "main_text" or not row.get("dataRole"):
+        return False
+    visualization = row.get("visualization") if isinstance(row.get("visualization"), dict) else {}
+    left = visualization.get("left") if isinstance(visualization.get("left"), dict) else {}
+    right = visualization.get("right") if isinstance(visualization.get("right"), dict) else {}
+    return bool(left.get("values") and right.get("values"))
 
 
 def _is_chartable_row(row: dict[str, Any]) -> bool:
