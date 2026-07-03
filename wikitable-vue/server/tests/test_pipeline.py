@@ -105,6 +105,33 @@ def test_normalize_attribute_pair_preserves_related_source_ids():
     assert row["rightRelatedSourceIds"] == ["right-s-1-1", "right-p-1"]
 
 
+def test_normalize_attribute_pair_preserves_data_first_text_metadata():
+    row = normalize_attribute_pair(
+        {
+            "id": "left-history",
+            "key": "Historical emergence",
+            "valueText": "The field emerged in 1956.",
+            "source": "main_text",
+            "sourceIds": ["left-s-1"],
+            "dataPriority": True,
+            "dataRole": "emergence_time",
+            "comparisonQuestion": "When did it emerge?",
+        },
+        {
+            "id": "right-history",
+            "key": "Historical emergence",
+            "valueText": "The field emerged in 1950.",
+            "source": "main_text",
+            "sourceIds": ["right-s-1"],
+        },
+        "Historical emergence",
+    )
+
+    assert row["dataPriority"] is True
+    assert row["dataRole"] == "emergence_time"
+    assert row["comparisonQuestion"] == "When did it emerge?"
+
+
 def test_normalize_attribute_pair_structures_currency_name_code_and_symbol():
     row = normalize_attribute_pair(
         {
@@ -208,6 +235,36 @@ def test_rank_rows_places_text_rows_after_chartable_rows():
     assert [row["id"] for row in ranked] == ["import-goods", "revenue", "currency", "gdp-rank"]
     assert ranked[0]["rankScore"] == 0.066
     assert ranked[2]["rankScore"] == 0.2
+
+
+def test_rank_rows_prioritizes_paired_data_text_over_generic_text():
+    rows = [
+        {
+            "id": "overview",
+            "label": "Overview",
+            "dataType": "Text",
+            "chartType": "text",
+            "score": 0.8,
+            "sourceKind": "main_text",
+            "comparisonQuality": "text",
+            "visualization": {"left": {"rawText": "A is a concept."}, "right": {"rawText": "B is a concept."}},
+        },
+        {
+            "id": "history",
+            "label": "Historical emergence",
+            "dataType": "Numerical",
+            "chartType": "bar",
+            "score": 0.4,
+            "sourceKind": "main_text",
+            "comparisonQuality": "paired_text_data",
+            "dataPriority": True,
+            "visualization": {"left": {"values": [{"value": 1956}]}, "right": {"values": [{"value": 1950}]}},
+        },
+    ]
+
+    ranked = rank_rows(rows)
+
+    assert [row["label"] for row in ranked] == ["Historical emergence", "Overview"]
 
 
 def test_extract_numeric_values_handles_currency_magnitude_and_years():

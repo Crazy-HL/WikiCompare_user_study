@@ -370,6 +370,9 @@ def normalize_attribute_pair(
         "chartType": chart_type,
         "score": _score_pair(data_type, left_values, right_values, left_structured_values, right_structured_values),
         "comparisonQuality": comparison_quality,
+        "dataPriority": bool(left_attr.get("dataPriority") or right_attr.get("dataPriority")),
+        "dataRole": left_attr.get("dataRole") or right_attr.get("dataRole"),
+        "comparisonQuestion": left_attr.get("comparisonQuestion") or right_attr.get("comparisonQuestion"),
         "visualization": {
             "left": _visual_side(left_attr, left_values, left_structured_values),
             "right": _visual_side(right_attr, right_values, right_structured_values),
@@ -1419,6 +1422,8 @@ def _row_with_rank_score(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _visual_rank_bucket(row: dict[str, Any]) -> int:
+    if row.get("dataPriority") and row.get("sourceKind") == "main_text":
+        return 0
     return 0 if _is_chartable_row(row) else 1
 
 
