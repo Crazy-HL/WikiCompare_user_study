@@ -1752,9 +1752,44 @@ def test_build_rule_paired_text_attributes_pairs_matching_quantity_cues():
 
     left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
 
-    assert alignments[0]["label"] == "Quantity"
+    assert alignments[0]["label"] == "Employees"
+    assert left_attrs[0]["key"] == "Employees"
+    assert right_attrs[0]["key"] == "Employees"
     assert left_attrs[0]["dataRole"] == "quantity"
     assert right_attrs[0]["dataRole"] == "quantity"
+
+
+def test_build_rule_paired_text_attributes_labels_and_deduplicates_quantity_cues():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "The company had 200 employees."},
+                    {"id": "left-s-1-2", "text": "The company later reported 230 employees."},
+                    {"id": "left-s-1-3", "text": "The outbreak had 1,000 confirmed cases."},
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {"id": "right-s-1-1", "text": "The organization had 500 employees."},
+                    {"id": "right-s-1-2", "text": "The organization later reported 520 employees."},
+                    {"id": "right-s-1-3", "text": "The outbreak had 2,000 confirmed cases."},
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert [alignment["label"] for alignment in alignments] == ["Employees", "Confirmed cases"]
+    assert [attribute["key"] for attribute in left_attrs] == ["Employees", "Confirmed cases"]
+    assert [attribute["key"] for attribute in right_attrs] == ["Employees", "Confirmed cases"]
 
 
 def test_build_rule_paired_text_attributes_does_not_pair_mismatched_quantity_cues():
@@ -1802,6 +1837,6 @@ def test_build_rule_paired_text_attributes_prefers_metric_role_over_context_year
 
     left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
 
-    assert alignments[0]["label"] == "Scale"
+    assert alignments[0]["label"] == "Users"
     assert left_attrs[0]["dataRole"] == "scale"
     assert right_attrs[0]["dataRole"] == "scale"

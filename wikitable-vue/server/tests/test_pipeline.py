@@ -818,6 +818,56 @@ def test_normalize_attribute_pair_keeps_founded_dates_as_text_metadata():
     assert row["visualization"]["right"]["values"] == []
 
 
+def test_normalize_attribute_pair_keeps_date_named_attributes_as_text_metadata():
+    row = normalize_attribute_pair(
+        {
+            "id": "left-opening",
+            "key": "Opening date",
+            "valueText": "June 12, 2010",
+            "source": "infobox",
+            "sourceIds": ["left-info-1"],
+        },
+        {
+            "id": "right-opening",
+            "key": "Opening date",
+            "valueText": "September 3, 2018",
+            "source": "infobox",
+            "sourceIds": ["right-info-1"],
+        },
+        "Opening date",
+    )
+
+    assert row["dataType"] == "Text"
+    assert row["chartType"] == "text"
+    assert row["visualization"]["left"]["values"] == []
+    assert row["visualization"]["right"]["values"] == []
+
+
+def test_normalize_attribute_pair_keeps_first_event_dates_as_text_metadata():
+    row = normalize_attribute_pair(
+        {
+            "id": "left-first-flight",
+            "key": "First flight",
+            "valueText": "July 5, 1994; 32 years ago (1994-07-05)",
+            "source": "infobox",
+            "sourceIds": ["left-info-1"],
+        },
+        {
+            "id": "right-first-flight",
+            "key": "First flight",
+            "valueText": "July 2, 1962; 64 years ago (1962-07-02)",
+            "source": "infobox",
+            "sourceIds": ["right-info-1"],
+        },
+        "First flight",
+    )
+
+    assert row["dataType"] == "Text"
+    assert row["chartType"] == "text"
+    assert row["visualization"]["left"]["values"] == []
+    assert row["visualization"]["right"]["values"] == []
+
+
 def test_normalize_attribute_pair_marks_source_kind_both():
     row = normalize_attribute_pair(
         {"id": "left-a", "key": "Revenue", "valueText": "$1.5 billion in 2024", "source": "infobox", "sourceIds": ["left-info-1"]},

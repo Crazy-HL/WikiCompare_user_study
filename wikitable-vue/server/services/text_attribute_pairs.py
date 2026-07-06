@@ -6,7 +6,8 @@ from typing import Any
 
 
 MEASUREMENT_TERMS = (
-    "algorithms|cases|employees|features|members|models|participants|population|samples|users|revenue|accuracy"
+    "algorithms|capacity|cases|deaths|employees|features|hospitalizations|members|models|participants|population|"
+    "recovered|samples|tests|users|revenue|accuracy"
 )
 MEASUREMENT_DESCRIPTORS = "active|confirmed|monthly|new|total|trained"
 KNOWN_DATA_ROLES = {"emergence_time", "proportion", "ranking", "scale", "quantity"}
@@ -136,9 +137,13 @@ def build_paired_text_attributes(
     right_attrs: list[dict[str, Any]] = []
     alignments: list[dict[str, Any]] = []
     seen_pairs: set[tuple[Any, ...]] = set()
+    seen_dimensions: set[tuple[str, str]] = set()
     for raw_pair in pairs:
         clean_pair = _validated_pair(raw_pair, left_sources, right_sources)
         if clean_pair is None:
+            continue
+        dimension_key = _dimension_dedupe_key(clean_pair)
+        if clean_pair.get("_dedupeDimension") and dimension_key in seen_dimensions:
             continue
         pair_key = _pair_dedupe_key(clean_pair)
         if pair_key in seen_pairs:
@@ -146,6 +151,8 @@ def build_paired_text_attributes(
         if _duplicates_infobox(clean_pair, left_infobox_pool, right_infobox_pool):
             continue
         seen_pairs.add(pair_key)
+        if clean_pair.get("_dedupeDimension"):
+            seen_dimensions.add(dimension_key)
         index = len(left_attrs) + 1
         left_attr = _attribute_from_pair_side(clean_pair, "left", index, left_sources)
         right_attr = _attribute_from_pair_side(clean_pair, "right", index, right_sources)
@@ -165,6 +172,7 @@ def build_rule_paired_text_attributes(
     right_candidates = _data_candidates(right_article, "right")
     pairs: list[dict[str, Any]] = []
     used_right: set[int] = set()
+    used_dimensions: set[tuple[str, str]] = set()
     for left_candidate in left_candidates:
         left_role = _primary_role(left_candidate)
         if not left_role:
@@ -176,8 +184,13 @@ def build_rule_paired_text_attributes(
                 continue
             if not _rule_candidates_are_compatible(left_candidate, right_candidate, left_role):
                 continue
+            label = _dimension_label(left_role, left_candidate.get("claimText"), right_candidate.get("claimText"))
+            dimension_key = (left_role, _normalized_label(label))
+            if dimension_key in used_dimensions:
+                continue
             used_right.add(right_index)
-            pairs.append(_rule_pair(left_candidate, right_candidate, left_role))
+            used_dimensions.add(dimension_key)
+            pairs.append(_rule_pair(left_candidate, right_candidate, left_role, label))
             break
     return build_paired_text_attributes(
         left_article,
@@ -200,10 +213,12 @@ def _rule_pair(
     left_candidate: dict[str, Any],
     right_candidate: dict[str, Any],
     role: str,
+    label: str | None = None,
 ) -> dict[str, Any]:
+    dimension_label = label or ROLE_LABELS[role]
     return {
-        "dimensionLabel": ROLE_LABELS[role],
-        "comparisonQuestion": ROLE_QUESTIONS[role],
+        "dimensionLabel": dimension_label,
+        "comparisonQuestion": _comparison_question(role, dimension_label),
         "left": {
             "valueText": left_candidate["claimText"],
             "sentenceIds": left_candidate["sentenceIds"],
@@ -249,11 +264,17 @@ def _measurement_cue(text: Any) -> str:
     normalized = _clean_text(text).lower()
     cue_groups = [
         ("accuracy", r"\baccuracy|score\b"),
+        ("capacity", r"\bcapacity|installed capacity|generation capacity\b"),
         ("revenue", r"\brevenue|revenues|sales\b"),
         ("population", r"\bpopulation|inhabitants\b"),
         ("users", r"\busers|subscribers|customers\b"),
         ("employees", r"\bemployees|workers|staff\b"),
         ("samples", r"\bsamples|participants\b"),
+        ("confirmed cases", r"\bconfirmed cases\b"),
+        ("hospitalized cases", r"\bhospitali[sz](?:ed|ation|ations)? cases\b|\bhospitali[sz]ations\b"),
+        ("recovered", r"\brecovered|recoveries\b"),
+        ("deaths", r"\bdeaths|fatalities\b"),
+        ("tests", r"\btests|testing\b"),
         ("cases", r"\bcases\b"),
         ("models", r"\bmodels\b"),
         ("features", r"\bfeatures\b"),
@@ -296,6 +317,8 @@ def _validated_pair(
         data_priority = False
     if not data_role:
         data_role = ""
+    dedupe_dimension = _is_generic_dimension_label(label, data_role)
+    label = _refined_dimension_label(label, data_role, left["valueText"], right["valueText"])
     return {
         "dimensionLabel": label,
         "comparisonQuestion": question,
@@ -304,6 +327,7 @@ def _validated_pair(
         "dataPriority": data_priority,
         "dataRole": data_role,
         "confidence": confidence,
+        "_dedupeDimension": dedupe_dimension,
     }
 
 
@@ -685,3 +709,70 @@ def _clean_text(value: Any) -> str:
 
 def _is_visual_data_role(role: str) -> bool:
     return role in KNOWN_DATA_ROLES and role != "emergence_time"
+
+
+def _dimension_dedupe_key(pair: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(pair.get("dataRole") or "").strip().lower(),
+        _normalized_label(pair.get("dimensionLabel")),
+    )
+
+
+def _dimension_label(role: str, left_text: Any, right_text: Any) -> str:
+    left_cue = _measurement_cue(left_text)
+    right_cue = _measurement_cue(right_text)
+    cue = left_cue if left_cue and left_cue == right_cue else left_cue or right_cue
+    if cue:
+        return _cue_label(cue)
+    return ROLE_LABELS[role]
+
+
+def _refined_dimension_label(label: str, role: str, left_text: Any, right_text: Any) -> str:
+    if not role or not _is_visual_data_role(role):
+        return label
+    if not _is_generic_dimension_label(label, role):
+        return label
+    return _dimension_label(role, left_text, right_text)
+
+
+def _is_generic_dimension_label(label: str, role: str) -> bool:
+    return _normalized_label(label) in {
+        _normalized_label(ROLE_LABELS.get(role)),
+        "quantity",
+        "scale",
+        "ranking",
+        "proportion rate",
+    }
+
+
+def _cue_label(cue: str) -> str:
+    labels = {
+        "accuracy": "Accuracy",
+        "capacity": "Capacity",
+        "cases": "Cases",
+        "confirmed cases": "Confirmed cases",
+        "deaths": "Deaths",
+        "employees": "Employees",
+        "features": "Features",
+        "growth": "Growth",
+        "hospitalized cases": "Hospitalized cases",
+        "models": "Models",
+        "population": "Population",
+        "recovered": "Recovered",
+        "revenue": "Revenue",
+        "samples": "Samples",
+        "share": "Share / rate",
+        "tests": "Tests",
+        "users": "Users",
+    }
+    return labels.get(cue, cue.title())
+
+
+def _comparison_question(role: str, label: str) -> str:
+    if label and label != ROLE_LABELS.get(role):
+        return f"How do the articles compare on {label.lower()}?"
+    return ROLE_QUESTIONS[role]
+
+
+def _normalized_label(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())

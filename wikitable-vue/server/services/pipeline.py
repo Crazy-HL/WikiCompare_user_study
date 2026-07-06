@@ -84,6 +84,16 @@ TEMPORAL_METADATA_KEYS = {
     "launched",
     "released",
 }
+TEMPORAL_METADATA_TERMS = {
+    "aired",
+    "announced",
+    "appearance",
+    "detected",
+    "flight",
+    "opened",
+    "premiered",
+    "reported",
+}
 
 
 def choose_chart_type(data_type: str, point_count: int) -> str:
@@ -1484,7 +1494,20 @@ def _is_temporal_metadata_attribute(
         _normalized_label(left_attr.get("key")),
         _normalized_label(right_attr.get("key")),
     }
-    return bool(TEMPORAL_METADATA_KEYS.intersection(labels))
+    return any(_is_temporal_metadata_label(label) for label in labels)
+
+
+def _is_temporal_metadata_label(label: str) -> bool:
+    if not label:
+        return False
+    if label in TEMPORAL_METADATA_KEYS:
+        return True
+    tokens = set(re.findall(r"[a-z0-9]+", label))
+    if "date" in tokens:
+        return True
+    if "first" in tokens and tokens.intersection(TEMPORAL_METADATA_TERMS):
+        return True
+    return False
 
 
 def _is_generic_main_text_pair(
