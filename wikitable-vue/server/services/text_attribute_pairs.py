@@ -212,7 +212,7 @@ def _rule_pair(
             "valueText": right_candidate["claimText"],
             "sentenceIds": right_candidate["sentenceIds"],
         },
-        "dataPriority": True,
+        "dataPriority": _is_visual_data_role(role),
         "dataRole": role,
         "confidence": 0.62,
     }
@@ -290,6 +290,11 @@ def _validated_pair(
         if not data_role or data_role not in KNOWN_DATA_ROLES:
             return None
     else:
+        if data_role != "emergence_time":
+            data_role = ""
+    if data_role and not _is_visual_data_role(data_role):
+        data_priority = False
+    if not data_role:
         data_role = ""
     return {
         "dimensionLabel": label,
@@ -676,3 +681,7 @@ def _semantic_cue(text: str) -> str:
 
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split())
+
+
+def _is_visual_data_role(role: str) -> bool:
+    return role in KNOWN_DATA_ROLES and role != "emergence_time"

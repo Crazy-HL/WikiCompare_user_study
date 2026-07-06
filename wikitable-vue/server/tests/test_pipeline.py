@@ -29,6 +29,7 @@ def test_classify_value_rule_detects_common_types():
     assert classify_value_rule("40°N, 116°E") == "Geographical"
     assert classify_value_rule("116°E, 40°N") == "Geographical"
     assert classify_value_rule("10 million") == "Numerical"
+    assert classify_value_rule("Founded: 1998") == "Text"
 
 
 def test_validate_alignments_drops_unknown_attribute_ids():
@@ -105,7 +106,7 @@ def test_normalize_attribute_pair_preserves_related_source_ids():
     assert row["rightRelatedSourceIds"] == ["right-s-1-1", "right-p-1"]
 
 
-def test_normalize_attribute_pair_preserves_data_first_text_metadata():
+def test_normalize_attribute_pair_demotes_emergence_years_to_text_evidence():
     row = normalize_attribute_pair(
         {
             "id": "left-history",
@@ -127,10 +128,40 @@ def test_normalize_attribute_pair_preserves_data_first_text_metadata():
         "Historical emergence",
     )
 
-    assert row["dataPriority"] is True
+    assert row["dataPriority"] is False
     assert row["dataRole"] == "emergence_time"
     assert row["comparisonQuestion"] == "When did it emerge?"
     assert row["sourceKind"] == "main_text"
+    assert row["dataType"] == "Text"
+    assert row["chartType"] == "text"
+    assert row["visualization"]["left"]["values"] == []
+    assert row["visualization"]["right"]["values"] == []
+
+
+def test_normalize_attribute_pair_keeps_generic_main_text_claims_as_text_despite_numbers():
+    row = normalize_attribute_pair(
+        {
+            "id": "left-applications",
+            "key": "Applications",
+            "valueText": "Applications include 12 pilot projects and 3 public deployments.",
+            "source": "main_text",
+            "sourceIds": ["left-s-1"],
+        },
+        {
+            "id": "right-applications",
+            "key": "Applications",
+            "valueText": "Applications include 8 pilot projects and 2 public deployments.",
+            "source": "main_text",
+            "sourceIds": ["right-s-1"],
+        },
+        "Applications",
+    )
+
+    assert row["dataType"] == "Text"
+    assert row["chartType"] == "text"
+    assert row["dataPriority"] is False
+    assert row["visualization"]["left"]["values"] == []
+    assert row["visualization"]["right"]["values"] == []
 
 
 def test_normalize_attribute_pair_structures_currency_name_code_and_symbol():
@@ -238,7 +269,37 @@ def test_rank_rows_places_text_rows_after_chartable_rows():
     assert ranked[2]["rankScore"] == 0.2
 
 
-def test_rank_rows_prioritizes_paired_data_text_over_generic_text():
+def test_rank_rows_does_not_prioritize_emergence_years_as_data_visualization():
+    rows = [
+        {
+            "id": "revenue",
+            "label": "Revenue",
+            "dataType": "Numerical",
+            "chartType": "bar",
+            "score": 0.2,
+            "sourceKind": "Infobox",
+            "visualization": {"left": {"values": [{"value": 100}]}, "right": {"values": [{"value": 120}]}},
+        },
+        {
+            "id": "history",
+            "label": "Historical emergence",
+            "dataType": "Text",
+            "chartType": "text",
+            "score": 0.9,
+            "sourceKind": "main_text",
+            "comparisonQuality": "paired_text",
+            "dataPriority": True,
+            "dataRole": "emergence_time",
+            "visualization": {"left": {"values": []}, "right": {"values": []}},
+        },
+    ]
+
+    ranked = rank_rows(rows)
+
+    assert [row["label"] for row in ranked] == ["Revenue", "Historical emergence"]
+
+
+def test_rank_rows_prioritizes_paired_measurement_text_over_generic_text():
     rows = [
         {
             "id": "overview",
@@ -251,24 +312,25 @@ def test_rank_rows_prioritizes_paired_data_text_over_generic_text():
             "visualization": {"left": {"rawText": "A is a concept."}, "right": {"rawText": "B is a concept."}},
         },
         {
-            "id": "history",
-            "label": "Historical emergence",
+            "id": "users",
+            "label": "Active users",
             "dataType": "Numerical",
             "chartType": "bar",
             "score": 0.4,
             "sourceKind": "main_text",
             "comparisonQuality": "paired_text_data",
             "dataPriority": True,
-            "visualization": {"left": {"values": [{"value": 1956}]}, "right": {"values": [{"value": 1950}]}},
+            "dataRole": "quantity",
+            "visualization": {"left": {"values": [{"value": 1000}]}, "right": {"values": [{"value": 2000}]}},
         },
     ]
 
     ranked = rank_rows(rows)
 
-    assert [row["label"] for row in ranked] == ["Historical emergence", "Overview"]
+    assert [row["label"] for row in ranked] == ["Active users", "Overview"]
 
 
-def test_rank_rows_prioritizes_paired_data_main_text_even_when_chart_type_is_text():
+def test_rank_rows_does_not_prioritize_paired_emergence_even_when_flagged_by_llm():
     rows = [
         {
             "id": "overview",
@@ -295,7 +357,7 @@ def test_rank_rows_prioritizes_paired_data_main_text_even_when_chart_type_is_tex
 
     ranked = rank_rows(rows)
 
-    assert [row["label"] for row in ranked] == ["Historical emergence", "Overview"]
+    assert [row["label"] for row in ranked] == ["Overview", "Historical emergence"]
 
 
 def test_rank_rows_does_not_prioritize_generic_text_with_data_priority_flag():
@@ -724,10 +786,36 @@ def test_normalize_attribute_pair_handles_standalone_year_attributes():
         "Founded",
     )
 
-    assert row["dataType"] == "Numerical"
-    assert row["visualization"]["left"]["values"] == [{"value": 1998.0}]
-    assert row["visualization"]["right"]["values"] == [{"value": 2001.0}]
-    assert row["score"] > 0
+    assert row["dataType"] == "Text"
+    assert row["chartType"] == "text"
+    assert row["visualization"]["left"]["values"] == []
+    assert row["visualization"]["right"]["values"] == []
+    assert row["score"] == 0
+
+
+def test_normalize_attribute_pair_keeps_founded_dates_as_text_metadata():
+    row = normalize_attribute_pair(
+        {
+            "id": "left-founded",
+            "key": "Founded",
+            "valueText": "July 5, 1994; 32 years ago (1994-07-05), in Bellevue, Washington, U.S.",
+            "source": "infobox",
+            "sourceIds": ["left-info-1"],
+        },
+        {
+            "id": "right-founded",
+            "key": "Founded",
+            "valueText": "July 2, 1962; 64 years ago (1962-07-02), in Rogers, Arkansas, U.S.",
+            "source": "infobox",
+            "sourceIds": ["right-info-1"],
+        },
+        "Founded",
+    )
+
+    assert row["dataType"] == "Text"
+    assert row["chartType"] == "text"
+    assert row["visualization"]["left"]["values"] == []
+    assert row["visualization"]["right"]["values"] == []
 
 
 def test_normalize_attribute_pair_marks_source_kind_both():

@@ -203,6 +203,43 @@ def test_build_text_evidence_candidates_classifies_founding_and_quantity_items_l
     ]
 
 
+def test_rule_paired_emergence_years_are_not_data_priority():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Artificial intelligence was founded as an academic discipline in 1956.",
+                    }
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "Machine learning emerged from pattern recognition in 1959.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert [alignment["label"] for alignment in alignments] == ["Historical emergence"]
+    assert left_attrs[0]["dataPriority"] is False
+    assert right_attrs[0]["dataPriority"] is False
+    assert left_attrs[0]["dataRole"] == "emergence_time"
+    assert right_attrs[0]["dataRole"] == "emergence_time"
+
+
 def test_build_text_evidence_candidates_classifies_accuracy_and_sample_items_locally():
     article = {
         "paragraphs": [
@@ -1137,7 +1174,8 @@ def test_build_paired_text_attributes_creates_aligned_attributes():
     assert left_attrs[0]["key"] == "Historical emergence"
     assert left_attrs[0]["source"] == "main_text"
     assert left_attrs[0]["sourceIds"] == ["left-s-1-1"]
-    assert left_attrs[0]["dataPriority"] is True
+    assert left_attrs[0]["dataPriority"] is False
+    assert left_attrs[0]["dataRole"] == "emergence_time"
     assert right_attrs[0]["sourceIds"] == ["right-s-1-1"]
     assert alignments == [
         {

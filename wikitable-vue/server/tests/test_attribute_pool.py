@@ -277,6 +277,8 @@ def test_llm_client_extracts_paired_text_attributes_with_data_first_prompt():
     assert "Do not fill or follow a fixed template" in prompt
     assert "Discover comparison dimensions from the evidence" in prompt
     assert "Prioritize data-bearing evidence" in prompt
+    assert "Do not mark standalone years, dates, founding years, or emergence years as dataPriority" in prompt
+    assert "Use dataPriority only for comparable measurements" in prompt
     assert "same semantic role" in prompt
     assert "Return only dimensions that have evidence on both sides" in prompt
     assert "Use only provided sentence IDs" in prompt

@@ -113,11 +113,13 @@ class LLMClient:
                         "2. Do not fill or follow a fixed template.\n"
                         "3. Discover comparison dimensions from the evidence.\n"
                         "4. Prioritize data-bearing evidence.\n"
-                        "5. Pair data only when both sides have the same semantic role.\n"
-                        "6. Return only dimensions that have evidence on both sides.\n"
-                        "7. Use only provided sentence IDs.\n"
-                        "8. Do not invent values.\n"
-                        "9. Keep valueText short and directly supported by the cited sentence.\n\n"
+                        "5. Do not mark standalone years, dates, founding years, or emergence years as dataPriority.\n"
+                        "6. Use dataPriority only for comparable measurements such as money, counts, percentages, capacity, population, rank, or index scores.\n"
+                        "7. Pair data only when both sides have the same semantic role.\n"
+                        "8. Return only dimensions that have evidence on both sides.\n"
+                        "9. Use only provided sentence IDs.\n"
+                        "10. Do not invent values.\n"
+                        "11. Keep valueText short and directly supported by the cited sentence.\n\n"
                         "Return this JSON shape only:\n"
                         '{"pairs":[{"dimensionLabel":string,"comparisonQuestion":string,'
                         '"left":{"valueText":string,"sentenceIds":[string]},'

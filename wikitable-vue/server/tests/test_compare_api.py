@@ -329,9 +329,14 @@ class CompareApiTest(AsyncHTTPTestCase):
         assert response.code == 200
         assert "Historical emergence" in labels
         assert "Applications" in labels
-        assert labels.index("Historical emergence") < labels.index("Applications")
+        assert labels.index("Applications") < labels.index("Historical emergence")
         assert historical["leftSourceIds"] == ["left-s-1-2"]
         assert historical["rightSourceIds"] == ["right-s-1-2"]
+        assert historical["dataPriority"] is False
+        assert historical["dataType"] == "Text"
+        assert historical["chartType"] == "text"
+        assert historical["visualization"]["left"]["values"] == []
+        assert historical["visualization"]["right"]["values"] == []
         assert applications["leftSourceIds"] == ["left-s-2-1"]
         assert applications["rightSourceIds"] == ["right-s-2-1"]
         assert historical["sourceKind"] == "main_text"

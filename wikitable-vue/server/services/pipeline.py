@@ -74,6 +74,16 @@ SEMANTIC_ALIGNMENT_GROUPS = [
     ("Subfields / Types", {"subfield", "subfields", "type", "types", "category", "categories", "branches"}),
     ("Impact / Issues", {"impact", "impacts", "issue", "issues", "risk", "risks", "ethics", "limitations", "criticism"}),
 ]
+TEMPORAL_METADATA_KEYS = {
+    "commenced operations",
+    "date",
+    "established",
+    "formation",
+    "founded",
+    "introduced",
+    "launched",
+    "released",
+}
 
 
 def choose_chart_type(data_type: str, point_count: int) -> str:
@@ -176,10 +186,7 @@ def extract_numeric_values(value_text: str | None) -> list[NumericValue]:
             continue
         if _is_secondary_magnitude_count(text, match, unit):
             continue
-        if is_year and (
-            has_non_year_number
-            or not _is_standalone_year_attribute(text, raw_number)
-        ):
+        if is_year:
             continue
         number = _parse_number(raw_number)
         if number is None:
@@ -303,6 +310,7 @@ def normalize_attribute_pair(
 ) -> dict[str, Any]:
     left_text = str(left_attr.get("valueText") or "")
     right_text = str(right_attr.get("valueText") or "")
+    data_role = left_attr.get("dataRole") or right_attr.get("dataRole")
     left_values = extract_numeric_values(left_text)
     right_values = extract_numeric_values(right_text)
     left_type = classify_value_rule(left_text)
@@ -342,6 +350,21 @@ def normalize_attribute_pair(
     if use_structured_values:
         left_type = "Categorical"
         right_type = "Categorical"
+    if _is_temporal_metadata_role(data_role) or _is_temporal_metadata_attribute(row_label, left_attr, right_attr) or (
+        _is_generic_main_text_pair(left_attr, right_attr, data_role)
+        and not _has_explicit_main_text_visual_signal(
+            left_type,
+            right_type,
+            left_values,
+            right_values,
+        )
+    ):
+        left_values = []
+        right_values = []
+        left_type = "Text"
+        right_type = "Text"
+        left_structured_values = []
+        right_structured_values = []
     data_type = _combine_data_types(left_type, right_type)
     comparison_quality = _comparison_quality(
         left_text,
@@ -370,8 +393,8 @@ def normalize_attribute_pair(
         "chartType": chart_type,
         "score": _score_pair(data_type, left_values, right_values, left_structured_values, right_structured_values),
         "comparisonQuality": comparison_quality,
-        "dataPriority": bool(left_attr.get("dataPriority") or right_attr.get("dataPriority")),
-        "dataRole": left_attr.get("dataRole") or right_attr.get("dataRole"),
+        "dataPriority": False if _is_temporal_metadata_role(data_role) else bool(left_attr.get("dataPriority") or right_attr.get("dataPriority")),
+        "dataRole": data_role,
         "comparisonQuestion": left_attr.get("comparisonQuestion") or right_attr.get("comparisonQuestion"),
         "visualization": {
             "left": _visual_side(left_attr, left_values, left_structured_values),
@@ -1432,6 +1455,8 @@ def _visual_rank_bucket(row: dict[str, Any]) -> int:
 def _is_data_priority_main_text_row(row: dict[str, Any]) -> bool:
     if not row.get("dataPriority") or row.get("sourceKind") != "main_text" or not row.get("dataRole"):
         return False
+    if _is_temporal_metadata_role(row.get("dataRole")):
+        return False
     visualization = row.get("visualization") if isinstance(row.get("visualization"), dict) else {}
     left = visualization.get("left") if isinstance(visualization.get("left"), dict) else {}
     right = visualization.get("right") if isinstance(visualization.get("right"), dict) else {}
@@ -1443,3 +1468,46 @@ def _is_chartable_row(row: dict[str, Any]) -> bool:
     if chart_type:
         return chart_type != "text"
     return row.get("dataType") in {"Trend", "Numerical", "Proportional"}
+
+
+def _is_temporal_metadata_role(data_role: Any) -> bool:
+    return str(data_role or "").strip().lower() == "emergence_time"
+
+
+def _is_temporal_metadata_attribute(
+    row_label: Any,
+    left_attr: dict[str, Any],
+    right_attr: dict[str, Any],
+) -> bool:
+    labels = {
+        _normalized_label(row_label),
+        _normalized_label(left_attr.get("key")),
+        _normalized_label(right_attr.get("key")),
+    }
+    return bool(TEMPORAL_METADATA_KEYS.intersection(labels))
+
+
+def _is_generic_main_text_pair(
+    left_attr: dict[str, Any],
+    right_attr: dict[str, Any],
+    data_role: Any,
+) -> bool:
+    if data_role:
+        return False
+    return (
+        str(left_attr.get("source") or "").lower() == "main_text"
+        and str(right_attr.get("source") or "").lower() == "main_text"
+        and not left_attr.get("dataPriority")
+        and not right_attr.get("dataPriority")
+    )
+
+
+def _has_explicit_main_text_visual_signal(
+    left_type: str,
+    right_type: str,
+    left_values: list[dict[str, Any]],
+    right_values: list[dict[str, Any]],
+) -> bool:
+    if left_type == "Trend" and right_type == "Trend":
+        return True
+    return bool(_shared_labeled_value_pairs(left_values, right_values))
