@@ -2,6 +2,7 @@ const {
 	barChartDomain,
 	formatChartNumber,
 	formatValueDisplay,
+	shortValueText,
 	xLabelForPoint,
 } = require("./chartValueDisplay");
 
@@ -36,7 +37,7 @@ function buildMergedComparison(row, articleTitles = {}) {
 	return {
 		title: row?.label || "Comparison",
 		mode,
-		unit: inferUnit(row, allPoints),
+		...inferMeasurement(row, allPoints),
 		categories,
 		series,
 		yDomain: numericValues.length ? barChartDomain(numericValues) : [0, 1],
@@ -54,22 +55,27 @@ function normalizeSide(row, side, title) {
 	const fallbackPoints = raw
 		? [{ value: null, label: row?.label || side, raw, display: raw }]
 		: [];
-	const points = (values.length ? values : fallbackPoints).map((value, index) => {
+	const points = filterAggregateComponentPoints((values.length ? values : fallbackPoints).map((value, index) => {
 		const point = typeof value === "object" && value !== null
 			? value
 			: { value, raw: String(value) };
 		const label = point.label || (point.year ? String(point.year) : row?.label || `Item ${index + 1}`);
 		const numericValue = toFiniteNumber(point.value);
-		return {
+		const normalizedPoint = {
 			...point,
 			value: numericValue,
 			label: String(label),
-			category: point.year ? String(point.year) : String(label),
+		};
+		return {
+			...normalizedPoint,
+			value: numericValue,
+			label: String(label),
+			category: point.label ? String(point.label) : String(point.year || label),
 			year: point.year,
 			raw: point.raw || raw,
-			display: point.display || displayForPoint(point, raw, row?.dataType),
+			display: displayForPoint(normalizedPoint, raw, row?.dataType),
 		};
-	});
+	}));
 
 	return {
 		key: side,
@@ -80,6 +86,9 @@ function normalizeSide(row, side, title) {
 }
 
 function displayForPoint(point, raw, dataType) {
+	if (point?.display) {
+		return shortValueText(point, displayType(dataType, point, raw));
+	}
 	if (
 		point?.label &&
 		String(point.label).startsWith("%") &&
@@ -90,6 +99,7 @@ function displayForPoint(point, raw, dataType) {
 	const display = formatValueDisplay(point, raw, dataType);
 	if (display && display !== "-") {
 		const prefixes = [
+			point?.label && point?.year ? `${point.label} (${point.year}): ` : "",
 			point?.label ? `${point.label}: ` : "",
 			point?.year ? `${point.year}: ` : "",
 			point?.year ? `${point.year} ` : "",
@@ -101,20 +111,37 @@ function displayForPoint(point, raw, dataType) {
 	return formatChartNumber(point?.value, unitType(dataType));
 }
 
+function displayType(dataType, point, raw) {
+	const baseType = unitType(dataType);
+	if (baseType) return baseType;
+	const text = `${dataType || ""} ${point?.label || ""} ${raw || ""}`.toLowerCase();
+	if (/\btrend\b/.test(text) && /%|percent|growth\s+rate|unemployment|inflation/.test(text)) {
+		return "percentage";
+	}
+	return "";
+}
+
 function mergedCategories(sides, row) {
-	const labels = sides.flatMap(side => side.points.map(point => point.category));
+	const leftLabels = sides[0]?.points.map(point => point.category).filter(Boolean) || [];
+	const rightLabels = sides[1]?.points.map(point => point.category).filter(Boolean) || [];
+	const labels = [...leftLabels, ...rightLabels];
 	const unique = [...new Set(labels.filter(Boolean))];
 	if (!unique.length) return [row?.label || "Value"];
 	const allYears = unique.every(category => /^\d{4}$/.test(String(category)));
 	if (allYears) return unique.sort((a, b) => Number(a) - Number(b));
 	if (unique.length === 1) return [row?.label || unique[0]];
-	return unique.sort((a, b) => String(a).localeCompare(String(b)));
+	const rightSet = new Set(rightLabels);
+	const leftSet = new Set(leftLabels);
+	const shared = leftLabels.filter(label => rightSet.has(label));
+	const leftOnly = leftLabels.filter(label => !rightSet.has(label));
+	const rightOnly = rightLabels.filter(label => !leftSet.has(label));
+	return [...new Set([...shared, ...leftOnly, ...rightOnly])];
 }
 
 function chooseMode(row, sides, categories) {
 	const mergeVisualization = String(row?.mergeVisualization || "").toLowerCase();
 	if (mergeVisualization === "bar-chart") return "bar";
-	if (mergeVisualization === "stacked-chart") return "bar";
+	if (mergeVisualization === "stacked-chart") return "stacked";
 	if (mergeVisualization === "pie-chart") return "bar";
 	if (mergeVisualization === "text-only") return "text";
 
@@ -154,7 +181,7 @@ function buildStats(sides, numericValues, row) {
 	};
 }
 
-function inferUnit(row, points) {
+function inferMeasurement(row, points) {
 	const raw = [
 		row?.visualization?.left?.raw,
 		row?.visualization?.right?.raw,
@@ -164,15 +191,42 @@ function inferUnit(row, points) {
 		.join(" ");
 	const dataType = String(row?.dataType || "").toLowerCase();
 	const isProportional = dataType === "proportional";
-	if (!isProportional && /US\$|\$/.test(raw)) return "USD";
-	if (!isProportional && /¥/.test(raw)) return "JPY";
-	if (!isProportional && /₩/.test(raw)) return "KRW";
-	if (/%\s*of\s*GDP/i.test(raw)) return "% of GDP";
-	if (/%/.test(raw) || isProportional) return "%";
-	if (/US\$|\$/.test(raw)) return "USD";
-	if (/¥/.test(raw)) return "JPY";
-	if (/₩/.test(raw)) return "KRW";
-	return "";
+	if (/liters?\s+of\s+pure\s+alcohol/i.test(raw)) {
+		return {
+			unit: /per\s+capita/i.test(`${row?.label || ""} ${raw}`)
+				? "liters of pure alcohol per capita"
+				: "liters of pure alcohol",
+			basis: "",
+		};
+	}
+	if (!isProportional && /US\$|\$/.test(raw)) return { unit: "USD", basis: "" };
+	if (!isProportional && /¥/.test(raw)) return { unit: "JPY", basis: "" };
+	if (!isProportional && /₩/.test(raw)) return { unit: "KRW", basis: "" };
+	if (/%\s*of\s*GDP/i.test(raw)) return { unit: "%", basis: "GDP" };
+	if (isProportional || (dataType === "trend" && /%/.test(raw))) return { unit: "%", basis: "" };
+	if (/US\$|\$/.test(raw)) return { unit: "USD", basis: "" };
+	if (/¥/.test(raw)) return { unit: "JPY", basis: "" };
+	if (/₩/.test(raw)) return { unit: "KRW", basis: "" };
+	return { unit: "", basis: "" };
+}
+
+function filterAggregateComponentPoints(points) {
+	if (!Array.isArray(points) || points.length < 3) return points;
+	const totalPoints = points.filter(point => isAggregateTotalLabel(point.label));
+	const componentPoints = points.filter(point => !isAggregateTotalLabel(point.label));
+	if (!totalPoints.length || componentPoints.length < 2) return points;
+	return componentPoints;
+}
+
+function isAggregateTotalLabel(label) {
+	return ["total", "overall", "all"].includes(normalizeDisplayLabel(label));
+}
+
+function normalizeDisplayLabel(value) {
+	return String(value || "")
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, " ");
 }
 
 function unitType(dataType) {

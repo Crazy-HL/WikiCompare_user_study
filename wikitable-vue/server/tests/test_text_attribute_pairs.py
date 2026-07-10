@@ -144,6 +144,30 @@ def test_build_text_evidence_candidates_honors_zero_limit():
     assert build_text_evidence_candidates(article, "left", limit=0) == []
 
 
+def test_build_text_evidence_candidates_samples_late_article_evidence_when_limited():
+    article = {
+        "paragraphs": [
+            {
+                "id": f"left-p-{index}",
+                "sentences": [
+                    {
+                        "id": f"left-s-{index}-1",
+                        "text": f"Revenue was ${index} million in 2024.",
+                    }
+                ],
+            }
+            for index in range(1, 41)
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left", limit=8)
+
+    sentence_ids = [candidate["sentenceIds"][0] for candidate in candidates]
+    assert len(candidates) == 8
+    assert sentence_ids[0] == "left-s-1-1"
+    assert sentence_ids[-1] == "left-s-40-1"
+
+
 def test_build_text_evidence_candidates_keeps_year_like_case_counts():
     article = {
         "paragraphs": [
@@ -160,6 +184,35 @@ def test_build_text_evidence_candidates_keeps_year_like_case_counts():
 
     assert [item["value"] for item in candidates[0]["dataItems"]] == [2019]
     assert candidates[0]["dataItems"][0]["role"] == "quantity"
+
+
+def test_build_text_evidence_candidates_ignores_calendar_days_and_ages():
+    article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": (
+                            "On 9 February, officials said the country would only have a handful "
+                            "of cases. On 13 February, the first death involved a 69-year-old man."
+                        ),
+                    },
+                    {
+                        "id": "left-s-1-2",
+                        "text": "As of 17 March 2023, the country has 141,988 active cases.",
+                    },
+                ],
+            }
+        ]
+    }
+
+    candidates = build_text_evidence_candidates(article, "left")
+
+    assert [candidate["sentenceIds"] for candidate in candidates] == [["left-s-1-2"]]
+    assert candidates[0]["dataItems"][-1]["value"] == 141988
+    assert candidates[0]["dataItems"][-1]["role"] == "quantity"
 
 
 def test_build_text_evidence_candidates_keeps_year_like_currency_values():
@@ -238,6 +291,145 @@ def test_rule_paired_emergence_years_are_not_data_priority():
     assert right_attrs[0]["dataPriority"] is False
     assert left_attrs[0]["dataRole"] == "emergence_time"
     assert right_attrs[0]["dataRole"] == "emergence_time"
+
+
+def test_build_rule_paired_text_attributes_keeps_late_unique_measurements_after_many_early_candidates():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": f"left-p-{index}",
+                "sentences": [
+                    {
+                        "id": f"left-s-{index}-1",
+                        "text": f"Revenue was ${index} million in 2024.",
+                    }
+                ],
+            }
+            for index in range(1, 31)
+        ]
+        + [
+            {
+                "id": "left-p-31",
+                "sentences": [
+                    {
+                        "id": "left-s-31-1",
+                        "text": "Net income was $18 million in 2024.",
+                    }
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": f"right-p-{index}",
+                "sentences": [
+                    {
+                        "id": f"right-s-{index}-1",
+                        "text": f"Revenue was ${index + 1} million in 2024.",
+                    }
+                ],
+            }
+            for index in range(1, 31)
+        ]
+        + [
+            {
+                "id": "right-p-31",
+                "sentences": [
+                    {
+                        "id": "right-s-31-1",
+                        "text": "Net income was $4 million in 2024.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    _left_attrs, _right_attrs, alignments = build_rule_paired_text_attributes(
+        left_article,
+        right_article,
+        [],
+        [],
+    )
+
+    labels = [alignment["label"] for alignment in alignments]
+    assert "Revenue" in labels
+    assert "Net income" in labels
+
+
+def test_build_rule_paired_text_attributes_extracts_development_report_prose_metrics():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "To become a high-income economy by 2047, India will need to sustain an average annual growth rate of 7.8 percent.",
+                    }
+                ],
+            },
+            {
+                "id": "left-p-2",
+                "sentences": [
+                    {
+                        "id": "left-s-2-1",
+                        "text": "GDP growth is estimated at 6.5 percent in FY24-25.",
+                    }
+                ],
+            },
+            {
+                "id": "left-p-3",
+                "sentences": [
+                    {
+                        "id": "left-s-3-1",
+                        "text": "Extreme poverty declined to 2.3 percent in 2022-23.",
+                    }
+                ],
+            },
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "The Government of Indonesia aims to grow at the brisk annual rate of 6 percent to reach high-income status by 2045.",
+                    }
+                ],
+            },
+            {
+                "id": "right-p-2",
+                "sentences": [
+                    {
+                        "id": "right-s-2-1",
+                        "text": "Indonesia’s economy grew by 5 percent in the first half of 2025.",
+                    }
+                ],
+            },
+            {
+                "id": "right-p-3",
+                "sentences": [
+                    {
+                        "id": "right-s-3-1",
+                        "text": "As of March 2025, the official poverty rate stood at 8.5 percent.",
+                    }
+                ],
+            },
+        ]
+    }
+
+    _left_attrs, _right_attrs, alignments = build_rule_paired_text_attributes(
+        left_article,
+        right_article,
+        [],
+        [],
+    )
+
+    labels = [alignment["label"] for alignment in alignments]
+    assert labels == ["Annual growth target", "Economic growth", "Poverty rate"]
 
 
 def test_build_text_evidence_candidates_classifies_accuracy_and_sample_items_locally():
@@ -1186,6 +1378,593 @@ def test_build_paired_text_attributes_creates_aligned_attributes():
     ]
 
 
+def test_build_paired_text_attributes_rejects_unsupported_structured_values():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "Operating margin reached 18.4% in 2024."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "Operating margin reached 4.1% in 2024."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Operating margin",
+                "comparisonQuestion": "How do margins compare?",
+                "left": {
+                    "valueText": "operating margin in 2024",
+                    "sentenceIds": ["left-s-1-1"],
+                    "values": [{"value": 99, "year": 2024, "rawText": "99%"}],
+                },
+                "right": {
+                    "valueText": "operating margin in 2024",
+                    "sentenceIds": ["right-s-1-1"],
+                    "values": [{"value": 4.1, "year": 2024, "rawText": "4.1%"}],
+                },
+                "dataPriority": True,
+                "dataRole": "proportion",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_rejects_visual_pair_without_llm_values():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "Operating margin reached 18.4% in 2024."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "Operating margin reached 4.1% in 2024."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Operating margin",
+                "comparisonQuestion": "How do margins compare?",
+                "left": {
+                    "valueText": "operating margin reached 18.4% in 2024",
+                    "sentenceIds": ["left-s-1-1"],
+                },
+                "right": {
+                    "valueText": "operating margin reached 4.1% in 2024",
+                    "sentenceIds": ["right-s-1-1"],
+                },
+                "dataPriority": True,
+                "dataRole": "proportion",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+        require_extracted_values_for_visual=True,
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_rejects_structured_value_mismatched_with_raw_text():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "Operating margin reached 18.4% in 2024."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "Operating margin reached 4.1% in 2024."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Operating margin",
+                "comparisonQuestion": "How do margins compare?",
+                "left": {
+                    "valueText": "operating margin in 2024",
+                    "sentenceIds": ["left-s-1-1"],
+                    "values": [{"value": 99, "year": 2024, "rawText": "18.4%"}],
+                },
+                "right": {
+                    "valueText": "operating margin in 2024",
+                    "sentenceIds": ["right-s-1-1"],
+                    "values": [{"value": 4.1, "year": 2024, "rawText": "4.1%"}],
+                },
+                "dataPriority": True,
+                "dataRole": "proportion",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_accepts_scaled_structured_value_raw_text():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "Sales reached 7.4 million units in 2023."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "Sales reached 1,402,371 units in 2023."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Annual sales",
+                "comparisonQuestion": "How do annual sales compare?",
+                "left": {
+                    "valueText": "sales in 2023",
+                    "sentenceIds": ["left-s-1-1"],
+                    "values": [{"value": 7400000, "year": 2023, "rawText": "7.4 million"}],
+                },
+                "right": {
+                    "valueText": "sales in 2023",
+                    "sentenceIds": ["right-s-1-1"],
+                    "values": [{"value": 1402371, "year": 2023, "rawText": "1,402,371"}],
+                },
+                "dataPriority": True,
+                "dataRole": "quantity",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs[0]["extractedValues"] == [{"value": 7400000, "year": 2023, "rawText": "7.4 million"}]
+    assert right_attrs[0]["extractedValues"] == [{"value": 1402371, "year": 2023, "rawText": "1,402,371"}]
+    assert alignments[0]["label"] == "Annual sales"
+
+
+def test_build_paired_text_attributes_preserves_llm_standard_value_metadata():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "Alcohol consumption per capita totaled 4.85 liters of pure alcohol in 2019."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "Alcohol consumption per capita totaled 0.78 liters of pure alcohol in 2019."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Alcohol consumption per capita: total",
+                "comparisonQuestion": "How does total alcohol consumption per capita compare?",
+                "left": {
+                    "valueText": "totaled 4.85 liters of pure alcohol in 2019",
+                    "sentenceIds": ["left-s-1-1"],
+                    "values": [
+                        {
+                            "value": 4.85,
+                            "label": "total",
+                            "unit": "liters of pure alcohol per capita",
+                            "valueKind": "aggregate",
+                            "year": 2019,
+                            "rawText": "4.85 liters of pure alcohol",
+                        }
+                    ],
+                },
+                "right": {
+                    "valueText": "totaled 0.78 liters of pure alcohol in 2019",
+                    "sentenceIds": ["right-s-1-1"],
+                    "values": [
+                        {
+                            "value": 0.78,
+                            "label": "total",
+                            "unit": "liters of pure alcohol per capita",
+                            "valueKind": "aggregate",
+                            "year": 2019,
+                            "rawText": "0.78 liters of pure alcohol",
+                        }
+                    ],
+                },
+                "dataPriority": True,
+                "dataRole": "quantity",
+                "confidence": 0.93,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+        require_extracted_values_for_visual=True,
+    )
+
+    assert left_attrs[0]["extractedValues"] == [
+        {
+            "value": 4.85,
+            "label": "total",
+            "unit": "liters of pure alcohol per capita",
+            "valueKind": "aggregate",
+            "year": 2019,
+            "rawText": "4.85 liters of pure alcohol",
+        }
+    ]
+    assert right_attrs[0]["extractedValues"][0]["unit"] == "liters of pure alcohol per capita"
+    assert right_attrs[0]["extractedValues"][0]["valueKind"] == "aggregate"
+    assert alignments[0]["label"] == "Alcohol consumption per capita: total"
+
+
+def test_build_paired_text_attributes_rejects_structured_value_year_not_in_evidence():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "Sales reached 7.4 million units in 2023."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "Sales reached 1,402,371 units in 2023."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Annual sales",
+                "comparisonQuestion": "How do annual sales compare?",
+                "left": {
+                    "valueText": "sales in 2024",
+                    "sentenceIds": ["left-s-1-1"],
+                    "values": [{"value": 7400000, "year": 2024, "rawText": "7.4 million"}],
+                },
+                "right": {
+                    "valueText": "sales in 2023",
+                    "sentenceIds": ["right-s-1-1"],
+                    "values": [{"value": 1402371, "year": 2023, "rawText": "1,402,371"}],
+                },
+                "dataPriority": True,
+                "dataRole": "quantity",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_rejects_incompatible_measurement_cues():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Overall, there have been 26,969,913 confirmed cases and 198,523 deaths.",
+                    },
+                    {
+                        "id": "left-s-1-2",
+                        "text": "Its economic growth rate reached 6.2% in 2010.",
+                    },
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "By 13 March, cases had been confirmed in all 50 provinces of the country.",
+                    },
+                    {
+                        "id": "right-s-1-2",
+                        "text": "GDP growth for that year was 2.8%, with annualised fourth quarter expansion of 5.5%.",
+                    },
+                ],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Cases",
+                "comparisonQuestion": "How do confirmed cases compare?",
+                "left": {
+                    "valueText": "26,969,913 confirmed cases and 198,523 deaths",
+                    "sentenceIds": ["left-s-1-1"],
+                },
+                "right": {
+                    "valueText": "cases had been confirmed in all 50 provinces",
+                    "sentenceIds": ["right-s-1-1"],
+                },
+                "dataPriority": True,
+                "dataRole": "quantity",
+                "confidence": 0.9,
+            },
+            {
+                "dimensionLabel": "Growth",
+                "comparisonQuestion": "How does growth compare?",
+                "left": {
+                    "valueText": "economic growth rate reached 6.2% in 2010",
+                    "sentenceIds": ["left-s-1-2"],
+                },
+                "right": {
+                    "valueText": "GDP growth was 2.8%, with annualised fourth quarter expansion of 5.5%",
+                    "sentenceIds": ["right-s-1-2"],
+                },
+                "dataPriority": True,
+                "dataRole": "proportion",
+                "confidence": 0.9,
+            },
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_rejects_case_counts_paired_with_geographic_coverage():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "As of 17 March 2023, Italy has 141,988 active cases.",
+                    },
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "By 13 March, cases had been confirmed in all 50 provinces of the country.",
+                    },
+                ],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Cases",
+                "comparisonQuestion": "How do cases compare?",
+                "left": {
+                    "valueText": "Italy has 141,988 active cases",
+                    "sentenceIds": ["left-s-1-1"],
+                },
+                "right": {
+                    "valueText": "cases had been confirmed in all 50 provinces",
+                    "sentenceIds": ["right-s-1-1"],
+                },
+                "dataPriority": True,
+                "dataRole": "quantity",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_rejects_active_cases_paired_with_regional_cases():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "As of 17 March 2023, Italy has 141,988 active cases.",
+                    },
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "On 1 March, two doctors were infected, increasing the number of Andalusian cases to 12.",
+                    },
+                ],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Cases",
+                "comparisonQuestion": "How do cases compare?",
+                "left": {
+                    "valueText": "Italy has 141,988 active cases",
+                    "sentenceIds": ["left-s-1-1"],
+                },
+                "right": {
+                    "valueText": "increasing the number of Andalusian cases to 12",
+                    "sentenceIds": ["right-s-1-1"],
+                },
+                "dataPriority": True,
+                "dataRole": "quantity",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [],
+        [],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
+def test_build_paired_text_attributes_drops_generic_cases_when_infobox_has_case_rows():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [{"id": "left-s-1-1", "text": "The country reported 141,988 local cases."}],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [{"id": "right-s-1-1", "text": "The country reported 12 local cases."}],
+            }
+        ]
+    }
+    pair_response = {
+        "pairs": [
+            {
+                "dimensionLabel": "Cases",
+                "comparisonQuestion": "How do cases compare?",
+                "left": {"valueText": "141,988 local cases", "sentenceIds": ["left-s-1-1"]},
+                "right": {"valueText": "12 local cases", "sentenceIds": ["right-s-1-1"]},
+                "dataPriority": True,
+                "dataRole": "quantity",
+                "confidence": 0.9,
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_paired_text_attributes(
+        left_article,
+        right_article,
+        pair_response,
+        [{"key": "Confirmed cases", "source": "infobox"}],
+        [{"key": "Confirmed cases", "source": "infobox"}],
+    )
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
 def _paired_articles_with_paragraphs():
     left_article = {
         "paragraphs": [
@@ -1759,6 +2538,215 @@ def test_build_rule_paired_text_attributes_pairs_matching_quantity_cues():
     assert right_attrs[0]["dataRole"] == "quantity"
 
 
+def test_build_rule_paired_text_attributes_pairs_capacity_when_country_name_mentions_states():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Its PV capacity crossed 1,000 gigawatts in May 2025.",
+                    }
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": (
+                            "As of the end of 2024, the United States had 239 gigawatts "
+                            "of installed photovoltaic and concentrated solar power capacity combined."
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert [alignment["label"] for alignment in alignments] == ["Capacity"]
+    assert left_attrs[0]["source"] == "main_text"
+    assert right_attrs[0]["source"] == "main_text"
+    assert left_attrs[0]["dataPriority"] is True
+    assert right_attrs[0]["dataPriority"] is True
+    assert left_attrs[0]["sourceIds"] == ["left-s-1-1"]
+    assert right_attrs[0]["sourceIds"] == ["right-s-1-1"]
+
+
+def test_build_rule_paired_text_attributes_labels_sales_separately_from_revenue():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Sales in 2023 totaled 7.4 million units with a market share of 30.2%.",
+                    }
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "Sales totaled 1,402,371 units in 2023, with a market share of 9.1%.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert [alignment["label"] for alignment in alignments] == ["Annual sales", "Market share"]
+    assert left_attrs[0]["key"] == "Annual sales"
+    assert right_attrs[0]["key"] == "Annual sales"
+    assert left_attrs[1]["key"] == "Market share"
+    assert right_attrs[1]["key"] == "Market share"
+    assert left_attrs[0]["source"] == "main_text"
+    assert right_attrs[0]["source"] == "main_text"
+
+
+def test_build_rule_paired_text_attributes_prefers_annual_sales_over_cumulative_sales():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Sales in 2023 totaled 7.4 million units with a market share of 30.2%.",
+                    },
+                    {
+                        "id": "left-s-1-2",
+                        "text": (
+                            "As sales of new energy vehicles were slower than expected, in September 2013, "
+                            "the central government introduced a subsidy scheme providing a maximum of "
+                            "US$9,800 toward the purchase of an all-electric passenger vehicle and "
+                            "81,600 yuan for an electric bus."
+                        ),
+                    },
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "As of December 2023, cumulative sales totaled 4.7 million plug-in electric cars since 2010.",
+                    },
+                    {
+                        "id": "right-s-1-2",
+                        "text": "Sales totaled 1,402,371 units in 2023, with a market share of 9.1%.",
+                    },
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert [alignment["label"] for alignment in alignments] == ["Annual sales", "Market share"]
+    assert left_attrs[0]["sourceIds"] == ["left-s-1-1"]
+    assert right_attrs[0]["sourceIds"] == ["right-s-1-2"]
+    assert left_attrs[0]["dataRole"] == "quantity"
+    assert right_attrs[0]["dataRole"] == "quantity"
+
+
+def test_build_rule_paired_text_attributes_keeps_cumulative_sales_milestones_separate():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Cumulative sales achieved the 500,000 unit milestone in September 2016.",
+                    }
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "As of December 2023, cumulative sales totaled 4.7 million plug-in electric cars since 2010.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert [alignment["label"] for alignment in alignments] == ["Cumulative sales"]
+    assert left_attrs[0]["valueText"] == "cumulative sales in 2016 totaled 500,000 units"
+    assert right_attrs[0]["valueText"] == "cumulative sales in 2023 totaled 4.7 million units"
+
+
+def test_build_rule_paired_text_attributes_rejects_monetary_incentives_as_geographic_coverage():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": (
+                            "On June 1, 2010, the government announced a trial program to provide "
+                            "incentives for new energy vehicles of up to 60,000 yuan (~ US$9,281) "
+                            "for battery electric vehicles and 50,000 yuan (~ US$7,634) for "
+                            "plug-in hybrids in five cities."
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": (
+                            "and 37 states and had established incentives and tax or fee exemptions "
+                            "for BEVs and PHEVs, or utility-rate breaks, and other non-monetary incentives."
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
 def test_build_rule_paired_text_attributes_labels_and_deduplicates_quantity_cues():
     left_article = {
         "paragraphs": [
@@ -1817,6 +2805,41 @@ def test_build_rule_paired_text_attributes_does_not_pair_mismatched_quantity_cue
     assert alignments == []
 
 
+def test_build_rule_paired_text_attributes_does_not_pair_generic_share_only_claims():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Manufacturing industries accounted for 30 percent of GDP and 25 percent of the workforce.",
+                    }
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {
+                        "id": "right-s-1-1",
+                        "text": "The country's share of world nominal GDP was 17.8 percent.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    assert left_attrs == []
+    assert right_attrs == []
+    assert alignments == []
+
+
 def test_build_rule_paired_text_attributes_prefers_metric_role_over_context_year():
     left_article = {
         "paragraphs": [
@@ -1840,3 +2863,48 @@ def test_build_rule_paired_text_attributes_prefers_metric_role_over_context_year
     assert alignments[0]["label"] == "Users"
     assert left_attrs[0]["dataRole"] == "scale"
     assert right_attrs[0]["dataRole"] == "scale"
+
+
+def test_build_rule_paired_text_attributes_extracts_financial_prose_metrics():
+    left_article = {
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "Revenue was $76.4 billion and increased 18%."},
+                    {"id": "left-s-1-2", "text": "Operating income was $34.3 billion and increased 23%."},
+                    {"id": "left-s-1-3", "text": "Net income was $27.2 billion and increased 24%."},
+                    {"id": "left-s-1-4", "text": "Diluted earnings per share was $3.65 and increased 24%."},
+                    {"id": "left-s-1-5", "text": "Microsoft Cloud revenue was $46.7 billion, up 27%."},
+                ],
+            }
+        ]
+    }
+    right_article = {
+        "paragraphs": [
+            {
+                "id": "right-p-1",
+                "sentences": [
+                    {"id": "right-s-1-1", "text": "Revenue was $64.7 billion and increased 15%."},
+                    {"id": "right-s-1-2", "text": "Operating income was $27.9 billion and increased 15%."},
+                    {"id": "right-s-1-3", "text": "Net income was $22.0 billion and increased 10%."},
+                    {"id": "right-s-1-4", "text": "Diluted earnings per share was $2.95 and increased 10%."},
+                    {"id": "right-s-1-5", "text": "Microsoft Cloud revenue was $36.8 billion, up 21%."},
+                ],
+            }
+        ]
+    }
+
+    left_attrs, right_attrs, alignments = build_rule_paired_text_attributes(left_article, right_article, [], [])
+
+    labels = [alignment["label"] for alignment in alignments]
+    assert labels[:1] == ["Revenue"]
+    assert set(labels) >= {
+        "Revenue",
+        "Operating income",
+        "Net income",
+        "Diluted earnings per share",
+        "Microsoft Cloud revenue",
+    }
+    assert left_attrs[0]["valueText"] == "revenue was 76.4 billion"
+    assert right_attrs[0]["valueText"] == "revenue was 64.7 billion"

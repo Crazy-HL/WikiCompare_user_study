@@ -38,6 +38,9 @@ STOPWORDS = {
 def build_attribute_pool(article: dict[str, Any], side: str, llm_client: Any) -> list[dict[str, Any]]:
     pool = _infobox_attributes(article, side)
     text_index = 1
+    for attribute in _body_table_attributes(article.get("bodyTables", []), side, text_index):
+        pool.append(attribute)
+        text_index += 1
     if not pool:
         for attribute in _rule_text_attributes(article.get("paragraphs", []), side, text_index):
             pool.append(attribute)
@@ -103,6 +106,34 @@ def _rule_text_attributes(paragraphs: Any, side: str, start_index: int) -> list[
                 "sourceIds": [source_id],
                 "paragraphId": sentence.get("paragraphId"),
                 "confidence": 0.72,
+            }
+        )
+    return attributes
+
+
+def _body_table_attributes(body_tables: Any, side: str, start_index: int) -> list[dict[str, Any]]:
+    if not isinstance(body_tables, list):
+        return []
+    attributes = []
+    for row in body_tables:
+        if not isinstance(row, dict):
+            continue
+        source_id = _clean_text(row.get("id"))
+        key = _clean_text(row.get("key"))
+        value_text = _clean_text(row.get("valueText"))
+        if not source_id or not key or not value_text:
+            continue
+        attributes.append(
+            {
+                "id": f"{side}-attr-body-table-{start_index + len(attributes)}",
+                "side": side,
+                "key": key,
+                "valueText": value_text,
+                "source": "main_text",
+                "sourceIds": [source_id],
+                "section": row.get("section"),
+                "dataPriority": True,
+                "dataRole": "quantity",
             }
         )
     return attributes
@@ -181,14 +212,18 @@ def _text_attribute_timeout(llm_client: Any) -> float:
 def _infobox_attributes(article: dict[str, Any], side: str) -> list[dict[str, Any]]:
     attributes = []
     paragraphs = article.get("paragraphs", [])
+    parent_key = ""
     for row in article.get("infobox", []):
         if not isinstance(row, dict):
             continue
         source_id = _clean_text(row.get("id"))
-        key = _clean_text(row.get("key"))
+        raw_key = _clean_text(row.get("key"))
+        key = _infobox_display_key(raw_key, parent_key)
         value_text = _clean_text(row.get("valueText"))
         if not source_id or not key or not value_text:
             continue
+        if not _is_infobox_subrow_key(raw_key):
+            parent_key = raw_key
         index = len(attributes) + 1
         attribute = {
             "id": f"{side}-attr-infobox-{index}",
@@ -207,6 +242,19 @@ def _infobox_attributes(article: dict[str, Any], side: str) -> list[dict[str, An
             attribute["relatedSourceIds"] = related_source_ids
         attributes.append(attribute)
     return attributes
+
+
+def _infobox_display_key(key: str, parent_key: str) -> str:
+    if not _is_infobox_subrow_key(key) or not parent_key:
+        return key
+    child_key = re.sub(r"^[•\-\u2013\u2014]+\s*", "", key).strip()
+    if not child_key:
+        return key
+    return f"{parent_key}: {child_key}"
+
+
+def _is_infobox_subrow_key(key: str) -> bool:
+    return bool(re.match(r"^\s*[•\-\u2013\u2014]\s*", key or ""))
 
 
 def _text_attribute(

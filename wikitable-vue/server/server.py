@@ -1,10 +1,13 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
+from types import SimpleNamespace
 import tornado.ioloop
 import tornado.web
 import json
 import uuid
+import hashlib
+import html
 from openai import OpenAI
 from services.analysis import (
     fallback_answer,
@@ -17,9 +20,10 @@ from services.article_loader import fetch_article_html, parse_article_html
 from services.attribute_pool import build_attribute_pool
 from services.config import get_llm_config
 from services.llm_client import LLMClient
+from services.llm_client import prompt_article_body
 from services.models import CompareSession
 from services.outline_matcher import build_outline_matches
-from services.pipeline import align_attribute_pools, normalize_attribute_pair, rank_rows
+from services.pipeline import align_attribute_pools, normalize_attribute_pair, rank_rows, split_mixed_unit_metric_rows
 from services.session_store import SessionStore
 from services.text_attribute_pairs import (
     build_paired_text_attributes,
@@ -41,6 +45,7 @@ from tool.chart_formats import (
 )
 from tool.json_extractor import extract_json
 import re
+from urllib.parse import urlparse
 
 # 系统消息，用于为模型提供指导
 system_messages = [
@@ -53,7 +58,8 @@ SESSION_STORE = SessionStore()
 BLOCKING_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 ARTICLE_HTML_CACHE: dict[str, str] = {}
 ARTICLE_HTML_CACHE_LOCK = Lock()
-COMPARE_CACHE_VERSION = "compare-session-v1"
+COMPARE_CACHE_VERSION = "compare-session-v8"
+TEXT_EVIDENCE_CANDIDATE_LIMIT = 80
 
 def make_messages(input: str, n: int = 20) -> list:
     """
@@ -153,21 +159,25 @@ class CompareSessionHandler(ApiHandler):
 
         left_url = str(data.get("leftUrl") or "").strip()
         right_url = str(data.get("rightUrl") or "").strip()
-        if not left_url:
-            self.write_error_json(400, "leftUrl is required")
+        left_content = str(data.get("leftContent") or "").strip()
+        right_content = str(data.get("rightContent") or "").strip()
+        if not left_url and not left_content:
+            self.write_error_json(400, "leftUrl or leftContent is required")
             return
-        if not right_url:
-            self.write_error_json(400, "rightUrl is required")
+        if not right_url and not right_content:
+            self.write_error_json(400, "rightUrl or rightContent is required")
             return
 
         try:
-            left_wiki = parse_english_wikipedia_url(left_url)
-            right_wiki = parse_english_wikipedia_url(right_url)
+            left_wiki = _parse_compare_source(data, "left")
+            right_wiki = _parse_compare_source(data, "right")
         except WikiUrlError as error:
             self.write_error_json(400, str(error))
             return
 
         force_refresh = data.get("forceRefresh") is True
+        left_display_title = _display_title(data.get("leftTitle"))
+        right_display_title = _display_title(data.get("rightTitle"))
         pair_key = _pair_cache_key(left_wiki, right_wiki)
         if not force_refresh:
             cached_session = SESSION_STORE.get_by_pair_key(pair_key)
@@ -184,6 +194,8 @@ class CompareSessionHandler(ApiHandler):
             right_wiki,
             force_refresh,
             pair_key,
+            left_display_title,
+            right_display_title,
         )
         if status_code != 200:
             self.write_error_json(status_code, payload["error"])
@@ -191,7 +203,14 @@ class CompareSessionHandler(ApiHandler):
         self.write(json.dumps(payload, ensure_ascii=False))
 
 
-def _create_compare_session_payload(left_wiki, right_wiki, force_refresh=False, pair_key=None) -> tuple[int, dict]:
+def _create_compare_session_payload(
+    left_wiki,
+    right_wiki,
+    force_refresh=False,
+    pair_key=None,
+    left_display_title=None,
+    right_display_title=None,
+) -> tuple[int, dict]:
     warnings = []
     config = get_llm_config()
     llm_client = LLMClient(config) if config.enabled else None
@@ -202,19 +221,23 @@ def _create_compare_session_payload(left_wiki, right_wiki, force_refresh=False, 
         left_article = parse_article_html(
             _fetch_article_html_cached(left_wiki, force_refresh),
             side="left",
-            title=left_wiki.title,
+            title=left_display_title or left_wiki.title,
             url=left_wiki.display_url,
             revision=left_wiki.revision,
+            source_kind=getattr(left_wiki, "source_kind", "wikipedia") or "wikipedia",
         )
         right_article = parse_article_html(
             _fetch_article_html_cached(right_wiki, force_refresh),
             side="right",
-            title=right_wiki.title,
+            title=right_display_title or right_wiki.title,
             url=right_wiki.display_url,
             revision=right_wiki.revision,
+            source_kind=getattr(right_wiki, "source_kind", "wikipedia") or "wikipedia",
         )
     except Exception as error:
-        return 502, {"error": f"Failed to load Wikipedia articles: {error}"}
+        return 502, {"error": f"Failed to load source pages: {error}"}
+    _attach_manual_input_content(left_article, left_wiki)
+    _attach_manual_input_content(right_article, right_wiki)
 
     left_pool, right_pool = _build_attribute_pools(left_article, right_article, llm_client)
     paired_left_attrs, paired_right_attrs, paired_alignments = _build_paired_text_alignments(
@@ -235,8 +258,9 @@ def _create_compare_session_payload(left_wiki, right_wiki, force_refresh=False, 
         paired_alignments,
     )
     rows = [
-        _normalize_session_alignment(alignment)
+        row
         for alignment in aligned_attributes
+        for row in split_mixed_unit_metric_rows(_normalize_session_alignment(alignment))
     ]
     ranked_rows = rank_rows(rows)
 
@@ -269,6 +293,48 @@ def _create_compare_session_payload(left_wiki, right_wiki, force_refresh=False, 
     return 200, payload
 
 
+def _parse_compare_source_url(url: str):
+    try:
+        return parse_english_wikipedia_url(url)
+    except WikiUrlError:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise WikiUrlError("Only en.wikipedia.org or public http(s) URLs are supported")
+        normalized_url = parsed.geturl()
+        title = _generic_page_title(parsed)
+        return SimpleNamespace(
+            title=title,
+            normalized_url=normalized_url,
+            display_url=normalized_url,
+            revision=None,
+            source_kind="web",
+        )
+
+
+def _parse_compare_source(data: dict, side: str):
+    content = str(data.get(f"{side}Content") or "").strip()
+    title = _display_title(data.get(f"{side}Title")) or f"Manual {side} article"
+    if content:
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        manual_url = f"manual://{side}/{digest}"
+        return SimpleNamespace(
+            title=title,
+            normalized_url=manual_url,
+            display_url=manual_url,
+            revision=None,
+            source_kind="manual",
+            content=content,
+        )
+    return _parse_compare_source_url(str(data.get(f"{side}Url") or "").strip())
+
+
+def _display_title(value):
+    title = str(value or "").strip()
+    if not title:
+        return None
+    return title[:120]
+
+
 def _fetch_article_html_cached(wiki, force_refresh=False) -> str:
     cache_key = _article_cache_key(wiki)
     if not force_refresh:
@@ -277,10 +343,53 @@ def _fetch_article_html_cached(wiki, force_refresh=False) -> str:
         if cached_html is not None:
             return cached_html
 
-    html = fetch_article_html(wiki.title, wiki.revision)
+    if getattr(wiki, "source_kind", "") == "manual":
+        html = _manual_article_html(getattr(wiki, "content", ""), getattr(wiki, "title", "Manual article"))
+    elif getattr(wiki, "source_kind", "") == "web":
+        html = _fetch_generic_page_html(wiki.display_url)
+    else:
+        html = fetch_article_html(wiki.title, wiki.revision)
     with ARTICLE_HTML_CACHE_LOCK:
         ARTICLE_HTML_CACHE[cache_key] = html
     return html
+
+
+def _fetch_generic_page_html(url: str) -> str:
+    import requests
+
+    response = requests.get(url, headers={"User-Agent": "WikiCompare/0.1"}, timeout=20)
+    response.raise_for_status()
+    return response.text
+
+
+def _manual_article_html(content: str, title: str) -> str:
+    paragraphs = [
+        " ".join(block.split())
+        for block in re.split(r"\n\s*\n+", str(content or "").strip())
+        if " ".join(block.split())
+    ]
+    if not paragraphs and str(content or "").strip():
+        paragraphs = [" ".join(str(content).split())]
+    body = "\n".join(f"<p>{html.escape(paragraph)}</p>" for paragraph in paragraphs)
+    return (
+        "<html><body><main>"
+        f"<h1>{html.escape(str(title or 'Manual article'))}</h1>"
+        f"{body}"
+        "</main></body></html>"
+    )
+
+
+def _attach_manual_input_content(article: dict, source) -> None:
+    if getattr(source, "source_kind", "") != "manual":
+        return
+    article["inputContent"] = getattr(source, "content", "")
+
+
+def _generic_page_title(parsed) -> str:
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if path_parts:
+        return path_parts[-1].replace("-", " ").replace("_", " ").strip() or parsed.netloc
+    return parsed.netloc
 
 
 def _article_cache_key(wiki) -> str:
@@ -308,9 +417,19 @@ def _build_paired_text_alignments(left_article, right_article, left_pool, right_
     if llm_client is None or not hasattr(llm_client, "extract_text_attribute_pairs"):
         return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
 
-    left_candidates = build_text_evidence_candidates(left_article, "left")
-    right_candidates = build_text_evidence_candidates(right_article, "right")
-    if not left_candidates or not right_candidates:
+    left_candidates = build_text_evidence_candidates(
+        left_article,
+        "left",
+        limit=TEXT_EVIDENCE_CANDIDATE_LIMIT,
+    )
+    right_candidates = build_text_evidence_candidates(
+        right_article,
+        "right",
+        limit=TEXT_EVIDENCE_CANDIDATE_LIMIT,
+    )
+    left_body = prompt_article_body(left_article, "left")
+    right_body = prompt_article_body(right_article, "right")
+    if not left_body.get("paragraphs") or not right_body.get("paragraphs"):
         return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
 
     infobox_context = {
@@ -319,12 +438,21 @@ def _build_paired_text_alignments(left_article, right_article, left_pool, right_
     }
     try:
         pair_response = llm_client.extract_text_attribute_pairs(
+            left_body=left_body,
+            right_body=right_body,
+            infobox_context=infobox_context,
             left_candidates=left_candidates,
             right_candidates=right_candidates,
-            infobox_context=infobox_context,
         )
     except Exception:
         return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
+    pair_response = _review_text_pair_response(
+        llm_client,
+        left_body=left_body,
+        right_body=right_body,
+        infobox_context=infobox_context,
+        pair_response=pair_response,
+    )
 
     paired_result = build_paired_text_attributes(
         left_article,
@@ -332,10 +460,82 @@ def _build_paired_text_alignments(left_article, right_article, left_pool, right_
         pair_response,
         left_pool,
         right_pool,
+        require_extracted_values_for_visual=True,
     )
     if paired_result[2]:
         return paired_result
+    if hasattr(llm_client, "review_text_attribute_pairs"):
+        if _uses_manual_content(left_article, right_article):
+            return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
+        return paired_result
     return build_rule_paired_text_attributes(left_article, right_article, left_pool, right_pool)
+
+
+def _review_text_pair_response(llm_client, *, left_body, right_body, infobox_context, pair_response):
+    if not hasattr(llm_client, "review_text_attribute_pairs"):
+        return pair_response
+    try:
+        return llm_client.review_text_attribute_pairs(
+            left_body=left_body,
+            right_body=right_body,
+            infobox_context=infobox_context,
+            pair_response=pair_response,
+        )
+    except Exception:
+        return {"pairs": []}
+
+
+def _uses_manual_content(left_article, right_article) -> bool:
+    return any(
+        str(article.get("sourceKind") or "").lower() == "manual"
+        for article in (left_article, right_article)
+        if isinstance(article, dict)
+    )
+
+
+def _merge_paired_text_results(primary, fallback):
+    primary_left, primary_right, primary_alignments = primary
+    fallback_left, fallback_right, fallback_alignments = fallback
+    if not primary_alignments or not fallback_alignments:
+        return primary
+
+    left_attrs = list(primary_left)
+    right_attrs = list(primary_right)
+    alignments = list(primary_alignments)
+    seen = {
+        _text_alignment_key(alignment)
+        for alignment in alignments
+        if _text_alignment_key(alignment)
+    }
+    for fallback_alignment in fallback_alignments:
+        key = _text_alignment_key(fallback_alignment)
+        if not key or key in seen:
+            continue
+        index = len(left_attrs) + 1
+        left_attr = dict(fallback_alignment["left"])
+        right_attr = dict(fallback_alignment["right"])
+        left_attr["id"] = f"left-attr-paired-text-fallback-{index}"
+        right_attr["id"] = f"right-attr-paired-text-fallback-{index}"
+        left_attrs.append(left_attr)
+        right_attrs.append(right_attr)
+        alignments.append({"left": left_attr, "right": right_attr, "label": fallback_alignment["label"]})
+        seen.add(key)
+    return left_attrs, right_attrs, alignments
+
+
+def _text_alignment_key(alignment):
+    if not isinstance(alignment, dict):
+        return ""
+    label = str(alignment.get("label") or "").strip().lower()
+    left = alignment.get("left", {}) if isinstance(alignment.get("left"), dict) else {}
+    right = alignment.get("right", {}) if isinstance(alignment.get("right"), dict) else {}
+    return "|".join(
+        [
+            label,
+            str(left.get("valueText") or "").strip().lower(),
+            str(right.get("valueText") or "").strip().lower(),
+        ]
+    )
 
 
 def _pool_context(pool):
@@ -377,7 +577,19 @@ def _without_duplicate_alignments(alignments, paired_alignments):
         if (alignment.get("left", {}).get("id"), alignment.get("right", {}).get("id")) not in paired_pairs
         and alignment.get("left", {}).get("id") not in paired_left_ids
         and alignment.get("right", {}).get("id") not in paired_right_ids
+        and not (paired_alignments and _is_rule_text_alignment(alignment))
     ]
+
+
+def _is_rule_text_alignment(alignment):
+    left = alignment.get("left", {}) if isinstance(alignment, dict) else {}
+    right = alignment.get("right", {}) if isinstance(alignment, dict) else {}
+    return (
+        str(left.get("source") or "").lower() == "main_text"
+        and str(right.get("source") or "").lower() == "main_text"
+        and "-attr-rule-text-" in str(left.get("id") or "")
+        and "-attr-rule-text-" in str(right.get("id") or "")
+    )
 
 
 def _normalize_session_alignment(alignment):
@@ -464,6 +676,7 @@ class AskHandlerV2(ApiHandler):
 
         session_id = str(data.get("sessionId") or "").strip()
         question = str(data.get("question") or "").strip()
+        conversation_history = data.get("conversationHistory")
         if not session_id:
             self.write_error_json(400, "sessionId is required")
             return
@@ -480,7 +693,12 @@ class AskHandlerV2(ApiHandler):
         config = get_llm_config()
         if config.enabled:
             try:
-                result = llm_answer(LLMClient(config), session, question)
+                result = llm_answer(
+                    LLMClient(config),
+                    session,
+                    question,
+                    conversation_history=conversation_history,
+                )
             except Exception as error:
                 print(f"LLM question answering failed, using fallback: {error}")
         if result is None:

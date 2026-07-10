@@ -105,6 +105,65 @@ test("uses grouped bars for matching labeled categories", () => {
 	assert.strictEqual(merged.series[0].data[0].display, "22.5%");
 });
 
+test("keeps non-year categories in comparison order instead of alphabetical order", () => {
+	const row = {
+		label: "FDI stock",
+		dataType: "Numerical",
+		mergeVisualization: "bar-chart",
+		visualization: {
+			left: {
+				raw: "$230.6 billion (2017) Abroad: $344.7 billion (2017)",
+				values: [
+					{ value: 230600000000, label: "Inward", year: 2017 },
+					{ value: 344700000000, label: "Abroad", year: 2017 },
+				],
+			},
+			right: {
+				raw: "Inward: $25 billion (2021) Outward: $147 billion (2021)",
+				values: [
+					{ value: 25000000000, label: "Inward", year: 2021 },
+					{ value: 147000000000, label: "Outward", year: 2021 },
+				],
+			},
+		},
+	};
+
+	const merged = buildMergedComparison(row, titles);
+
+	assert.deepStrictEqual(merged.categories, ["Inward", "Abroad", "Outward"]);
+	assert.strictEqual(merged.series[0].data[2].value, null);
+	assert.strictEqual(merged.series[1].data[1].value, null);
+});
+
+test("preserves stacked source semantics for proportional comparisons", () => {
+	const row = {
+		label: "Export goods",
+		dataType: "Proportional",
+		mergeVisualization: "stacked-chart",
+		visualization: {
+			left: {
+				raw: "Machinery 12.8% Mineral fuels 7.0%",
+				values: [
+					{ value: 12.8, label: "Machinery" },
+					{ value: 7.0, label: "Mineral fuels" },
+				],
+			},
+			right: {
+				raw: "Machinery 19.9% Chemicals 12.4%",
+				values: [
+					{ value: 19.9, label: "Machinery" },
+					{ value: 12.4, label: "Chemicals" },
+				],
+			},
+		},
+	};
+
+	const merged = buildMergedComparison(row, titles);
+
+	assert.strictEqual(merged.mode, "stacked");
+	assert.deepStrictEqual(merged.categories, ["Machinery", "Mineral fuels", "Chemicals"]);
+});
+
 test("keeps single negative values readable on a symmetric axis", () => {
 	const row = {
 		label: "Budget balance",
@@ -125,6 +184,8 @@ test("keeps single negative values readable on a symmetric axis", () => {
 
 	assert.strictEqual(merged.mode, "single");
 	assert.deepStrictEqual(merged.categories, ["Budget balance"]);
+	assert.strictEqual(merged.unit, "%");
+	assert.strictEqual(merged.basis, "GDP");
 	assert.deepStrictEqual(merged.yDomain, [-6.82, 6.82]);
 	assert.strictEqual(merged.stats.deltaDisplay, "3.5%");
 	assert.strictEqual(merged.series[1].data[0].display, "-6.2% of GDP");
@@ -150,4 +211,97 @@ test("prefers currency axis for numerical money values with incidental GDP perce
 
 	assert.strictEqual(merged.unit, "USD");
 	assert.strictEqual(merged.stats.deltaDisplay, "4T");
+});
+
+test("does not format body-text sales counts as percentages when market share is present", () => {
+	const row = {
+		label: "Annual sales",
+		dataType: "Numerical",
+		visualization: {
+			left: {
+				raw: "Sales in 2023 totaled 7.4 million units with a market share of 30.2%.",
+				values: [{ value: 7400000, year: 2023, label: "sales" }],
+			},
+			right: {
+				raw: "Sales totaled 1,402,371 units in 2023, with a market share of 9.1%.",
+				values: [{ value: 1402371, year: 2023, label: "sales" }],
+			},
+		},
+	};
+
+	const merged = buildMergedComparison(row, titles);
+
+	assert.strictEqual(merged.unit, "");
+	assert.strictEqual(merged.series[0].data[0].display, "7.4 million");
+	assert.strictEqual(merged.series[1].data[0].display, "1,402,371");
+});
+
+test("sanitizes stale year-only display values for merged chart labels", () => {
+	const row = {
+		label: "Exports",
+		dataType: "Numerical",
+		mergeVisualization: "line-chart",
+		visualization: {
+			left: {
+				raw: "exports: $814.9 billion (2024 est.)",
+				values: [
+					{
+						value: 814900000000,
+						year: 2024,
+						label: "Exports 2024",
+						display: "Exports 2024 (2024): 2024",
+					},
+				],
+			},
+			right: {
+				raw: "exports: $268.6 billion (2024 est.)",
+				values: [
+					{
+						value: 268600000000,
+						year: 2024,
+						label: "Exports 2024",
+						display: "Exports 2024 (2024): 2024",
+					},
+				],
+			},
+		},
+	};
+
+	const merged = buildMergedComparison(row, titles);
+
+	assert.strictEqual(merged.series[0].data[0].display, "814.9B");
+	assert.strictEqual(merged.series[1].data[0].display, "268.6B");
+});
+
+test("excludes aggregate total from alcohol component comparison categories", () => {
+	const row = {
+		label: "Alcohol consumption per capita",
+		dataType: "Numerical",
+		visualization: {
+			left: {
+				raw: "total: 3.09 liters of pure alcohol beer: 0.23 liters of pure alcohol wine: 0 liters of pure alcohol spirits: 2.85 liters of pure alcohol",
+				values: [
+					{ value: 3.09, label: "total", rawText: "3.09 liters of pure alcohol" },
+					{ value: 0.23, label: "beer", rawText: "0.23 liters of pure alcohol" },
+					{ value: 0, label: "wine", rawText: "0 liters of pure alcohol" },
+					{ value: 2.85, label: "spirits", rawText: "2.85 liters of pure alcohol" },
+				],
+			},
+			right: {
+				raw: "total: 0.08 liters of pure alcohol beer: 0.06 liters of pure alcohol wine: 0.01 liters of pure alcohol spirits: 0.02 liters of pure alcohol",
+				values: [
+					{ value: 0.08, label: "total", rawText: "0.08 liters of pure alcohol" },
+					{ value: 0.06, label: "beer", rawText: "0.06 liters of pure alcohol" },
+					{ value: 0.01, label: "wine", rawText: "0.01 liters of pure alcohol" },
+					{ value: 0.02, label: "spirits", rawText: "0.02 liters of pure alcohol" },
+				],
+			},
+		},
+	};
+
+	const merged = buildMergedComparison(row, titles);
+
+	assert.deepStrictEqual(merged.categories, ["beer", "wine", "spirits"]);
+	assert.strictEqual(merged.unit, "liters of pure alcohol per capita");
+	assert.strictEqual(merged.mode, "bar");
 });

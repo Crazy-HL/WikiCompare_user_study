@@ -5,6 +5,7 @@
 <script setup>
 	import { ref, onMounted, watch } from "vue";
 	import * as echarts from "echarts";
+	const { formatAxisNumber } = require("@/js/chartValueDisplay");
 
 	const props = defineProps({
 		data: {
@@ -15,6 +16,7 @@
 
 	const chartEl = ref(null);
 	let chartInstance = null;
+	const AXIS_SPLIT_NUMBER = 4;
 
 	// 格式化数值显示
 	const formatNumber = value => {
@@ -26,6 +28,9 @@
 		if (!chartEl.value) return;
 
 		chartInstance = echarts.init(chartEl.value);
+		const values = props.data.map(item => Number(item.value)).filter(Number.isFinite);
+		const minValue = values.length ? Math.min(...values) : 0;
+		const maxValue = values.length ? Math.max(...values) : 100;
 
 		const option = {
 			tooltip: {
@@ -52,8 +57,16 @@
 			},
 			yAxis: {
 				type: "value",
+				min: minValue,
+				max: maxValue,
+				splitNumber: AXIS_SPLIT_NUMBER,
 				axisLabel: {
-					formatter: "{value}%"
+					formatter: value => formatAxisNumber(value, {
+						min: minValue,
+						max: maxValue,
+						splitNumber: AXIS_SPLIT_NUMBER,
+						type: "percentage"
+					})
 				}
 			},
 			series: [

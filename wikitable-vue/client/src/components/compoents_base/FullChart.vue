@@ -16,9 +16,18 @@
 	import * as echarts from "echarts";
 	const {
 		barChartDomain,
+		categoryLabelForPoint,
+		formatAxisNumber,
 		formatChartNumber,
+		shortValueText,
 		xLabelForPoint
 	} = require("@/js/chartValueDisplay");
+	const {
+		CHART_COLORS,
+		CHART_REMAINDER_COLOR,
+		CHART_LINE_WIDTH,
+		categoryColor
+	} = require("@/js/chartTheme");
 
 	const props = defineProps({
 		field: [Object, Array, String, Number],
@@ -29,18 +38,13 @@
 
 	const chartEl = ref(null);
 	let chart = null;
+	let renderScheduleToken = 0;
+	let renderFrameId = null;
+	let renderTimeoutId = null;
 
-	const COLORS = [
-		"#3867a8",
-		"#c94f45",
-		"#5f8f3f",
-		"#d9902f",
-		"#7d5fb2",
-		"#2f8c8f",
-		"#b05f6d",
-		"#6b7280"
-	];
-	const REMAINDER_COLOR = "#e7edf4";
+	const COLORS = CHART_COLORS;
+	const REMAINDER_COLOR = CHART_REMAINDER_COLOR;
+	const AXIS_SPLIT_NUMBER = 4;
 
 	const isYearEntry = value => {
 		if (typeof value !== "string") return false;
@@ -75,10 +79,7 @@
 	};
 
 	const shortValueDisplay = item => {
-		const display = String(item?.display || "").trim();
-		const colonIndex = display.lastIndexOf(":");
-		if (colonIndex >= 0) return display.slice(colonIndex + 1).trim();
-		return display || formatAxisValue(item?.value);
+		return shortValueText(item, axisType.value);
 	};
 
 	const normalizedData = computed(() => {
@@ -174,6 +175,48 @@
 		chart = null;
 	};
 
+	const clearScheduledRender = () => {
+		if (
+			renderFrameId !== null &&
+			typeof window !== "undefined" &&
+			typeof window.cancelAnimationFrame === "function"
+		) {
+			window.cancelAnimationFrame(renderFrameId);
+		}
+		if (renderTimeoutId !== null) {
+			clearTimeout(renderTimeoutId);
+		}
+		renderFrameId = null;
+		renderTimeoutId = null;
+	};
+
+	const cancelScheduledRender = () => {
+		renderScheduleToken += 1;
+		clearScheduledRender();
+	};
+
+	const scheduleRenderChart = () => {
+		const token = ++renderScheduleToken;
+		clearScheduledRender();
+		nextTick(() => {
+			if (token !== renderScheduleToken) return;
+			const render = () => {
+				if (token !== renderScheduleToken) return;
+				renderFrameId = null;
+				renderTimeoutId = null;
+				renderChart();
+			};
+			if (
+				typeof window !== "undefined" &&
+				typeof window.requestAnimationFrame === "function"
+			) {
+				renderFrameId = window.requestAnimationFrame(render);
+				return;
+			}
+			renderTimeoutId = setTimeout(render, 0);
+		});
+	};
+
 	const renderChart = () => {
 		if (isTextMode.value || !hasNumericData.value || !chartEl.value) {
 			disposeChart();
@@ -218,7 +261,10 @@
 			grid: baseGrid(data.length > 5 ? 76 : 48),
 			xAxis: {
 				type: "category",
-				data: data.map((item, index) => xLabelForPoint(item, index)),
+					data: data.map((item, index) => categoryLabelForPoint(item, index, {
+						fallback: props.fieldKey,
+						total: data.length
+					})),
 				axisTick: { alignWithLabel: true },
 				axisLine: { lineStyle: { color: "#cbd5e1" } },
 				axisLabel: {
@@ -234,9 +280,18 @@
 				type: "value",
 				min,
 				max,
+				splitNumber: AXIS_SPLIT_NUMBER,
+				name: axisUnitLabel.value,
+				nameLocation: "middle",
+				nameGap: 42,
+				nameTextStyle: {
+					color: "#475569",
+					fontSize: 11,
+					fontWeight: 600
+				},
 				axisLabel: {
 					color: "#475569",
-					formatter: value => formatAxisValue(value)
+					formatter: value => formatAxisValue(value, { min, max })
 				},
 				axisLine: { show: false },
 				splitLine: { lineStyle: { color: "#e5eaf1" } }
@@ -324,9 +379,18 @@
 				type: "value",
 				min,
 				max,
+				splitNumber: AXIS_SPLIT_NUMBER,
+				name: axisUnitLabel.value,
+				nameLocation: "middle",
+				nameGap: 42,
+				nameTextStyle: {
+					color: "#475569",
+					fontSize: 11,
+					fontWeight: 600
+				},
 				axisLabel: {
 					color: "#475569",
-					formatter: value => formatAxisValue(value)
+					formatter: value => formatAxisValue(value, { min, max })
 				},
 				axisLine: { show: false },
 				splitLine: { lineStyle: { color: "#e5eaf1" } }
@@ -342,7 +406,7 @@
 						display: item.display,
 						shortDisplay: shortValueDisplay(item)
 					})),
-					lineStyle: { width: 2.5 },
+					lineStyle: { width: CHART_LINE_WIDTH },
 					label: {
 						show: data.length <= 8,
 						position: "top",
@@ -457,7 +521,8 @@
 					trigger: "item",
 					formatter: params =>
 						`${params.marker}${params.seriesName}: ${
-							params.data?.display || formatAxisValue(params.data?.originalValue)
+							params.data?.display ||
+								formatChartNumber(params.data?.originalValue, axisType.value)
 						}`
 				},
 				legend: [
@@ -542,7 +607,7 @@
 							}
 						],
 						itemStyle: {
-							color: COLORS[index % COLORS.length],
+							color: categoryColor(item.label, index),
 							borderRadius:
 								index === 0
 									? [0, 0, 4, 4]
@@ -575,25 +640,48 @@
 		return [min - padding, max + padding];
 	};
 
-	const formatAxisValue = value => formatChartNumber(value, axisType.value);
+	const formatAxisValue = (value, domain = {}) =>
+		formatAxisNumber(value, {
+			min: domain.min,
+			max: domain.max,
+			splitNumber: AXIS_SPLIT_NUMBER,
+			type: axisType.value
+		});
 
 	const axisType = computed(() =>
 		isPercentageType.value ? "percentage" : String(props.type || "")
 	);
 
+	const axisUnitLabel = computed(() => {
+		if (axisType.value === "percentage") return "";
+		const source = [
+			props.fieldKey,
+			...normalizedData.value.flatMap(item => [item.raw, item.display, item.unit])
+		]
+			.filter(Boolean)
+			.join(" ");
+		if (/liters?\s+of\s+pure\s+alcohol/i.test(source)) {
+			return /per\s+capita/i.test(source)
+				? "liters of pure alcohol per capita"
+				: "liters of pure alcohol";
+		}
+		return "";
+	});
+
 	onMounted(() => {
-		nextTick(renderChart);
+		scheduleRenderChart();
 		window.addEventListener("resize", resize);
 	});
 
 	watch(
 		() => [props.field, props.type, props.visualization, props.fieldKey],
-		() => nextTick(renderChart),
+		() => scheduleRenderChart(),
 		{ deep: true }
 	);
 
 	onUnmounted(() => {
 		window.removeEventListener("resize", resize);
+		cancelScheduledRender();
 		disposeChart();
 	});
 </script>

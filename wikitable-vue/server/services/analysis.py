@@ -47,6 +47,29 @@ def fallback_attribute_summary(
 
 
 def fallback_answer(session: CompareSession, question: str) -> dict[str, Any]:
+    matched_sources = _question_matched_source_context(session.source_map, question)
+    if matched_sources:
+        snippets = [
+            f"{_side_label(item.get('side'))}: {item.get('text')}"
+            for item in matched_sources[:4]
+            if item.get("text")
+        ]
+        citations = _citation_dicts(
+            [
+                Citation(
+                    "cite-answer-matched-sources",
+                    "Question-matched article sources",
+                    "both",
+                    [item["id"] for item in matched_sources if item.get("id")],
+                )
+            ],
+            session.source_map,
+        )
+        return {
+            "answer": "Based on the article text, " + "; ".join(snippets),
+            "citations": citations,
+        }
+
     if not session.ranked_rows:
         return {
             "answer": "No aligned attributes are available for this session yet.",
@@ -132,36 +155,49 @@ def llm_answer(
     llm_client: Any,
     session: CompareSession,
     question: str,
+    conversation_history: Any = None,
 ) -> dict[str, Any]:
     ranked_rows = session.ranked_rows[:8]
-    source_ids = []
+    row_source_ids = []
     for row in ranked_rows:
         if isinstance(row, dict):
-            source_ids.extend(_row_source_ids(row))
+            row_source_ids.extend(_row_source_ids(row))
+    source_ids = _ordered_unique(row_source_ids + _article_source_ids(session.source_map))
+    previous_turns = _normalize_conversation_history(conversation_history)
 
-    result = llm_client.chat_json(
-        [
-            {
-                "role": "system",
-                "content": (
-                    "You are WikiCompare's Q&A assistant. Answer only from the supplied "
-                    "aligned attributes and source snippets. Return JSON only."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    "Answer the user's question briefly and cite the exact source IDs "
-                    "that support the answer. Return an object with keys: answer, "
-                    "citations. citations must be an array of objects with id, label, "
-                    "side, sourceIds. sourceIds must come only from sourceContext IDs.\n\n"
-                    f"question: {question}\n"
-                    f"alignedRows: {json.dumps([_compact_row(row) for row in ranked_rows if isinstance(row, dict)], ensure_ascii=False)}\n"
-                    f"sourceContext: {json.dumps(_source_context(session.source_map, source_ids), ensure_ascii=False)}"
-                ),
-            },
-        ]
-    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are WikiCompare's Q&A assistant. Answer the final user message using "
+                "only the supplied article source snippets and aligned attributes as factual "
+                "evidence. Use previous turns to resolve follow-up references such as 'that', "
+                "'the second point', or 'why', but never treat a previous assistant answer as "
+                "independent evidence; verify every factual claim against the supplied article "
+                "evidence. If that evidence does not answer the question, say so. Return JSON "
+                "only as an object with keys answer and citations. citations must be an array "
+                "of objects with id, label, side, sourceIds, and sourceIds must come only from "
+                "the supplied sourceContext IDs."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Authoritative evidence for the current comparison follows. The messages after "
+                "this evidence block are previous turns, followed by the current question.\n\n"
+                f"leftArticleTitle: {_source_title(session.articles, 'left')}\n"
+                f"rightArticleTitle: {_source_title(session.articles, 'right')}\n"
+                f"alignedRows: {json.dumps([_compact_row(row) for row in ranked_rows if isinstance(row, dict)], ensure_ascii=False)}\n"
+                f"sourceContext: {json.dumps(_source_context(session.source_map, source_ids), ensure_ascii=False)}"
+            ),
+        },
+        *previous_turns,
+        {
+            "role": "user",
+            "content": f"Current question: {question}",
+        },
+    ]
+    result = llm_client.chat_json(messages)
     if not isinstance(result, dict):
         raise ValueError("Expected LLM answer response to be a JSON object")
 
@@ -429,6 +465,127 @@ def _ensure_conclusion_prefix(summary: str) -> str:
     if re.match(r"^conclusion\s*:", text, re.IGNORECASE):
         return text
     return f"Conclusion: {text}"
+
+
+QUESTION_STOP_WORDS = {
+    "about",
+    "after",
+    "again",
+    "article",
+    "articles",
+    "between",
+    "compare",
+    "comparison",
+    "content",
+    "could",
+    "does",
+    "from",
+    "have",
+    "into",
+    "that",
+    "their",
+    "them",
+    "these",
+    "they",
+    "this",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "with",
+}
+
+
+def _question_matched_source_context(
+    source_map: dict[str, SourceRef | dict[str, Any]],
+    question: str,
+    limit: int = 4,
+) -> list[dict[str, Any]]:
+    tokens = _question_tokens(question)
+    if not tokens:
+        return []
+    matches = []
+    for source_id, source_ref in (source_map or {}).items():
+        item = source_ref if isinstance(source_ref, dict) else source_ref.to_dict()
+        source_type = item.get("sourceType") or item.get("source_type")
+        if source_type == "paragraph":
+            continue
+        text = str(item.get("text") or "")
+        text_tokens = set(_question_tokens(text))
+        score = len(tokens.intersection(text_tokens))
+        if score:
+            matches.append((score, source_id, item))
+    matches.sort(key=lambda entry: (-entry[0], str(entry[1])))
+    return [
+        {
+            "id": item.get("id") or source_id,
+            "side": item.get("side"),
+            "sourceType": item.get("sourceType") or item.get("source_type"),
+            "text": item.get("text"),
+        }
+        for _score, source_id, item in matches[:limit]
+    ]
+
+
+def _question_tokens(value: Any) -> set[str]:
+    tokens = set()
+    for token in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", str(value or "").lower()):
+        if token in QUESTION_STOP_WORDS:
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _article_source_ids(source_map: dict[str, SourceRef | dict[str, Any]]) -> list[str]:
+    preferred = []
+    fallback = []
+    for source_id, source_ref in (source_map or {}).items():
+        item = source_ref if isinstance(source_ref, dict) else source_ref.to_dict()
+        source_type = item.get("sourceType") or item.get("source_type")
+        if source_type == "paragraph":
+            fallback.append(source_id)
+        else:
+            preferred.append(source_id)
+    return preferred or fallback
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+MAX_CONVERSATION_TURNS = 12
+MAX_CONVERSATION_CONTENT_CHARS = 4000
+
+
+def _normalize_conversation_history(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+
+    messages = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        normalized_content = content.strip()[:MAX_CONVERSATION_CONTENT_CHARS]
+        if normalized_content:
+            messages.append({"role": role, "content": normalized_content})
+    return messages[-MAX_CONVERSATION_TURNS:]
+
+
+def _side_label(side: Any) -> str:
+    return "left" if side == "left" else "right" if side == "right" else "source"
 
 
 def _source_context(

@@ -1,31 +1,7 @@
 <template>
 	<div class="merged-comparison">
-		<div class="merged-summary">
-			<div
-				v-for="side in merged.series"
-				:key="side.side"
-				class="summary-item"
-				:class="side.side">
-				<span class="summary-label">{{ side.name }}</span>
-				<strong>{{ firstDisplay(side) }}</strong>
-			</div>
-			<div class="summary-item delta">
-				<span class="summary-label">Difference</span>
-				<strong>{{ merged.stats.deltaDisplay }}</strong>
-			</div>
-		</div>
-
-		<div ref="chartEl" class="merged-chart"></div>
-
-		<div class="raw-values">
-			<div
-				v-for="detail in merged.rawDetails"
-				:key="detail.label"
-				class="raw-row">
-				<span>{{ detail.label }}</span>
-				<p>{{ detail.value }}</p>
-			</div>
-		</div>
+		<div v-if="emptyMergedChart" class="merged-empty">无可合并图表数据</div>
+		<div v-else ref="chartEl" class="merged-chart"></div>
 	</div>
 </template>
 
@@ -33,7 +9,12 @@
 	import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 	import * as echarts from "echarts";
 	const { buildMergedComparison } = require("@/js/mergedComparisonData");
-	const { formatChartNumber } = require("@/js/chartValueDisplay");
+	const { formatAxisNumber } = require("@/js/chartValueDisplay");
+	const {
+		CHART_COLORS,
+		CHART_LINE_WIDTH,
+		categoryColor
+	} = require("@/js/chartTheme");
 
 	const props = defineProps({
 		row: {
@@ -48,17 +29,27 @@
 
 	const chartEl = ref(null);
 	let chart = null;
+	const AXIS_SPLIT_NUMBER = 4;
 
 	const merged = computed(() => buildMergedComparison(props.row, props.titles));
-
-	const firstDisplay = series => {
-		const point = series.data.find(item => item.display && item.display !== "-");
-		return point?.display || "-";
-	};
+	const emptyMergedChart = computed(() => {
+		const data = merged.value;
+		return (
+			data.mode === "text" ||
+			!data.series?.some(series =>
+				series.data?.some(point => Number.isFinite(Number(point.value)))
+			)
+		);
+	});
 
 	const resize = () => chart?.resize();
 
 	const renderChart = () => {
+		if (emptyMergedChart.value) {
+			chart?.dispose();
+			chart = null;
+			return;
+		}
 		if (!chartEl.value) return;
 		if (!chart) chart = echarts.init(chartEl.value);
 		chart.setOption(chartOption(merged.value), true);
@@ -67,39 +58,14 @@
 	const chartOption = data => {
 		const isLine = data.mode === "line";
 		const isSingle = data.mode === "single";
-		const colors = ["#3867a8", "#c94f45"];
-		const series = data.series.map((item, index) => ({
-			name: item.name,
-			type: isLine ? "line" : "bar",
-			smooth: false,
-			symbol: isLine ? "circle" : "none",
-			symbolSize: 8,
-			barMaxWidth: isSingle ? 42 : 28,
-			barGap: "14%",
-			data: item.data.map(point => ({
-				value: point.value,
-				display: point.display,
-				raw: point.raw
-			})),
-			label: {
-				show: true,
-				position: pointLabelPosition(data, item),
-				distance: 8,
-				color: "#243447",
-				fontSize: 11,
-				formatter: params => params.data?.display || "-"
-			},
-			lineStyle: {
-				width: 2.5
-			},
-			itemStyle: {
-				color: colors[index % colors.length],
-				borderRadius: isLine ? 0 : [4, 4, 0, 0]
-			}
-		}));
+		const isStacked = data.mode === "stacked";
+		const colors = [CHART_COLORS[0], CHART_COLORS[1]];
+		const series = isStacked ? stackedSeries(data) : standardSeries(data, colors, isLine, isSingle);
 
 		return {
-			color: colors,
+			color: isStacked
+				? data.categories.map((category, index) => categoryColor(category, index))
+				: colors,
 			tooltip: {
 				trigger: "axis",
 				axisPointer: { type: isLine ? "line" : "shadow" },
@@ -123,47 +89,107 @@
 				top: 48,
 				left: 56,
 				right: 28,
-				bottom: data.categories.length > 4 ? 70 : 42,
+				bottom: data.categories.length > 4 && !isStacked ? 70 : 42,
 				containLabel: true
 			},
 			xAxis: {
 				type: "category",
-				data: data.categories,
+				data: isStacked ? data.series.map(item => item.name) : data.categories,
 				axisTick: { alignWithLabel: true },
 				axisLabel: {
 					interval: 0,
-					rotate: data.categories.length > 4 ? 24 : 0,
+					rotate: data.categories.length > 4 && !isStacked ? 24 : 0,
 					color: "#475569",
-					fontSize: 11
+					fontSize: 11,
+					hideOverlap: true
 				},
 				axisLine: { lineStyle: { color: "#cbd5e1" } }
 			},
 			yAxis: {
 				type: "value",
-				min: data.yDomain[0],
-				max: data.yDomain[1],
+				min: isStacked ? 0 : data.yDomain[0],
+				max: isStacked ? 100 : data.yDomain[1],
+				splitNumber: AXIS_SPLIT_NUMBER,
+				name: axisMeasureLabel(data),
+				nameLocation: "middle",
+				nameGap: 42,
+				nameTextStyle: {
+					color: "#475569",
+					fontSize: 11,
+					fontWeight: 600
+				},
 				axisLabel: {
 					color: "#475569",
-					formatter: value => formatAxis(value, data.unit)
+					formatter: value => isStacked ? `${value}%` : formatAxis(value, data)
 				},
 				splitLine: { lineStyle: { color: "#e5eaf1" } },
 				axisLine: { show: false }
 			},
 			series,
-			dataZoom:
-				data.categories.length > 8
-					? [
-							{
-								type: "slider",
-								height: 18,
-								bottom: 12,
-								start: 0,
-								end: Math.min(100, (8 / data.categories.length) * 100)
-							}
-					  ]
-					: []
+			dataZoom: []
 		};
 	};
+
+	const standardSeries = (data, colors, isLine, isSingle) => data.series.map((item, index) => ({
+		name: item.name,
+		type: isLine ? "line" : "bar",
+		smooth: false,
+		symbol: isLine ? "circle" : "none",
+		symbolSize: 8,
+		barMaxWidth: isSingle ? 42 : 28,
+		barGap: "14%",
+		data: item.data.map(point => ({
+			value: point.value,
+			display: point.display,
+			raw: point.raw
+		})),
+		label: {
+			show: shouldShowPointLabels(data, isLine),
+			position: pointLabelPosition(data, item),
+			distance: 8,
+			color: "#243447",
+			fontSize: 11,
+			formatter: params => params.data?.display || "-"
+		},
+		lineStyle: { width: CHART_LINE_WIDTH },
+		itemStyle: {
+			color: colors[index % colors.length],
+			borderRadius: isLine ? 0 : [4, 4, 0, 0]
+		}
+	}));
+
+	const shouldShowPointLabels = (data, isLine) => {
+		if (!isLine) return true;
+		return (data.categories || []).length <= 16;
+	};
+
+	const stackedSeries = data => data.categories.map((category, categoryIndex) => ({
+		name: category,
+		type: "bar",
+		stack: "total",
+		barMaxWidth: 72,
+		data: data.series.map(side => {
+			const point = side.data[categoryIndex] || {};
+			const total = side.data.reduce((sum, item) => (
+				Number.isFinite(item.value) && item.value > 0 ? sum + item.value : sum
+			), 0);
+			const renderTotal = total > 101 ? total : 100;
+			const percent = renderTotal && Number.isFinite(point.value) && point.value > 0
+				? (point.value / renderTotal) * 100
+				: null;
+			return {
+				value: percent,
+				display: point.display,
+				raw: point.raw
+			};
+		}),
+		label: {
+			show: false
+		},
+		emphasis: {
+			focus: "series"
+		}
+	}));
 
 	const pointLabelPosition = (data, item) => {
 		if (data.mode !== "single") return "top";
@@ -171,13 +197,34 @@
 		return first?.value < 0 ? "bottom" : "top";
 	};
 
-	const formatAxis = (value, unit) => {
+	const formatAxis = (value, data) => {
 		const number = Number(value);
 		if (!Number.isFinite(number)) return String(value);
-		if (unit === "%" || unit === "% of GDP") {
-			return formatChartNumber(number, "percentage");
+		const unit = data?.unit;
+		const domain = data?.yDomain || [];
+		if (unit === "%") {
+			return formatAxisNumber(number, {
+				min: domain[0],
+				max: domain[1],
+				splitNumber: AXIS_SPLIT_NUMBER,
+				type: "percentage"
+			});
 		}
-		return formatChartNumber(number, "");
+		return formatAxisNumber(number, {
+			min: domain[0],
+			max: domain[1],
+			splitNumber: AXIS_SPLIT_NUMBER,
+			type: ""
+		});
+	};
+
+	const axisMeasureLabel = data => {
+		const unit = String(data?.unit || "").trim();
+		const basis = String(data?.basis || "").trim();
+		if (!unit) return "";
+		if (unit === "%" && basis) return `${basis} share (%)`;
+		if (unit === "%") return "";
+		return unit;
 	};
 
 	onMounted(() => {
@@ -200,99 +247,27 @@
 
 <style scoped>
 	.merged-comparison {
-		display: grid;
-		grid-template-rows: auto minmax(300px, 1fr) auto;
-		gap: 14px;
+		display: block;
 		height: 100%;
-		min-height: 520px;
+		min-height: 420px;
 		color: #1f2937;
-	}
-
-	.merged-summary {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 10px;
-	}
-
-	.summary-item {
-		min-width: 0;
-		border: 1px solid #dbe3ee;
-		border-left: 4px solid #94a3b8;
-		border-radius: 8px;
-		background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-		padding: 10px 12px;
-		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-	}
-
-	.summary-item.left {
-		border-left-color: #3867a8;
-	}
-
-	.summary-item.right {
-		border-left-color: #c94f45;
-	}
-
-	.summary-item.delta {
-		border-left-color: #64748b;
-	}
-
-	.summary-label {
-		display: block;
-		margin-bottom: 5px;
-		color: #64748b;
-		font-size: 11px;
-		font-weight: 650;
-	}
-
-	.summary-item strong {
-		display: block;
-		overflow-wrap: anywhere;
-		font-size: 15px;
-		line-height: 1.25;
 	}
 
 	.merged-chart {
 		width: 100%;
 		height: 100%;
-		min-height: 300px;
-		border: 1px solid #dbe3ee;
-		border-radius: 8px;
-		background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+		min-height: 420px;
+		background: #ffffff;
 	}
 
-	.raw-values {
+	.merged-empty {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 10px;
-	}
-
-	.raw-row {
+		min-height: 420px;
+		place-items: center;
+		color: #64748b;
+		font-size: 13px;
+		background: #ffffff;
 		border: 1px solid #dbe3ee;
 		border-radius: 8px;
-		background: #fbfdff;
-		padding: 9px 11px;
-	}
-
-	.raw-row span {
-		display: block;
-		margin-bottom: 4px;
-		color: #64748b;
-		font-size: 12px;
-		font-weight: 600;
-	}
-
-	.raw-row p {
-		margin: 0;
-		color: #1f2937;
-		font-size: 12px;
-		line-height: 1.4;
-		overflow-wrap: anywhere;
-	}
-
-	@media (max-width: 760px) {
-		.merged-summary,
-		.raw-values {
-			grid-template-columns: 1fr;
-		}
 	}
 </style>

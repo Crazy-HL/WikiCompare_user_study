@@ -14,6 +14,7 @@ window.d3 = d3
 
 import store from './store.js';
 window.store = store
+const { registerOfflineCache } = require("./js/offlineSupport.js");
 
 //引入 Font Awesome
 import { library } from '@fortawesome/fontawesome-svg-core';
@@ -27,3 +28,4 @@ const app = createApp(App)
 app.use(store)
 app.component('font-awesome-icon', FontAwesomeIcon);
 app.mount('#app')
+registerOfflineCache();

@@ -28,8 +28,24 @@ PAREN_YEAR_VALUE_RE = re.compile(
     rf"(?<![\w.])[$€£¥]?\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|{MAGNITUDE_PATTERN}))?\s*\(([^)]*\b((?:18|19|20|21)\d{{2}})\w*[^)]*)\)",
     re.IGNORECASE,
 )
+SIGNED_PAREN_YEAR_VALUE_RE = re.compile(
+    rf"(?<![\w.])([-+]?)\s*[$€£¥]?\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|{MAGNITUDE_PATTERN}))?\s*\(([^)]*\b((?:18|19|20|21)\d{{2}})\w*[^)]*)\)",
+    re.IGNORECASE,
+)
 PAREN_LABEL_VALUE_RE = re.compile(
     rf"(?<![\w.])[$€£¥]?\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:st|nd|rd|th)?(?:\s*(%|percent|{MAGNITUDE_PATTERN}))?\s*\(([^)]*)\)",
+    re.IGNORECASE,
+)
+COLON_METRIC_YEAR_VALUE_RE = re.compile(
+    rf"([A-Za-z][A-Za-z /&-]*(?:\s+per\s+\d+\s+[A-Za-z /&-]+)?):\s*([-+]?)\s*[$€£¥]?\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|{MAGNITUDE_PATTERN}))?\s*\([^)]*\b((?:18|19|20|21)\d{{2}})\w*[^)]*\)",
+    re.IGNORECASE,
+)
+CHAINED_COLON_VALUE_RE = re.compile(
+    rf"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9 /&-]{{0,60}}?):\s*[$€£¥]?\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|{MAGNITUDE_PATTERN}))?",
+    re.IGNORECASE,
+)
+AGE_RANGE_COLON_VALUE_RE = re.compile(
+    rf"(?<![\w.])((?:\d+\s*(?:to|-|–|—)\s*\d+\s*(?:years?|yrs?)|\d+\s*(?:years?|yrs?)\s+(?:(?:and|or)\s+)?(?:over|older|above)|(?:under|below)\s+\d+\s*(?:years?|yrs?)))\s*:\s*[$€£¥]?\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|{MAGNITUDE_PATTERN}))?",
     re.IGNORECASE,
 )
 INDEX_RATING_RANK_RE = re.compile(
@@ -59,6 +75,10 @@ COORDINATE_RE = re.compile(
 )
 YEAR_RE = re.compile(r"\b((?:18|19|20|21)\d{2})\b")
 YEAR_RANGE_RE = re.compile(r"\b(?:18|19|20|21)\d{2}\s*[-–—]\s*(?:18|19|20|21)\d{2}\b")
+DEMOGRAPHIC_AGE_RANGE_RE = re.compile(
+    r"\b(?:ages?|aged|women|men|female|male|people|persons|children)\s+\d+\s*(?:to|-|–|—)\s*\d+\b",
+    re.IGNORECASE,
+)
 MONTH_RE = re.compile(
     r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b",
     re.IGNORECASE,
@@ -83,6 +103,28 @@ TEMPORAL_METADATA_KEYS = {
     "introduced",
     "launched",
     "released",
+}
+TEXT_METADATA_KEYS = {
+    "administrative divisions",
+    "broadcast media",
+    "capital",
+    "citizenship",
+    "diplomatic representation in the us",
+    "disease",
+    "executive branch",
+    "geographic coordinates",
+    "headquarters",
+    "industry",
+    "judicial branch",
+    "military deployments",
+    "military and security forces",
+    "natural hazards",
+    "owner",
+    "pathogen",
+    "suffrage",
+    "traded as",
+    "updated",
+    "website",
 }
 TEMPORAL_METADATA_TERMS = {
     "aired",
@@ -119,6 +161,8 @@ def classify_value_rule(value_text: str | None) -> str:
         return "Text"
     if COORDINATE_RE.search(text):
         return "Geographical"
+    if _extract_colon_metric_year_value_series(text):
+        return "Numerical"
     if _has_trend_shape(text):
         return "Trend"
     if ("%" in text or re.search(r"\bpercent\b", lower)) and not _has_amount_with_secondary_gdp_share(text):
@@ -155,13 +199,38 @@ def extract_numeric_values(value_text: str | None) -> list[NumericValue]:
     if ordinal_context_values:
         return ordinal_context_values
 
+    age_range_values = _extract_age_range_labeled_value_series(text)
+    if age_range_values:
+        return age_range_values
+
+    chained_colon_values = _extract_chained_colon_labeled_value_series(text)
+    if chained_colon_values:
+        return chained_colon_values
+
     colon_labeled_values = _extract_colon_labeled_value_series(text)
     if colon_labeled_values:
         return colon_labeled_values
 
+    colon_metric_year_values = _extract_colon_metric_year_value_series(text)
+    if colon_metric_year_values:
+        return colon_metric_year_values
+
     labeled_percentage_values = _extract_labeled_percentage_series(text)
     if labeled_percentage_values:
         return labeled_percentage_values
+
+    named_numeric_values = (
+        _extract_ports_value_series(text)
+        or _extract_elevation_value_series(text)
+        or _extract_dash_labeled_value_series(text)
+        or _extract_leading_value_labeled_series(text)
+    )
+    if named_numeric_values:
+        return named_numeric_values
+
+    total_value = _extract_total_colon_value(text)
+    if total_value:
+        return total_value
 
     parenthetical_values = _extract_parenthetical_year_value_pairs(text)
     parenthetical_label_values = _extract_parenthetical_label_value_pairs(text)
@@ -169,10 +238,15 @@ def extract_numeric_values(value_text: str | None) -> list[NumericValue]:
 
     year_values = _extract_year_value_pairs(text)
     if year_values:
+        candidate_values = list(parenthetical_values) + list(parenthetical_label_values)
+        if candidate_values and len(candidate_values) > len(year_values):
+            return _apply_contextual_value_labels(_deduplicate_numeric_values(candidate_values), text)
         return year_values
 
     years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
-    age_range_spans = [match.span() for match in AGE_RANGE_RE.finditer(text)]
+    age_range_spans = [match.span() for match in AGE_RANGE_RE.finditer(text)] + [
+        match.span() for match in DEMOGRAPHIC_AGE_RANGE_RE.finditer(text)
+    ]
     values: list[NumericValue] = list(parenthetical_values) + list(parenthetical_label_values)
     number_matches = list(NUMBER_RE.finditer(text))
     has_non_year_number = any(
@@ -186,9 +260,17 @@ def extract_numeric_values(value_text: str | None) -> list[NumericValue]:
         is_year = _is_year_token(raw_number)
         unit = (match.group(2) or "").lower()
         next_match_start = number_matches[index + 1].start() if index + 1 < len(number_matches) else len(text)
+        if _is_embedded_number_token(text, match):
+            continue
+        if _is_rate_denominator_token(text, match):
+            continue
         if _is_inside_spans(match, parenthetical_spans):
             continue
         if _is_date_number(text, match):
+            continue
+        if _is_compact_year_suffix_token(text, match):
+            continue
+        if _is_age_context_number(text, match):
             continue
         if _is_inside_spans(match, age_range_spans):
             continue
@@ -245,16 +327,24 @@ def align_attribute_pools(
 ) -> list[dict[str, Any]]:
     alignments: list[dict[str, Any]] = []
     used_right_ids: set[Any] = set()
+    used_exact_keys: set[str] = set()
 
-    right_by_key = {
-        _alignment_key(attribute.get("key")): attribute
-        for attribute in right_pool
-        if _alignment_key(attribute.get("key"))
-    }
+    right_by_key: dict[str, list[dict[str, Any]]] = {}
+    for attribute in right_pool:
+        key = _alignment_key(attribute.get("key"))
+        if not key:
+            continue
+        right_by_key.setdefault(key, []).append(attribute)
     for left_attribute in left_pool:
         key = _alignment_key(left_attribute.get("key"))
-        right_attribute = right_by_key.get(key)
+        right_attribute = _best_exact_key_match(
+            left_attribute,
+            right_by_key.get(key) or [],
+            used_right_ids,
+        )
         if not key or right_attribute is None:
+            continue
+        if key in used_exact_keys or right_attribute.get("id") in used_right_ids:
             continue
         alignments.append(
             {
@@ -264,6 +354,8 @@ def align_attribute_pools(
             }
         )
         used_right_ids.add(right_attribute.get("id"))
+        if len(right_by_key.get(key) or []) <= 1:
+            used_exact_keys.add(key)
 
     for left_attribute in left_pool:
         if any(item["left"].get("id") == left_attribute.get("id") for item in alignments):
@@ -298,6 +390,34 @@ def align_attribute_pools(
     return alignments
 
 
+def _best_exact_key_match(
+    left_attribute: dict[str, Any],
+    right_candidates: list[dict[str, Any]],
+    used_right_ids: set[Any],
+) -> dict[str, Any] | None:
+    unused_candidates = [
+        candidate
+        for candidate in right_candidates
+        if candidate.get("id") not in used_right_ids
+    ]
+    if not unused_candidates:
+        return None
+    left_shape = _value_shape(left_attribute.get("valueText"))
+    for candidate in unused_candidates:
+        if _value_shape(candidate.get("valueText")) == left_shape:
+            return candidate
+    return unused_candidates[0]
+
+
+def _value_shape(value: Any) -> str:
+    text = str(value or "").lower()
+    if re.search(r"\bmale(?:\(s\))?\s*/\s*female\b|\bmale\s+to\s+female\b", text):
+        return "sex_ratio"
+    if "%" in text or re.search(r"\bpercent\b", text):
+        return "percentage"
+    return "other"
+
+
 def _semantic_alignment_group(key: Any):
     tokens = set(re.findall(r"[a-z0-9]+", str(key or "").lower()))
     if not tokens:
@@ -321,34 +441,48 @@ def normalize_attribute_pair(
     left_text = str(left_attr.get("valueText") or "")
     right_text = str(right_attr.get("valueText") or "")
     data_role = left_attr.get("dataRole") or right_attr.get("dataRole")
-    left_values = extract_numeric_values(left_text)
-    right_values = extract_numeric_values(right_text)
+    left_provided_values = _provided_numeric_values(left_attr)
+    right_provided_values = _provided_numeric_values(right_attr)
+    left_rule_values = extract_numeric_values(left_text)
+    right_rule_values = extract_numeric_values(right_text)
+    left_values = _recover_labeled_rule_values(left_provided_values, left_rule_values) if left_provided_values else left_rule_values
+    right_values = _recover_labeled_rule_values(right_provided_values, right_rule_values) if right_provided_values else right_rule_values
     left_type = classify_value_rule(left_text)
     right_type = classify_value_rule(right_text)
+    if left_provided_values:
+        left_type = _data_type_for_role(data_role, left_values, left_type)
+    if right_provided_values:
+        right_type = _data_type_for_role(data_role, right_values, right_type)
     row_label = str(label or left_attr.get("key") or right_attr.get("key") or "").strip()
     left_structured_candidates = _structured_values(left_attr) or _inferred_structured_values(left_attr)
     right_structured_candidates = _structured_values(right_attr) or _inferred_structured_values(right_attr)
-    left_values = _refine_values_with_model(
-        value_refiner,
-        key=str(left_attr.get("key") or row_label),
-        value_text=left_text,
-        rule_values=left_values,
-        data_type=left_type,
-    )
-    right_values = _refine_values_with_model(
-        value_refiner,
-        key=str(right_attr.get("key") or row_label),
-        value_text=right_text,
-        rule_values=right_values,
-        data_type=right_type,
-    )
-    left_gdp_share_values = _extract_gdp_share_values(left_text)
-    right_gdp_share_values = _extract_gdp_share_values(right_text)
+    if not left_provided_values:
+        left_values = _refine_values_with_model(
+            value_refiner,
+            key=str(left_attr.get("key") or row_label),
+            value_text=left_text,
+            rule_values=left_values,
+            data_type=left_type,
+        )
+    if not right_provided_values:
+        right_values = _refine_values_with_model(
+            value_refiner,
+            key=str(right_attr.get("key") or row_label),
+            value_text=right_text,
+            rule_values=right_values,
+            data_type=right_type,
+        )
+    left_gdp_share_values = _extract_gdp_share_values(left_text) or _extract_contextual_gdp_share_year_values(left_text)
+    right_gdp_share_values = _extract_gdp_share_values(right_text) or _extract_contextual_gdp_share_year_values(right_text)
     if left_gdp_share_values and right_gdp_share_values:
         left_values = left_gdp_share_values
         right_values = right_gdp_share_values
-        left_type = "Proportional"
-        right_type = "Proportional"
+        if _is_year_series(left_values) or _is_year_series(right_values):
+            left_type = "Trend"
+            right_type = "Trend"
+        else:
+            left_type = "Proportional"
+            right_type = "Proportional"
     use_structured_values = _should_use_structured_values(
         left_values,
         right_values,
@@ -360,13 +494,20 @@ def normalize_attribute_pair(
     if use_structured_values:
         left_type = "Categorical"
         right_type = "Categorical"
-    if _is_temporal_metadata_role(data_role) or _is_temporal_metadata_attribute(row_label, left_attr, right_attr) or (
+    if (
+        _is_temporal_metadata_role(data_role)
+        or _is_temporal_metadata_attribute(row_label, left_attr, right_attr)
+        or _is_text_metadata_attribute(row_label, left_attr, right_attr)
+        or _is_incomplete_main_text_data_pair(left_attr, right_attr, data_role, left_values, right_values)
+        or _has_incompatible_single_point_main_text_years(left_attr, right_attr, data_role, left_values, right_values)
+        or (
         _is_generic_main_text_pair(left_attr, right_attr, data_role)
         and not _has_explicit_main_text_visual_signal(
             left_type,
             right_type,
             left_values,
             right_values,
+        )
         )
     ):
         left_values = []
@@ -387,7 +528,19 @@ def normalize_attribute_pair(
     )
     point_count = _point_count(data_type, left_values, right_values, left_structured_values, right_structured_values)
 
-    chart_type = "text" if (left_structured_values or right_structured_values) else choose_chart_type(data_type, point_count)
+    chart_type = (
+        "text"
+        if (left_structured_values or right_structured_values)
+        else _chart_type_for_values(
+            data_type,
+            point_count,
+            left_values,
+            right_values,
+            row_label=row_label,
+            left_text=left_text,
+            right_text=right_text,
+        )
+    )
 
     row = {
         "id": _row_id(left_attr.get("id"), right_attr.get("id"), row_label),
@@ -451,6 +604,64 @@ def _refine_values_with_model(
     return _validated_refined_values(refined) or rule_values
 
 
+def _provided_numeric_values(attr: dict[str, Any]) -> list[NumericValue]:
+    raw_values = attr.get("extractedValues")
+    if not isinstance(raw_values, list):
+        return []
+    return _validated_refined_values(raw_values)
+
+
+def _recover_labeled_rule_values(
+    provided_values: list[NumericValue],
+    rule_values: list[NumericValue],
+) -> list[NumericValue]:
+    if not provided_values or not rule_values:
+        return provided_values
+    provided_label_count = sum(1 for value in provided_values if value.get("label"))
+    rule_label_count = sum(1 for value in rule_values if value.get("label"))
+    if provided_label_count >= 2 or rule_label_count < 2:
+        return provided_values
+    if not _rule_values_cover_provided_numbers(provided_values, rule_values):
+        return provided_values
+    return rule_values
+
+
+def _rule_values_cover_provided_numbers(
+    provided_values: list[NumericValue],
+    rule_values: list[NumericValue],
+) -> bool:
+    remaining = [float(value["value"]) for value in rule_values if "value" in value]
+    for provided in provided_values:
+        if "value" not in provided:
+            continue
+        provided_number = float(provided["value"])
+        match_index = next(
+            (
+                index
+                for index, rule_number in enumerate(remaining)
+                if math.isclose(provided_number, rule_number, rel_tol=1e-9, abs_tol=1e-9)
+            ),
+            None,
+        )
+        if match_index is None:
+            return False
+        remaining.pop(match_index)
+    return True
+
+
+def _data_type_for_role(data_role: Any, values: list[NumericValue], fallback: str) -> str:
+    role = str(data_role or "").strip().lower()
+    if len(values) >= 2 and any("year" in value for value in values):
+        return "Trend"
+    if role == "proportion":
+        return "Proportional"
+    if role == "ranking":
+        return "Ordinal"
+    if role in {"quantity", "scale"}:
+        return "Numerical"
+    return fallback
+
+
 def _validated_refined_values(refined: Any) -> list[NumericValue]:
     if not isinstance(refined, list) or not refined:
         return []
@@ -469,6 +680,14 @@ def _validated_refined_values(refined: Any) -> list[NumericValue]:
             label = str(item["label"]).strip()
             if label:
                 clean_item["label"] = label
+        if item.get("unit") not in (None, ""):
+            unit = str(item["unit"]).strip()
+            if unit:
+                clean_item["unit"] = unit
+        if item.get("valueKind") not in (None, ""):
+            value_kind = str(item["valueKind"]).strip()
+            if value_kind in {"aggregate", "component", "rate", "share", "point"}:
+                clean_item["valueKind"] = value_kind
         if item.get("year") not in (None, ""):
             try:
                 clean_item["year"] = int(item["year"])
@@ -489,34 +708,416 @@ def _validated_refined_values(refined: Any) -> list[NumericValue]:
 
 
 def rank_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    disambiguated_rows = _disambiguate_duplicate_metric_row_labels(rows)
     indexed_rows = [
         (index, _row_with_rank_score(row))
-        for index, row in enumerate(rows)
+        for index, row in enumerate(disambiguated_rows)
+        if not _is_demoted_main_text_visual_data_row(row)
+        and not _is_temporal_metadata_text_row(row)
     ]
-    return [
+    ranked_rows = [
         row
         for _, row in sorted(
             indexed_rows,
-            key=lambda item: (
-                _visual_rank_bucket(item[1]),
-                -_weighted_score(item[1]),
-                str(item[1].get("label") or item[1].get("id") or ""),
-                item[0],
-            ),
+            key=lambda item: _row_sort_key(item[0], item[1]),
         )
     ]
+    return _deduplicate_ranked_rows(ranked_rows)
+
+
+def _disambiguate_duplicate_metric_row_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    label_counts: dict[str, int] = {}
+    for row in rows:
+        label_key = _normalized_label(row.get("label"))
+        if label_key:
+            label_counts[label_key] = label_counts.get(label_key, 0) + 1
+
+    disambiguated: list[dict[str, Any]] = []
+    for row in rows:
+        label = str(row.get("label") or "").strip()
+        label_key = _normalized_label(label)
+        if not label_key or label_counts.get(label_key, 0) <= 1:
+            disambiguated.append(row)
+            continue
+
+        suffix = _metric_row_semantic_suffix(row, label)
+        if not suffix or _normalized_label(label).endswith(f": {_normalized_label(suffix)}"):
+            disambiguated.append(row)
+            continue
+
+        updated = dict(row)
+        updated_label = f"{label}: {suffix}"
+        updated["label"] = updated_label
+        updated["id"] = _row_id(
+            row.get("leftAttributeId") or row.get("leftId"),
+            row.get("rightAttributeId") or row.get("rightId"),
+            updated_label,
+        )
+        disambiguated.append(updated)
+
+    return disambiguated
+
+
+def _metric_row_semantic_suffix(row: dict[str, Any], base_label: str) -> str:
+    labels = _shared_value_labels_for_row(row)
+    if not labels:
+        return ""
+    total_labels = [label for label in labels if _is_total_metric_label(label, base_label)]
+    component_labels = [label for label in labels if not _is_total_metric_label(label, base_label)]
+    if total_labels and not component_labels:
+        return total_labels[0]
+    if len(component_labels) >= 2 and not total_labels:
+        return _component_metric_label(base_label)
+    if len(component_labels) == 1 and not total_labels:
+        return component_labels[0]
+    return ""
+
+
+def _shared_value_labels_for_row(row: dict[str, Any]) -> list[str]:
+    visualization = row.get("visualization") if isinstance(row.get("visualization"), dict) else {}
+    left_side = visualization.get("left") if isinstance(visualization.get("left"), dict) else {}
+    right_side = visualization.get("right") if isinstance(visualization.get("right"), dict) else {}
+    left_values = left_side.get("values") if isinstance(left_side.get("values"), list) else []
+    right_values = right_side.get("values") if isinstance(right_side.get("values"), list) else []
+    return _ordered_shared_metric_labels(left_values, right_values)
+
+
+def split_mixed_unit_metric_rows(row: dict[str, Any]) -> list[dict[str, Any]]:
+    visualization = row.get("visualization") if isinstance(row.get("visualization"), dict) else {}
+    left_side = visualization.get("left") if isinstance(visualization.get("left"), dict) else {}
+    right_side = visualization.get("right") if isinstance(visualization.get("right"), dict) else {}
+    left_values = left_side.get("values") if isinstance(left_side.get("values"), list) else []
+    right_values = right_side.get("values") if isinstance(right_side.get("values"), list) else []
+    shared_labels = _ordered_shared_metric_labels(left_values, right_values)
+    if row.get("dataType") == "Trend" and _is_single_shared_metric_year_series(
+        left_values,
+        right_values,
+        shared_labels,
+    ):
+        return [row]
+    aggregate_component_rows = _split_aggregate_component_metric_rows(row, left_side, right_side, shared_labels)
+    if aggregate_component_rows:
+        return aggregate_component_rows
+    shared_label_row = _row_for_shared_metric_labels(row, left_side, right_side, shared_labels)
+    if shared_label_row is not None:
+        return [shared_label_row]
+    if not _should_split_mixed_unit_metric_labels(shared_labels):
+        return [row]
+
+    split_rows: list[dict[str, Any]] = []
+    base_label = str(row.get("label") or "").strip()
+    for label in shared_labels:
+        left_value = _first_value_for_label(left_values, label)
+        right_value = _first_value_for_label(right_values, label)
+        if left_value is None or right_value is None:
+            continue
+        split_label = f"{base_label}: {label}" if base_label else label
+        split_row = dict(row)
+        split_row["id"] = _row_id(
+            row.get("leftAttributeId"),
+            row.get("rightAttributeId"),
+            split_label,
+        )
+        split_row["label"] = split_label
+        split_data_type = "Proportional" if _is_relative_metric_label(label) else "Numerical"
+        split_row["dataType"] = split_data_type
+        split_row["chartType"] = _chart_type_for_values(
+            split_data_type,
+            2,
+            [left_value],
+            [right_value],
+            row_label=split_label,
+        )
+        split_row["score"] = _score_pair(split_data_type, [left_value], [right_value])
+        split_row["comparisonQuality"] = "direct"
+        split_row["visualization"] = {
+            "left": _visual_side_with_single_value(left_side, left_value),
+            "right": _visual_side_with_single_value(right_side, right_value),
+        }
+        split_rows.append(split_row)
+    return split_rows or [row]
+
+
+def _row_for_shared_metric_labels(
+    row: dict[str, Any],
+    left_side: dict[str, Any],
+    right_side: dict[str, Any],
+    shared_labels: list[str],
+) -> dict[str, Any] | None:
+    if not shared_labels:
+        return None
+    left_values = left_side.get("values") or []
+    right_values = right_side.get("values") or []
+    if max(len(left_values), len(right_values)) <= len(shared_labels):
+        if len(shared_labels) == 1 and _is_total_metric_label(shared_labels[0]):
+            base_label = str(row.get("label") or "").strip()
+            return _row_with_values(
+                row,
+                f"{base_label}: {shared_labels[0]}" if base_label else shared_labels[0],
+                "Numerical",
+                choose_chart_type("Numerical", 2),
+                _values_for_labels(left_values, shared_labels),
+                _values_for_labels(right_values, shared_labels),
+                left_side,
+                right_side,
+            )
+        return None
+    if row.get("dataType") == "Proportional":
+        return None
+    left_shared = _values_for_labels(left_values, shared_labels)
+    right_shared = _values_for_labels(right_values, shared_labels)
+    if not left_shared or not right_shared:
+        return None
+    label = str(row.get("label") or "").strip()
+    if len(shared_labels) == 1 and _is_total_metric_label(shared_labels[0]):
+        label = f"{label}: {shared_labels[0]}" if label else shared_labels[0]
+    return _row_with_values(
+        row,
+        label,
+        row.get("dataType") or "Numerical",
+        row.get("chartType") or choose_chart_type("Numerical", len(left_shared) + len(right_shared)),
+        left_shared,
+        right_shared,
+        left_side,
+        right_side,
+    )
+
+
+def _split_aggregate_component_metric_rows(
+    row: dict[str, Any],
+    left_side: dict[str, Any],
+    right_side: dict[str, Any],
+    shared_labels: list[str],
+) -> list[dict[str, Any]]:
+    base_label = str(row.get("label") or "").strip()
+    if not _should_split_aggregate_component_labels(shared_labels, base_label):
+        return []
+
+    total_label = next((label for label in shared_labels if _is_total_metric_label(label, base_label)), "")
+    component_labels = [label for label in shared_labels if not _is_total_metric_label(label, base_label)]
+    if not total_label or len(component_labels) < 2:
+        return []
+
+    total_left = _first_value_for_label(left_side.get("values") or [], total_label)
+    total_right = _first_value_for_label(right_side.get("values") or [], total_label)
+    if total_left is None or total_right is None:
+        return []
+
+    component_left = _values_for_labels(left_side.get("values") or [], component_labels)
+    component_right = _values_for_labels(right_side.get("values") or [], component_labels)
+    if len(component_left) < 2 or len(component_right) < 2:
+        return []
+
+    total_row = _row_with_values(
+        row,
+        f"{base_label}: {total_label}" if base_label else total_label,
+        "Numerical",
+        choose_chart_type("Numerical", 2),
+        [total_left],
+        [total_right],
+        left_side,
+        right_side,
+    )
+    component_label = _component_metric_label(base_label)
+    component_row = _row_with_values(
+        row,
+        f"{base_label}: {component_label}" if base_label else component_label,
+        "Numerical",
+        "bar",
+        component_left,
+        component_right,
+        left_side,
+        right_side,
+    )
+    return [total_row, component_row]
+
+
+def _row_with_values(
+    row: dict[str, Any],
+    label: str,
+    data_type: str,
+    chart_type: str,
+    left_values: list[dict[str, Any]],
+    right_values: list[dict[str, Any]],
+    left_side: dict[str, Any],
+    right_side: dict[str, Any],
+) -> dict[str, Any]:
+    split_row = dict(row)
+    split_row["id"] = _row_id(
+        row.get("leftAttributeId"),
+        row.get("rightAttributeId"),
+        label,
+    )
+    split_row["label"] = label
+    split_row["dataType"] = data_type
+    split_row["chartType"] = chart_type
+    split_row["score"] = _score_pair(data_type, left_values, right_values)
+    split_row["comparisonQuality"] = "shared_labels" if max(len(left_values), len(right_values)) > 1 else "direct"
+    split_row["visualization"] = {
+        "left": _visual_side_with_values(left_side, left_values),
+        "right": _visual_side_with_values(right_side, right_values),
+    }
+    return split_row
+
+
+def _should_split_aggregate_component_labels(labels: list[str], base_label: str = "") -> bool:
+    if len(labels) < 3:
+        return False
+    has_total = any(_is_total_metric_label(label, base_label) for label in labels)
+    component_count = sum(1 for label in labels if not _is_total_metric_label(label, base_label))
+    return has_total and component_count >= 2
+
+
+def _is_total_metric_label(label: Any, base_label: str = "") -> bool:
+    normalized = _normalized_label(label)
+    if normalized in {"total", "overall", "all"}:
+        return True
+    base_normalized = _normalized_label(base_label)
+    return bool(base_normalized and normalized == base_normalized)
+
+
+def _values_for_labels(values: list[dict[str, Any]], labels: list[str]) -> list[dict[str, Any]]:
+    result = []
+    for label in labels:
+        value = _first_value_for_label(values, label)
+        if value is not None:
+            result.append(value)
+    return result
+
+
+def _component_metric_label(base_label: str) -> str:
+    if re.search(r"\balcohol\b", base_label, re.IGNORECASE):
+        return "beverage categories"
+    return "component categories"
+
+
+def _ordered_shared_metric_labels(
+    left_values: list[dict[str, Any]],
+    right_values: list[dict[str, Any]],
+) -> list[str]:
+    right_labels = {
+        _normalized_label(value.get("label"))
+        for value in right_values
+        if value.get("label")
+    }
+    labels: list[str] = []
+    seen: set[str] = set()
+    for value in left_values:
+        label = str(value.get("label") or "").strip()
+        normalized = _normalized_label(label)
+        if not label or normalized not in right_labels or normalized in seen:
+            continue
+        seen.add(normalized)
+        labels.append(label)
+    return labels
+
+
+def _is_single_shared_metric_year_series(
+    left_values: list[dict[str, Any]],
+    right_values: list[dict[str, Any]],
+    shared_labels: list[str],
+) -> bool:
+    if len(shared_labels) != 1:
+        return False
+    shared_label = _normalized_label(shared_labels[0])
+    return all(
+        _is_year_series(values)
+        and all(_normalized_label(value.get("label")) == shared_label for value in values)
+        for values in (left_values, right_values)
+    )
+
+
+def _should_split_mixed_unit_metric_labels(labels: list[str]) -> bool:
+    if len(labels) < 2:
+        return False
+    has_relative_label = any(_is_relative_metric_label(label) for label in labels)
+    has_absolute_label = any(not _is_relative_metric_label(label) for label in labels)
+    return has_relative_label and has_absolute_label
+
+
+def _is_rate_metric_label(label: Any) -> bool:
+    return bool(
+        re.search(
+            r"\bper\s+(?:\d+|capita|person|people|inhabitants?|population)\b",
+            str(label or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_relative_metric_label(label: Any) -> bool:
+    text = str(label or "").strip().lower()
+    if _is_rate_metric_label(text):
+        return True
+    return bool(re.search(r"\b(?:percent|percentage|share|rate)\b|%", text))
+
+
+def _first_value_for_label(
+    values: list[dict[str, Any]],
+    label: str,
+) -> dict[str, Any] | None:
+    normalized = _normalized_label(label)
+    for value in values:
+        if _normalized_label(value.get("label")) == normalized:
+            return dict(value)
+    return None
+
+
+def _visual_side_with_single_value(
+    side: dict[str, Any],
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    return _visual_side_with_values(side, [value])
+
+
+def _visual_side_with_values(
+    side: dict[str, Any],
+    values: list[dict[str, Any]],
+) -> dict[str, Any]:
+    split_side = dict(side)
+    split_side["values"] = [dict(value) for value in values]
+    return split_side
+
+
+def _row_sort_key(index: int, row: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        _visual_rank_bucket(row),
+        -_weighted_score(row),
+        str(row.get("label") or row.get("id") or ""),
+        index,
+    )
+
+
+def _deduplicate_ranked_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduplicated = []
+    seen_labels = set()
+    for row in rows:
+        label_key = _normalized_label(row.get("label"))
+        if label_key and label_key in seen_labels:
+            continue
+        if label_key:
+            seen_labels.add(label_key)
+        deduplicated.append(row)
+    return deduplicated
 
 
 def _extract_labeled_percentage_series(text: str) -> list[NumericValue]:
-    matches = [match for match in NUMBER_RE.finditer(text) if (match.group(2) or "").lower() in {"%", "percent"}]
+    matches = [
+        match
+        for match in NUMBER_RE.finditer(text)
+        if (match.group(2) or "").lower() in {"%", "percent"}
+        and not re.match(r"\s*:", text[match.end():])
+        and not _is_percentage_bucket_context_number(text, match)
+    ]
     if len(matches) < 2:
         return []
 
-    years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
     values: list[NumericValue] = []
     previous_end = 0
-    for match in matches:
-        label = _clean_series_label(text[previous_end:match.start()])
+    all_years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
+    for index, match in enumerate(matches):
+        next_match_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        label = _percentage_series_label(text, previous_end, match.start())
         previous_end = match.end()
         if not label:
             return []
@@ -524,10 +1125,151 @@ def _extract_labeled_percentage_series(text: str) -> list[NumericValue]:
         if number is None:
             return []
         item: NumericValue = {"value": number, "label": label}
+        year_match = YEAR_RE.search(text[match.end():next_match_start])
+        if year_match:
+            item["year"] = int(year_match.group(1))
+        elif len(all_years) == 1:
+            item["year"] = all_years[0]
+        values.append(item)
+    return values
+
+
+def _is_percentage_bucket_context_number(text: str, match: re.Match) -> bool:
+    number = _parse_number(match.group(1))
+    if number is None:
+        return False
+    prefix = text[max(0, match.start() - 32):match.start()]
+    suffix = text[match.end():match.end() + 24]
+    if number == 10 and re.search(r"\b(?:lowest|highest)\s*$", prefix, re.IGNORECASE):
+        return True
+    if number == 10 and re.match(r"\s+of\s+population\b", suffix, re.IGNORECASE):
+        return True
+    return False
+
+
+def _percentage_series_label(text: str, previous_end: int, match_start: int) -> str | None:
+    prefix = text[max(0, previous_end):match_start]
+    colon_label_match = re.search(r"([A-Za-z][A-Za-z0-9 /&%-]{0,54}):\s*$", prefix)
+    if colon_label_match:
+        return _clean_series_label(colon_label_match.group(1))
+
+    boundary = max(
+        prefix.rfind(separator)
+        for separator in (")", ";", ".", "\n")
+    )
+    candidate = prefix[boundary + 1:]
+    if ":" in candidate:
+        candidate = candidate.rsplit(":", 1)[-1]
+    candidate = re.sub(r"\([^)]*\)", " ", candidate)
+    return _clean_series_label(candidate)
+
+
+def _extract_total_colon_value(text: str) -> list[NumericValue]:
+    match = re.search(
+        rf"\btotal\s*:\s*[$€£¥]?\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|{MAGNITUDE_PATTERN}))?",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return []
+    number = _parse_number(match.group(1))
+    if number is None:
+        return []
+    item: NumericValue = {"value": _scale_number(number, (match.group(2) or "").lower()), "label": "total"}
+    year_match = YEAR_RE.search(text[match.end():match.end() + 80])
+    if year_match:
+        item["year"] = int(year_match.group(1))
+    return [item]
+
+
+def _extract_dash_labeled_value_series(text: str) -> list[NumericValue]:
+    values: list[NumericValue] = []
+    for match in re.finditer(
+        rf"([^;:\n]+?)\s+-\s*([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)(?:\s*(%|percent|{MAGNITUDE_PATTERN}|km|m|sq km))?",
+        text,
+        re.IGNORECASE,
+    ):
+        label_text = re.sub(r"\([^)]*\)", " ", match.group(1))
+        if ":" in label_text:
+            label_text = label_text.rsplit(":", 1)[-1]
+        label = _clean_series_label(label_text)
+        number = _parse_number(match.group(2))
+        if not label or number is None:
+            continue
+        unit = (match.group(3) or "").lower()
+        values.append({"value": _scale_number(number, unit), "label": label})
+    if len(values) >= 2:
+        return values
+    if values and re.search(r"\bmajor lakes?\b", text, re.IGNORECASE):
+        return values
+    return []
+
+
+def _extract_leading_value_labeled_series(text: str) -> list[NumericValue]:
+    if not re.search(r"\bmajor urban areas\b|\bpopulation\b", text, re.IGNORECASE):
+        return []
+    years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
+    values: list[NumericValue] = []
+    for match in re.finditer(
+        rf"(?<![\w.])([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)\s+({MAGNITUDE_PATTERN})\s+([^,;()]+)",
+        text,
+        re.IGNORECASE,
+    ):
+        number = _parse_number(match.group(1))
+        label = _clean_series_label(match.group(3))
+        if number is None or not label:
+            continue
+        item: NumericValue = {
+            "value": _scale_number(number, (match.group(2) or "").lower()),
+            "label": label,
+        }
         if len(years) == 1:
             item["year"] = years[0]
         values.append(item)
-    return values
+    return values if len(values) >= 2 else []
+
+
+def _extract_ports_value_series(text: str) -> list[NumericValue]:
+    if not re.search(r"^\s*ports\s*:", text, re.IGNORECASE):
+        return []
+    years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
+    label_pattern = (
+        "ports with oil terminals|total ports|very small|size unknown|large|medium|small"
+    )
+    values: list[NumericValue] = []
+    for match in re.finditer(
+        rf"\b({label_pattern})\s+([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        label = _clean_series_label(match.group(1))
+        number = _parse_number(match.group(2))
+        if not label or number is None:
+            continue
+        item: NumericValue = {"value": number, "label": label}
+        if len(years) == 1:
+            item["year"] = years[0]
+        values.append(item)
+    return values if len(values) >= 2 else []
+
+
+def _extract_elevation_value_series(text: str) -> list[NumericValue]:
+    if not re.search(r"^\s*elevation\s*:", text, re.IGNORECASE):
+        return []
+    values: list[NumericValue] = []
+    for label in ("highest point", "lowest point", "mean elevation"):
+        match = re.search(
+            rf"\b{re.escape(label)}\s*:\s*.*?([-+]?(?:\d{{1,3}}(?:,\d{{3}})+|\d+)(?:\.\d+)?)\s*m\b",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        number = _parse_number(match.group(1))
+        if number is None:
+            continue
+        values.append({"value": number, "label": label})
+    return values if len(values) >= 2 else []
 
 
 def _extract_colon_labeled_value_series(text: str) -> list[NumericValue]:
@@ -558,6 +1300,87 @@ def _extract_colon_labeled_value_series(text: str) -> list[NumericValue]:
         elif len(years) == 1:
             item["year"] = years[0]
         values.append(item)
+    return values if len(values) >= 2 else []
+
+
+def _extract_age_range_labeled_value_series(text: str) -> list[NumericValue]:
+    matches = list(AGE_RANGE_COLON_VALUE_RE.finditer(text))
+    if len(matches) < 2:
+        return []
+    years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
+    values: list[NumericValue] = []
+    for index, match in enumerate(matches):
+        label = _clean_series_label(match.group(1))
+        number = _parse_number(match.group(2))
+        if not label or number is None:
+            continue
+        item: NumericValue = {
+            "value": _scale_number(number, (match.group(3) or "").lower()),
+            "label": label,
+        }
+        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        segment_years = [
+            int(year_match.group(1))
+            for year_match in YEAR_RE.finditer(text[match.end():next_start])
+        ]
+        if segment_years:
+            item["year"] = segment_years[-1]
+        elif len(years) == 1:
+            item["year"] = years[0]
+        values.append(item)
+    return values if len(values) >= 2 else []
+
+
+def _extract_chained_colon_labeled_value_series(text: str) -> list[NumericValue]:
+    matches = list(CHAINED_COLON_VALUE_RE.finditer(text))
+    if len(matches) < 2:
+        return []
+    years = [int(match.group(1)) for match in YEAR_RE.finditer(text)]
+    values: list[NumericValue] = []
+    for index, match in enumerate(matches):
+        label = _clean_series_label(match.group(1))
+        if not label:
+            continue
+        raw_number = match.group(2)
+        if _is_year_token(raw_number) or _is_date_number(text, match):
+            continue
+        number = _parse_number(raw_number)
+        if number is None:
+            continue
+        unit = (match.group(3) or "").lower()
+        item: NumericValue = {
+            "value": _scale_number(number, unit),
+            "label": label,
+        }
+        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        segment_years = [int(year_match.group(1)) for year_match in YEAR_RE.finditer(text[match.end():next_start])]
+        if segment_years:
+            item["year"] = segment_years[-1]
+        elif len(years) == 1:
+            item["year"] = years[0]
+        values.append(item)
+    return values if len(values) >= 2 else []
+
+
+def _extract_colon_metric_year_value_series(text: str) -> list[NumericValue]:
+    values: list[NumericValue] = []
+    for match in COLON_METRIC_YEAR_VALUE_RE.finditer(text):
+        label = _clean_metric_label(match.group(1))
+        if not label:
+            continue
+        unit = (match.group(4) or "").lower()
+        number = _parse_number(match.group(3))
+        if number is None:
+            continue
+        if match.group(2) == "-" and number > 0:
+            number = -number
+        values.append(
+            {
+                "value": _scale_number(number, unit),
+                "year": int(match.group(5)),
+                "label": label,
+            }
+        )
     return values if len(values) >= 2 else []
 
 
@@ -691,26 +1514,30 @@ def _extract_ordinal_context_values(text: str) -> list[NumericValue]:
 
 def _extract_parenthetical_year_value_pairs(text: str) -> list[NumericValue]:
     values = []
-    matches = list(PAREN_YEAR_VALUE_RE.finditer(text))
+    matches = list(SIGNED_PAREN_YEAR_VALUE_RE.finditer(text))
     currency_labels = _currency_labels_in_text(text, matches)
     use_currency_labels = len(currency_labels) >= 2
     for index, match in enumerate(matches):
-        unit = (match.group(2) or "").lower()
+        unit = (match.group(3) or "").lower()
+        if _is_signed_rate_denominator_token(text, match, match.group(2)):
+            continue
         if _is_secondary_gdp_share(text, match, unit):
             continue
         if _is_secondary_magnitude_count(text, match, unit):
             continue
-        number = _parse_number(match.group(1))
+        number = _parse_number(match.group(2))
         if number is None:
             continue
+        if match.group(1) == "-" and number > 0:
+            number = -number
         item: NumericValue = {
             "value": _scale_number(number, unit),
-            "year": int(match.group(4)),
+            "year": int(match.group(5)),
         }
         label = _label_for_match(
             text,
             match,
-            parenthetical_context=match.group(3),
+            parenthetical_context=match.group(4),
             use_currency_labels=use_currency_labels,
             next_match_start=matches[index + 1].start() if index + 1 < len(matches) else len(text),
         )
@@ -718,6 +1545,14 @@ def _extract_parenthetical_year_value_pairs(text: str) -> list[NumericValue]:
             item["label"] = label
         values.append(item)
     return values
+
+
+def _is_signed_rate_denominator_token(text: str, match: re.Match, raw_number: str) -> bool:
+    if raw_number.replace(",", "") not in {"100", "1000", "100000"}:
+        return False
+    start, _end = match.span(2)
+    prefix = text[:start].lower()
+    return bool(re.search(r"(?:/|\bper\s+)$", prefix))
 
 
 def _extract_parenthetical_label_value_pairs(text: str) -> list[NumericValue]:
@@ -730,6 +1565,8 @@ def _extract_parenthetical_label_value_pairs(text: str) -> list[NumericValue]:
         if not label:
             continue
         unit = (match.group(2) or "").lower()
+        if _is_rate_denominator_token(text, match):
+            continue
         if _is_secondary_gdp_share(text, match, unit):
             continue
         if _is_secondary_magnitude_count(text, match, unit):
@@ -746,7 +1583,13 @@ def _extract_parenthetical_label_value_pairs(text: str) -> list[NumericValue]:
 
 def _extract_gdp_share_values(text: str) -> list[NumericValue]:
     values = []
-    for match in NUMBER_RE.finditer(text):
+    matches = list(NUMBER_RE.finditer(text))
+    non_year_matches = [
+        match for match in matches if not _is_year_token(match.group(1))
+    ]
+    for index, match in enumerate(non_year_matches):
+        if _is_year_token(match.group(1)):
+            continue
         unit = (match.group(2) or "").lower()
         if unit not in {"%", "percent"}:
             continue
@@ -756,12 +1599,68 @@ def _extract_gdp_share_values(text: str) -> list[NumericValue]:
         if number is None:
             continue
         item: NumericValue = {"value": number}
-        year_match = YEAR_RE.search(text[match.end(): match.end() + 80])
-        if year_match:
-            item["year"] = int(year_match.group(1))
+        previous_end = non_year_matches[index - 1].end() if index > 0 else 0
+        next_start = non_year_matches[index + 1].start() if index + 1 < len(non_year_matches) else len(text)
+        year = _nearest_year_for_metric_value(text, match, previous_end, next_start)
+        if year is not None:
+            item["year"] = year
         item["label"] = "% of GDP"
         values.append(item)
     return values
+
+
+def _extract_contextual_gdp_share_year_values(text: str) -> list[NumericValue]:
+    if not re.search(r"\(\s*%\s+of\s+GDP\s*\)|%\s+of\s+GDP|percent\s+of\s+GDP", text, re.IGNORECASE):
+        return []
+    matches = [
+        match for match in NUMBER_RE.finditer(text)
+        if not _is_year_token(match.group(1))
+    ]
+    values: list[NumericValue] = []
+    for index, match in enumerate(matches):
+        unit = (match.group(2) or "").lower()
+        if unit in MAGNITUDES:
+            continue
+        number = _parse_number(match.group(1))
+        if number is None:
+            continue
+        previous_end = matches[index - 1].end() if index > 0 else 0
+        next_start = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        year = _nearest_year_for_metric_value(text, match, previous_end, next_start)
+        if year is None:
+            continue
+        values.append({
+            "value": number,
+            "year": year,
+            "label": "% of GDP",
+        })
+    return values if len(values) >= 2 else []
+
+
+def _nearest_year_for_metric_value(
+    text: str,
+    match: re.Match,
+    previous_value_end: int,
+    next_value_start: int,
+) -> int | None:
+    suffix_segment = text[match.end():next_value_start]
+    suffix_before_next_item = re.split(r";", suffix_segment, maxsplit=1)[0]
+    suffix_years = [
+        int(year_match.group(1))
+        for year_match in YEAR_RE.finditer(suffix_before_next_item)
+    ]
+    if suffix_years:
+        return suffix_years[0]
+
+    prefix_segment = text[previous_value_end:match.start()]
+    prefix_years = [
+        int(year_match.group(1))
+        for year_match in YEAR_RE.finditer(prefix_segment)
+    ]
+    if prefix_years:
+        return prefix_years[-1]
+
+    return None
 
 
 def _deduplicate_numeric_values(values: list[NumericValue]) -> list[NumericValue]:
@@ -800,7 +1699,7 @@ def _numeric_identity(value: Any) -> float | None:
 
 
 def _parenthetical_year_value_spans(text: str) -> list[tuple[int, int]]:
-    return [match.span() for match in PAREN_YEAR_VALUE_RE.finditer(text)]
+    return [match.span() for match in SIGNED_PAREN_YEAR_VALUE_RE.finditer(text)]
 
 
 def _parenthetical_label_value_spans(text: str) -> list[tuple[int, int]]:
@@ -837,6 +1736,30 @@ def _contains_year_range(text: str) -> bool:
 def _is_right_edge_of_year_range(text: str, start_index: int) -> bool:
     prefix = text[:start_index]
     return bool(re.search(r"(?:18|19|20|21)\d{2}\s*[-–—]\s*$", prefix))
+
+
+def _is_embedded_number_token(text: str, match: re.Match) -> bool:
+    start, end = match.span(1)
+    before = text[start - 1] if start > 0 else ""
+    before_before = text[start - 2] if start > 1 else ""
+    after = text[end] if end < len(text) else ""
+    after_after = text[end + 1] if end + 1 < len(text) else ""
+    if before.isalpha() or after.isalpha():
+        return True
+    if before in {"-", "_"} and before_before.isalpha():
+        return True
+    if after in {"-", "_"} and after_after.isalpha():
+        return True
+    return False
+
+
+def _is_rate_denominator_token(text: str, match: re.Match) -> bool:
+    raw_number = match.group(1)
+    if raw_number.replace(",", "") not in {"100", "1000", "100000"}:
+        return False
+    start, _end = match.span(1)
+    prefix = text[:start].lower()
+    return bool(re.search(r"(?:/|\bper\s+)$", prefix))
 
 
 def _is_standalone_year_attribute(text: str, raw_number: str) -> bool:
@@ -904,9 +1827,27 @@ def _label_for_match(
         currency_label = _currency_label(text, match)
         if currency_label:
             return currency_label
+    contextual_label = _contextual_measurement_label(text, match)
+    if contextual_label:
+        return contextual_label
     suffix_label = _suffix_label(text, match.end(), next_match_start or len(text))
     if suffix_label:
         return suffix_label
+    return None
+
+
+def _contextual_measurement_label(text: str, match: re.Match) -> str | None:
+    prefix = text[max(0, match.start() - 90):match.start()]
+    suffix = text[match.end():match.end() + 90]
+    context = f"{prefix} {suffix}"
+    if re.search(r"\bsales\b", prefix, re.IGNORECASE) and re.match(
+        r"\s*(?:units?|vehicles?|cars?|registrations?)\b",
+        suffix,
+        re.IGNORECASE,
+    ):
+        return "sales"
+    if re.search(r"\bmarket share\b", context, re.IGNORECASE):
+        return "market share"
     return None
 
 
@@ -1047,6 +1988,22 @@ def _clean_series_label(raw_label: str | None) -> str | None:
     return label
 
 
+def _clean_metric_label(raw_label: str | None) -> str | None:
+    label = re.sub(r"\s+", " ", str(raw_label or "").strip(" :;,.()-"))
+    if not label:
+        return None
+    lower = label.lower()
+    if lower in {"est", "estimate", "estimated", "forecast", "f", "proj", "projected", "monthly", "annual"}:
+        return None
+    if YEAR_RE.fullmatch(label.strip()) or MONTH_RE.search(label):
+        return None
+    if re.search(r"\d", label) and not re.search(r"\bper\s+\d+\b", label, re.IGNORECASE):
+        return None
+    if len(label) > 60:
+        return None
+    return label
+
+
 def _month_names() -> list[str]:
     return [
         "January",
@@ -1075,6 +2032,29 @@ def _is_date_number(text: str, match: re.Match) -> bool:
     )
 
 
+def _is_compact_year_suffix_token(text: str, match: re.Match) -> bool:
+    raw_number = match.group(1).replace(",", "")
+    if not re.fullmatch(r"\d{2}", raw_number):
+        return False
+    start, _end = match.span(1)
+    prefix = text[max(0, start - 8):start]
+    return bool(re.search(r"\b(?:18|19|20|21)\d{2}\s*/\s*$", prefix))
+
+
+def _is_age_context_number(text: str, match: re.Match) -> bool:
+    raw_number = match.group(1).replace(",", "")
+    if not re.fullmatch(r"\d{1,3}", raw_number):
+        return False
+    prefix = text[max(0, match.start() - 32):match.start()]
+    suffix = text[match.end():match.end() + 32]
+    return bool(
+        re.search(r"\bages?\s*$", prefix, re.IGNORECASE)
+        and re.match(r"\s*(?:or\s+older|and\s+over|to|-|–|—)", suffix, re.IGNORECASE)
+        or re.search(r"\bunder\s+the\s+age\s+of\s*$", prefix, re.IGNORECASE)
+        and re.match(r"\s*years?\b", suffix, re.IGNORECASE)
+    )
+
+
 def _is_inside_spans(match: re.Match, spans: list[tuple[int, int]]) -> bool:
     return any(start <= match.start() and match.end() <= end for start, end in spans)
 
@@ -1092,7 +2072,18 @@ def _is_secondary_magnitude_count(text: str, match: re.Match, unit: str) -> bool
         return False
     if _match_has_currency(text, match):
         return False
+    if _is_sales_unit_count(text, match):
+        return False
     return "%" in text or re.search(r"\bpercent\b", text, re.IGNORECASE)
+
+
+def _is_sales_unit_count(text: str, match: re.Match) -> bool:
+    prefix = text[max(0, match.start() - 90):match.start()]
+    suffix = text[match.end():match.end() + 32]
+    return bool(
+        re.search(r"\bsales\b", prefix, re.IGNORECASE)
+        and re.match(r"\s*(?:units?|vehicles?|cars?|registrations?)\b", suffix, re.IGNORECASE)
+    )
 
 
 def _has_amount_with_secondary_gdp_share(text: str) -> bool:
@@ -1159,6 +2150,84 @@ def _point_count(
         }
         return len(years) if years else max(len(left_values), len(right_values), 2)
     return max(len(left_values) + len(right_values), 1)
+
+
+def _chart_type_for_values(
+    data_type: str,
+    point_count: int,
+    left_values: list[NumericValue],
+    right_values: list[NumericValue],
+    row_label: str = "",
+    left_text: str = "",
+    right_text: str = "",
+) -> str:
+    if data_type == "Proportional":
+        if (
+            _is_part_whole_percentage_pair(left_values, right_values)
+            and not _is_non_exhaustive_share_context(row_label, left_text, right_text, left_values, right_values)
+        ):
+            side_count = max(len(left_values), len(right_values))
+            return "pie" if side_count <= 4 else "stacked"
+        return "line" if _is_year_series(left_values) or _is_year_series(right_values) else "bar"
+    return choose_chart_type(data_type, point_count)
+
+
+def _is_year_series(values: list[NumericValue]) -> bool:
+    years = {
+        int(value["year"])
+        for value in values
+        if value.get("year") is not None
+    }
+    return len(values) >= 2 and len(years) >= 2
+
+
+def _is_part_whole_percentage_pair(
+    left_values: list[NumericValue],
+    right_values: list[NumericValue],
+) -> bool:
+    sides = [values for values in (left_values, right_values) if values]
+    return bool(sides) and all(_is_part_whole_percentage_values(values) for values in sides)
+
+
+def _is_part_whole_percentage_values(values: list[NumericValue]) -> bool:
+    if len(values) < 2 or _is_year_series(values):
+        return False
+    labels = [
+        _normalized_label(value.get("label"))
+        for value in values
+        if value.get("label")
+    ]
+    if len(set(labels)) < 2:
+        return False
+    numbers = []
+    for value in values:
+        try:
+            number = float(value.get("value"))
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(number) or number < 0 or number > 100:
+            return False
+        numbers.append(number)
+    total = sum(numbers)
+    return 95 <= total <= 105
+
+
+def _is_non_exhaustive_share_context(
+    row_label: str,
+    left_text: str,
+    right_text: str,
+    left_values: list[NumericValue],
+    right_values: list[NumericValue],
+) -> bool:
+    context = f"{row_label} {left_text} {right_text}".lower()
+    if not re.search(r"\bpartners?\b", context):
+        return False
+    labels = {
+        _normalized_label(value.get("label"))
+        for value in left_values + right_values
+        if value.get("label")
+    }
+    return not any(label in {"other", "others", "remaining", "rest"} for label in labels)
 
 
 def _source_kind(left_source: str | None, right_source: str | None) -> str:
@@ -1473,6 +2542,25 @@ def _is_data_priority_main_text_row(row: dict[str, Any]) -> bool:
     return bool(left.get("values") and right.get("values"))
 
 
+def _is_demoted_main_text_visual_data_row(row: dict[str, Any]) -> bool:
+    if row.get("sourceKind") != "main_text" or not row.get("dataPriority"):
+        return False
+    if not _is_visual_data_role_name(row.get("dataRole")):
+        return False
+    if _is_chartable_row(row):
+        return False
+    visualization = row.get("visualization") if isinstance(row.get("visualization"), dict) else {}
+    left = visualization.get("left") if isinstance(visualization.get("left"), dict) else {}
+    right = visualization.get("right") if isinstance(visualization.get("right"), dict) else {}
+    return not (left.get("values") and right.get("values"))
+
+
+def _is_temporal_metadata_text_row(row: dict[str, Any]) -> bool:
+    if _is_chartable_row(row):
+        return False
+    return _is_temporal_metadata_label(_normalized_label(row.get("label")))
+
+
 def _is_chartable_row(row: dict[str, Any]) -> bool:
     chart_type = str(row.get("chartType") or "").strip().lower()
     if chart_type:
@@ -1495,6 +2583,19 @@ def _is_temporal_metadata_attribute(
         _normalized_label(right_attr.get("key")),
     }
     return any(_is_temporal_metadata_label(label) for label in labels)
+
+
+def _is_text_metadata_attribute(
+    row_label: Any,
+    left_attr: dict[str, Any],
+    right_attr: dict[str, Any],
+) -> bool:
+    labels = {
+        _normalized_label(row_label),
+        _normalized_label(left_attr.get("key")),
+        _normalized_label(right_attr.get("key")),
+    }
+    return bool(TEXT_METADATA_KEYS.intersection(labels))
 
 
 def _is_temporal_metadata_label(label: str) -> bool:
@@ -1523,6 +2624,50 @@ def _is_generic_main_text_pair(
         and not left_attr.get("dataPriority")
         and not right_attr.get("dataPriority")
     )
+
+
+def _is_incomplete_main_text_data_pair(
+    left_attr: dict[str, Any],
+    right_attr: dict[str, Any],
+    data_role: Any,
+    left_values: list[dict[str, Any]],
+    right_values: list[dict[str, Any]],
+) -> bool:
+    if not data_role or not _is_visual_data_role_name(data_role):
+        return False
+    if not (
+        str(left_attr.get("source") or "").lower() == "main_text"
+        and str(right_attr.get("source") or "").lower() == "main_text"
+    ):
+        return False
+    return not (left_values and right_values)
+
+
+def _has_incompatible_single_point_main_text_years(
+    left_attr: dict[str, Any],
+    right_attr: dict[str, Any],
+    data_role: Any,
+    left_values: list[dict[str, Any]],
+    right_values: list[dict[str, Any]],
+) -> bool:
+    if not data_role or not _is_visual_data_role_name(data_role):
+        return False
+    if not (
+        str(left_attr.get("source") or "").lower() == "main_text"
+        and str(right_attr.get("source") or "").lower() == "main_text"
+    ):
+        return False
+    if len(left_values) != 1 or len(right_values) != 1:
+        return False
+    left_year = left_values[0].get("year")
+    right_year = right_values[0].get("year")
+    if left_year is None and right_year is None:
+        return False
+    return left_year != right_year
+
+
+def _is_visual_data_role_name(data_role: Any) -> bool:
+    return str(data_role or "").strip().lower() in {"proportion", "ranking", "scale", "quantity"}
 
 
 def _has_explicit_main_text_visual_signal(

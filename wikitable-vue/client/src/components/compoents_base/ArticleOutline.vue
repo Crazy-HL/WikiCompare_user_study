@@ -1,5 +1,5 @@
 <template>
-	<button @click="toggleOutline" class="toggle-btn" :style="buttonStyle">
+	<button @click="toggleOutline" class="toggle-btn" :style="buttonStyle" title="Article outline">
 		<svg v-if="!isVisible" class="icon" viewBox="0 0 24 24">
 			<path
 				fill="currentColor"
@@ -118,13 +118,13 @@
 		const isDiv1 = props.divId === "div1";
 		buttonStyle.value = {
 			position: "absolute",
-			top: "10px",
-			[isDiv1 ? "right" : "left"]: "10px"
+			top: "11px",
+			[isDiv1 ? "right" : "left"]: "12px"
 		};
 		outlineStyle.value = {
 			position: "absolute",
-			top: "50px",
-			[isDiv1 ? "right" : "left"]: "10px",
+			top: "48px",
+			[isDiv1 ? "right" : "left"]: "12px",
 			width: "260px",
 			maxHeight: "80vh",
 			overflowY: "auto",
@@ -141,8 +141,8 @@
 		const referenceElement = document.getElementById(props.divId);
 		if (!referenceElement) return;
 		const scrollY = referenceElement.scrollTop;
-		buttonStyle.value.top = `${scrollY + 10}px`;
-		outlineStyle.value.top = `${scrollY + 50}px`;
+		buttonStyle.value.top = `${scrollY + 11}px`;
+		outlineStyle.value.top = `${scrollY + 48}px`;
 	};
 
 	onMounted(() => {
@@ -161,21 +161,21 @@
 
 <style scoped>
 	.toggle-btn {
-		padding: 10px;
+		padding: 7px;
 		border-radius: 50%;
 		cursor: pointer;
 		z-index: 2000;
-		background-color: #243447;
+		background-color: #334155;
 		color: white;
 		border: 1px solid rgba(255, 255, 255, 0.72);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
+		width: 30px;
+		height: 30px;
 		box-shadow:
-			0 2px 5px rgba(15, 23, 42, 0.18),
-			0 8px 18px rgba(15, 23, 42, 0.16);
+			0 1px 3px rgba(15, 23, 42, 0.16),
+			0 5px 12px rgba(15, 23, 42, 0.12);
 		transition: all 0.2s ease-in-out;
 	}
 
