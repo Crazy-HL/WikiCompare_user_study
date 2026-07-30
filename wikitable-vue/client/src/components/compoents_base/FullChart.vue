@@ -1,5 +1,25 @@
 <template>
 	<div class="full-chart">
+		<div
+			v-if="adaptiveTriggered"
+			class="scale-mode-switch"
+			role="group"
+			aria-label="图表刻度模式">
+			<button
+				v-for="option in scaleModeOptions"
+				:key="option.value"
+				type="button"
+				:class="{ active: selectedScaleMode === option.value }"
+				:disabled="option.value === 'index' && !canUseTrendIndex"
+				@click="selectedScaleMode = option.value">
+				{{ option.label }}
+			</button>
+		</div>
+		<div
+			v-if="adaptiveTriggered && chartVisualization === 'line-chart'"
+			class="scale-mode-note">
+			{{ fullTrendText }}
+		</div>
 		<div v-if="isTextMode" class="full-text">
 			<div v-for="(item, index) in textRows" :key="index" class="text-item">
 				<span class="text-label">{{ item.label }}</span>
@@ -15,32 +35,97 @@
 	import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 	import * as echarts from "echarts";
 	const {
-		barChartDomain,
 		formatChartNumber,
-		xLabelForPoint
+		shortValueText
 	} = require("@/js/chartValueDisplay");
+	const {
+		CHART_COLORS,
+		CHART_REMAINDER_COLOR,
+		categoryColor
+	} = require("@/js/chartTheme");
+	const {
+		trendChange,
+		trendIndexPoints
+	} = require("@/js/adaptiveChartScale");
+	const {
+		buildFullChartBarOption,
+		buildFullChartLineOption,
+		canonicalAdaptiveContextEnabled,
+		linearScaleDecision,
+		orderedLinePoints,
+		plotDataForContext
+	} = require("@/js/fullChartAdaptiveOptions");
 
 	const props = defineProps({
 		field: [Object, Array, String, Number],
 		type: String,
 		visualization: String,
-		fieldKey: String
+		fieldKey: String,
+		side: {
+			type: String,
+			default: ""
+		},
+		scaleContext: {
+			type: Object,
+			default: null
+		}
 	});
 
 	const chartEl = ref(null);
 	let chart = null;
+	let renderScheduleToken = 0;
+	let renderLayoutFrameId = null;
+	let renderFrameId = null;
+	let renderTimeoutId = null;
 
-	const COLORS = [
-		"#3867a8",
-		"#c94f45",
-		"#5f8f3f",
-		"#d9902f",
-		"#7d5fb2",
-		"#2f8c8f",
-		"#b05f6d",
-		"#6b7280"
+	const COLORS = CHART_COLORS;
+	const REMAINDER_COLOR = CHART_REMAINDER_COLOR;
+	const selectedScaleMode = ref("auto");
+	const scaleModeOptions = [
+		{ value: "auto", label: "自动优化" },
+		{ value: "linear", label: "原始线性" },
+		{ value: "index", label: "趋势指数" }
 	];
-	const REMAINDER_COLOR = "#e7edf4";
+	const scaleDecision = ref(linearScaleDecision());
+	const hasCanonicalScaleContext = computed(() =>
+		canonicalAdaptiveContextEnabled({
+			scaleContext: props.scaleContext,
+			side: props.side,
+			visualization: chartVisualization.value,
+			dataLength: numericData.value.length
+		})
+	);
+	const plotData = computed(() =>
+		plotDataForContext({
+			data: numericData.value,
+			scaleContext: props.scaleContext,
+			side: props.side,
+			visualization: chartVisualization.value
+		})
+	);
+	const adaptiveTriggered = computed(
+		() =>
+			hasCanonicalScaleContext.value &&
+			plotData.value.length > 0 &&
+			["log", "symlog"].includes(scaleDecision.value.mode)
+	);
+	const canUseTrendIndex = computed(
+		() =>
+			chartVisualization.value === "line-chart" &&
+			trendIndexPoints(orderedLinePoints(plotData.value)).length > 0
+	);
+	const fullTrendText = computed(() => {
+		const change = trendChange(plotData.value);
+		if (change.absoluteChange === null) return "";
+		if (change.percentChange === null) {
+			return `首值为 0，绝对变化 ${formatChartNumber(
+				change.absoluteChange,
+				axisType.value
+			)}`;
+		}
+		const sign = change.percentChange > 0 ? "+" : "";
+		return `${change.firstYear || "起点"} 至 ${change.lastYear || "终点"}：${sign}${change.percentChange.toFixed(1)}%`;
+	});
 
 	const isYearEntry = value => {
 		if (typeof value !== "string") return false;
@@ -75,10 +160,7 @@
 	};
 
 	const shortValueDisplay = item => {
-		const display = String(item?.display || "").trim();
-		const colonIndex = display.lastIndexOf(":");
-		if (colonIndex >= 0) return display.slice(colonIndex + 1).trim();
-		return display || formatAxisValue(item?.value);
+		return shortValueText(item, axisType.value);
 	};
 
 	const normalizedData = computed(() => {
@@ -91,15 +173,20 @@
 						item.raw ?? item.display ?? item.label ?? item.value,
 						""
 					);
-					const display = cleanLabel(
-						item.display ?? item.raw ?? item.value,
+					const originalDisplay = cleanLabel(
+						item.originalDisplay ?? item.display ?? item.raw ?? item.value,
 						raw || "-"
+					);
+					const display = cleanLabel(
+						item.display ?? item.originalDisplay ?? item.raw ?? item.value,
+						originalDisplay
 					);
 					const label = cleanLabel(item.label ?? item.year ?? raw, `项目${index + 1}`);
 					return {
 						value: numericValue(item.value ?? item.raw),
 						raw,
 						display,
+						originalDisplay,
 						label,
 						year: item.year ?? null,
 						parent: item.parent ?? null,
@@ -111,6 +198,7 @@
 					value: numericValue(item),
 					raw,
 					display: raw || "-",
+					originalDisplay: raw || "-",
 					label: raw || `项目${index + 1}`,
 					year: null,
 					parent: null,
@@ -167,19 +255,75 @@
 		return type === "percentage" || type === "proportional";
 	});
 
-	const resize = () => chart?.resize();
+	const resize = () => scheduleRenderChart();
 
 	const disposeChart = () => {
 		chart?.dispose();
 		chart = null;
 	};
 
+	const clearScheduledRender = () => {
+		if (
+			renderLayoutFrameId !== null &&
+			typeof window !== "undefined" &&
+			typeof window.cancelAnimationFrame === "function"
+		) {
+			window.cancelAnimationFrame(renderLayoutFrameId);
+		}
+		if (
+			renderFrameId !== null &&
+			typeof window !== "undefined" &&
+			typeof window.cancelAnimationFrame === "function"
+		) {
+			window.cancelAnimationFrame(renderFrameId);
+		}
+		if (renderTimeoutId !== null) {
+			clearTimeout(renderTimeoutId);
+		}
+		renderLayoutFrameId = null;
+		renderFrameId = null;
+		renderTimeoutId = null;
+	};
+
+	const cancelScheduledRender = () => {
+		renderScheduleToken += 1;
+		clearScheduledRender();
+	};
+
+	const scheduleRenderChart = () => {
+		const token = ++renderScheduleToken;
+		clearScheduledRender();
+		nextTick(() => {
+			if (token !== renderScheduleToken) return;
+			const render = () => {
+				if (token !== renderScheduleToken) return;
+				renderFrameId = null;
+				renderTimeoutId = null;
+				renderChart();
+			};
+			if (
+				typeof window !== "undefined" &&
+				typeof window.requestAnimationFrame === "function"
+			) {
+				renderLayoutFrameId = window.requestAnimationFrame(() => {
+					renderLayoutFrameId = null;
+					if (token !== renderScheduleToken) return;
+					renderFrameId = window.requestAnimationFrame(render);
+				});
+				return;
+			}
+			renderTimeoutId = setTimeout(render, 0);
+		});
+	};
+
 	const renderChart = () => {
 		if (isTextMode.value || !hasNumericData.value || !chartEl.value) {
+			scaleDecision.value = linearScaleDecision();
 			disposeChart();
 			return;
 		}
 		if (!chart) chart = echarts.init(chartEl.value);
+		else chart.resize();
 		chart.setOption(buildOption(), true);
 	};
 
@@ -190,182 +334,28 @@
 		return barOption();
 	};
 
-	const baseTooltip = formatter => ({
-		trigger: "axis",
-		axisPointer: { type: "shadow" },
-		formatter
-	});
-
-	const baseGrid = (bottom = 48) => ({
-		top: 34,
-		left: 60,
-		right: 28,
-		bottom,
-		containLabel: true
+	const adaptiveOptionArgs = visualization => ({
+		data: numericData.value,
+		scaleContext: chartVisualization.value === visualization ? props.scaleContext : null,
+		side: props.side,
+		selectedScaleMode: selectedScaleMode.value,
+		chartHeight: chartEl.value?.clientHeight || 0,
+		fieldKey: props.fieldKey,
+		axisType: axisType.value,
+		axisUnitLabel: axisUnitLabel.value,
+		colors: COLORS
 	});
 
 	const barOption = () => {
-		const data = numericData.value;
-		const values = data.map(item => item.value);
-		const [min, max] = barChartDomain(values);
-		return {
-			color: COLORS,
-			tooltip: baseTooltip(params =>
-				params
-					.map(param => `${param.marker}${param.name}: ${param.data.display}`)
-					.join("<br/>")
-			),
-			grid: baseGrid(data.length > 5 ? 76 : 48),
-			xAxis: {
-				type: "category",
-				data: data.map((item, index) => xLabelForPoint(item, index)),
-				axisTick: { alignWithLabel: true },
-				axisLine: { lineStyle: { color: "#cbd5e1" } },
-				axisLabel: {
-					interval: 0,
-					rotate: data.length > 5 ? 28 : 0,
-					color: "#475569",
-					fontSize: 11,
-					overflow: "truncate",
-					width: 90
-				}
-			},
-			yAxis: {
-				type: "value",
-				min,
-				max,
-				axisLabel: {
-					color: "#475569",
-					formatter: value => formatAxisValue(value)
-				},
-				axisLine: { show: false },
-				splitLine: { lineStyle: { color: "#e5eaf1" } }
-			},
-			series: [
-				{
-					type: "bar",
-					barMaxWidth: 54,
-					data: data.map((item, index) => ({
-						value: item.value,
-						display: item.display,
-						shortDisplay: shortValueDisplay(item),
-						itemStyle: {
-							color: COLORS[index % COLORS.length],
-							borderRadius:
-								item.value >= 0 ? [4, 4, 0, 0] : [0, 0, 4, 4]
-						}
-					})),
-					label: {
-						show: true,
-						position: "top",
-						color: "#1f2937",
-						fontSize: 11,
-						formatter: params =>
-							params.data?.shortDisplay || params.data?.display || "-"
-					},
-					markLine:
-						min < 0 && max > 0
-							? {
-									silent: true,
-									symbol: "none",
-									lineStyle: { color: "#94a3b8", type: "dashed", width: 1 },
-									data: [{ yAxis: 0 }]
-							  }
-							: undefined
-				}
-			],
-			dataZoom:
-				data.length > 10
-					? [
-							{
-								type: "slider",
-								height: 18,
-								bottom: 14,
-								start: 0,
-								end: Math.min(100, (10 / data.length) * 100)
-							}
-					  ]
-					: []
-		};
+		const result = buildFullChartBarOption(adaptiveOptionArgs("bar-chart"));
+		scaleDecision.value = result.state.decision;
+		return result.option;
 	};
 
 	const lineOption = () => {
-		const data = [...numericData.value].sort((a, b) => {
-			const left = Number(a.year);
-			const right = Number(b.year);
-			if (Number.isFinite(left) && Number.isFinite(right)) return left - right;
-			return 0;
-		});
-		const values = data.map(item => item.value);
-		const [min, max] = paddedDomain(values);
-		return {
-			color: [COLORS[0]],
-			tooltip: {
-				trigger: "axis",
-				formatter: params =>
-					params
-						.map(param => `${param.marker}${param.name}: ${param.data.display}`)
-						.join("<br/>")
-			},
-			grid: baseGrid(data.length > 6 ? 72 : 48),
-			xAxis: {
-				type: "category",
-				boundaryGap: false,
-				data: data.map((item, index) => xLabelForPoint(item, index)),
-				axisLabel: {
-					interval: 0,
-					rotate: data.length > 6 ? 24 : 0,
-					color: "#475569",
-					fontSize: 11
-				},
-				axisLine: { lineStyle: { color: "#cbd5e1" } }
-			},
-			yAxis: {
-				type: "value",
-				min,
-				max,
-				axisLabel: {
-					color: "#475569",
-					formatter: value => formatAxisValue(value)
-				},
-				axisLine: { show: false },
-				splitLine: { lineStyle: { color: "#e5eaf1" } }
-			},
-			series: [
-				{
-					type: "line",
-					smooth: false,
-					symbol: "circle",
-					symbolSize: 8,
-					data: data.map(item => ({
-						value: item.value,
-						display: item.display,
-						shortDisplay: shortValueDisplay(item)
-					})),
-					lineStyle: { width: 2.5 },
-					label: {
-						show: data.length <= 8,
-						position: "top",
-						color: "#1f2937",
-						fontSize: 11,
-						formatter: params =>
-							params.data?.shortDisplay || params.data?.display || "-"
-					}
-				}
-			],
-			dataZoom:
-				data.length > 12
-					? [
-							{
-								type: "slider",
-								height: 18,
-								bottom: 14,
-								start: 0,
-								end: Math.min(100, (12 / data.length) * 100)
-							}
-					  ]
-					: []
-		};
+		const result = buildFullChartLineOption(adaptiveOptionArgs("line-chart"));
+		scaleDecision.value = result.state.decision;
+		return result.option;
 	};
 
 	const pieOption = () => {
@@ -457,7 +447,8 @@
 					trigger: "item",
 					formatter: params =>
 						`${params.marker}${params.seriesName}: ${
-							params.data?.display || formatAxisValue(params.data?.originalValue)
+							params.data?.display ||
+								formatChartNumber(params.data?.originalValue, axisType.value)
 						}`
 				},
 				legend: [
@@ -542,7 +533,7 @@
 							}
 						],
 						itemStyle: {
-							color: COLORS[index % COLORS.length],
+							color: categoryColor(item.label, index),
 							borderRadius:
 								index === 0
 									? [0, 0, 4, 4]
@@ -562,38 +553,60 @@
 			};
 		};
 
-	const paddedDomain = values => {
-		const nums = values.filter(Number.isFinite);
-		if (!nums.length) return [0, 1];
-		const min = Math.min(...nums);
-		const max = Math.max(...nums);
-		if (min === max) {
-			const padding = Math.max(1, Math.abs(min) * 0.12);
-			return [min - padding, max + padding];
-		}
-		const padding = (max - min) * 0.12;
-		return [min - padding, max + padding];
-	};
-
-	const formatAxisValue = value => formatChartNumber(value, axisType.value);
-
 	const axisType = computed(() =>
 		isPercentageType.value ? "percentage" : String(props.type || "")
 	);
 
+	const axisUnitLabel = computed(() => {
+		if (axisType.value === "percentage") return "";
+		const source = [
+			props.fieldKey,
+			...normalizedData.value.flatMap(item => [item.raw, item.display, item.unit])
+		]
+			.filter(Boolean)
+			.join(" ");
+		if (/liters?\s+of\s+pure\s+alcohol/i.test(source)) {
+			return /per\s+capita/i.test(source)
+				? "liters of pure alcohol per capita"
+				: "liters of pure alcohol";
+		}
+		return "";
+	});
+
 	onMounted(() => {
-		nextTick(renderChart);
+		scheduleRenderChart();
 		window.addEventListener("resize", resize);
 	});
 
 	watch(
-		() => [props.field, props.type, props.visualization, props.fieldKey],
-		() => nextTick(renderChart),
+		() => [
+			props.field,
+			props.type,
+			props.visualization,
+			props.fieldKey,
+			props.side,
+			props.scaleContext,
+			selectedScaleMode.value
+		],
+		() => {
+			if (!plotData.value.length) scaleDecision.value = linearScaleDecision();
+			scheduleRenderChart();
+		},
+		{ deep: true }
+	);
+
+	watch(
+		() => props.scaleContext,
+		() => {
+			selectedScaleMode.value = "auto";
+			scaleDecision.value = linearScaleDecision();
+		},
 		{ deep: true }
 	);
 
 	onUnmounted(() => {
 		window.removeEventListener("resize", resize);
+		cancelScheduledRender();
 		disposeChart();
 	});
 </script>
@@ -605,6 +618,42 @@
 		min-height: 420px;
 		box-sizing: border-box;
 		color: #1f2937;
+	}
+
+	.scale-mode-switch {
+		display: flex;
+		justify-content: center;
+		gap: 6px;
+		margin-bottom: 8px;
+	}
+
+	.scale-mode-switch button {
+		border: 1px solid #cbd5e1;
+		border-radius: 999px;
+		background: #ffffff;
+		padding: 5px 11px;
+		color: #475569;
+		cursor: pointer;
+		font-size: 12px;
+		font-weight: 600;
+	}
+
+	.scale-mode-switch button.active {
+		border-color: #2563eb;
+		background: #eff6ff;
+		color: #1d4ed8;
+	}
+
+	.scale-mode-switch button:disabled {
+		cursor: not-allowed;
+		opacity: 0.45;
+	}
+
+	.scale-mode-note {
+		margin: -2px 0 8px;
+		color: #64748b;
+		font-size: 12px;
+		text-align: center;
 	}
 
 	.chart-container {

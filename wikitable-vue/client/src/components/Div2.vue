@@ -44,6 +44,13 @@
 	import CitationChips from "@/components/compoents_base/CitationChips.vue";
 	import { postJson } from "@/api";
 	import { sessionStore } from "@/js/sessionStore";
+	const {
+		conversationHistoryFromMessages,
+	} = require("@/js/conversationHistory");
+	const {
+		isOfflineNow,
+		WIKICOMPARE_OFFLINE_MESSAGE,
+	} = require("@/js/offlineSupport");
 
 	const userQuestion = ref("");
 	const chatHistory = ref([]);
@@ -101,7 +108,7 @@
 
 	const requireSession = () => {
 		if (sessionStore.session?.sessionId) return true;
-		pushError("请先输入两篇 Wikipedia URL 并加载比较会话。");
+		pushError("请先输入两篇来源页面 URL 并加载比较会话。");
 		return false;
 	};
 
@@ -112,10 +119,16 @@
 			return;
 		}
 		if (!requireSession()) return;
+		if (isOfflineNow()) {
+			pushError(`${WIKICOMPARE_OFFLINE_MESSAGE}<br>当前离线，问答需要调用大模型，联网后可继续使用。`);
+			return;
+		}
 
+		const conversationHistory = conversationHistoryFromMessages(chatHistory.value);
 		chatHistory.value.push({
 			role: "user",
 			content: question,
+			conversationContent: question,
 			timestamp: new Date().toLocaleString()
 		});
 		userQuestion.value = "";
@@ -124,11 +137,13 @@
 		try {
 			const response = await postJson("api/ask", {
 				sessionId: sessionStore.session.sessionId,
-				question
+				question,
+				conversationHistory: conversationHistory
 			});
 			chatHistory.value.push({
 				role: "assistant",
 				content: formatAnalysisResult(response.answer),
+				conversationContent: response.answer,
 				source: response.llmUsed ? "LLM" : "规则回退",
 				citations: response.citations || [],
 				timestamp: new Date().toLocaleString()
@@ -144,6 +159,10 @@
 	const handleAttributeComparison = async row => {
 		if (!row) return;
 		if (!requireSession()) return;
+		if (isOfflineNow()) {
+			pushError(`${WIKICOMPARE_OFFLINE_MESSAGE}<br>当前离线，属性解释需要调用后端/大模型，联网后可继续使用。`);
+			return;
+		}
 
 		isLoading.value = true;
 		chatHistory.value.push({
@@ -160,6 +179,7 @@
 			chatHistory.value.push({
 				role: "assistant",
 				content: formatAnalysisResult(response.summary),
+				conversationContent: `Attribute comparison for "${row.label}": ${response.summary}`,
 				source: response.llmUsed ? "LLM" : "规则回退",
 				citations: response.citations || [],
 				timestamp: new Date().toLocaleString()
@@ -183,12 +203,12 @@
 	}
 
 	.chat-container {
-		height: 38%;
-		min-height: 170px;
+		flex: 1 1 clamp(140px, 22vh, 210px);
+		min-height: 0;
 		overflow: hidden;
 		display: flex;
 		flex-direction: column;
-		margin: 10px 10px 8px;
+		margin: 10px 10px 6px;
 	}
 
 	.chat-history {
@@ -204,12 +224,13 @@
 	}
 
 	.vis-container {
-		height: 48%;
-		min-height: 260px;
+		flex: 0 0 clamp(330px, 56vh, 400px);
+		height: clamp(330px, 56vh, 400px);
+		min-height: 330px;
 		padding: 0;
 		background: #ffffff;
 		border-radius: 8px;
-		margin: 0 10px;
+		margin: 0 10px 8px;
 		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 		overflow: auto;
 		border: 1px solid #dbe3ee;
@@ -221,8 +242,8 @@
 	}
 
 	.input-area {
-		min-height: 96px;
-		padding: 10px;
+		min-height: 72px;
+		padding: 8px 10px 10px;
 		background: #f8fafc;
 		border-top: 1px solid #dbe3ee;
 		flex-shrink: 0;
@@ -369,5 +390,35 @@
 	.markdown-content h3 {
 		margin: 10px 0 8px;
 		color: #1e293b;
+	}
+
+	@media (max-height: 700px) {
+		.chat-container {
+			flex-basis: 112px;
+			margin-top: 8px;
+		}
+
+		.vis-container {
+			flex-basis: clamp(310px, 51vh, 370px);
+			height: clamp(310px, 51vh, 370px);
+			min-height: 310px;
+		}
+
+		.input-area {
+			min-height: 78px;
+			padding-top: 7px;
+		}
+	}
+
+	@media (max-width: 900px) {
+		.chat-container {
+			flex-basis: 116px;
+		}
+
+		.vis-container {
+			flex-basis: clamp(350px, 56vh, 410px);
+			height: clamp(350px, 56vh, 410px);
+			min-height: 350px;
+		}
 	}
 </style>

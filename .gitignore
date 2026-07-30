@@ -11,3 +11,4 @@ __pycache__/
 wikitable-vue/client/dist/
 wikitable-vue/client/node_modules/
 wikitable-vue/client/node_modules/.cache/
+wikitable-vue/artifacts/

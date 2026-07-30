@@ -3,11 +3,13 @@ import sys
 import time
 from types import SimpleNamespace
 
-from services.attribute_pool import build_attribute_pool
+import services.llm_client as llm_client
+from services.attribute_pool import build_attribute_pool, _text_attribute_timeout
 from services.config import LLMConfig
 from services.llm_client import LLMClient
 from services.llm_client import MAX_PROMPT_PARAGRAPHS, MAX_SENTENCES_PER_PARAGRAPH
 from services.llm_client import extract_json
+from services.llm_client import prompt_article_body
 from services.llm_client import _prompt_paragraphs
 
 
@@ -61,6 +63,408 @@ def test_build_attribute_pool_includes_infobox_and_main_text():
     text_attr = next(item for item in pool if item["source"] == "main_text")
     assert text_attr["sourceIds"] == ["left-s-1-2"]
     assert text_attr["paragraphId"] == "left-p-1"
+
+
+def test_build_attribute_pool_names_infobox_subrows_with_parent_key():
+    article = {
+        "infobox": [
+            {"id": "left-info-1", "key": "Life expectancy", "valueText": "72.03 years (2023 est.)"},
+            {"id": "left-info-2", "key": "• male", "valueText": "70.52 years (2023 est.)"},
+            {"id": "left-info-3", "key": "• female", "valueText": "73.60 years (2023 est.)"},
+        ],
+        "paragraphs": [],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    assert [item["key"] for item in pool] == [
+        "Life expectancy",
+        "Life expectancy: male",
+        "Life expectancy: female",
+    ]
+
+
+def test_build_attribute_pool_includes_body_table_main_text_attributes_without_llm():
+    article = {
+        "infobox": [
+            {"id": "left-info-1", "key": "Country", "valueText": "Example"},
+        ],
+        "bodyTables": [
+            {
+                "id": "left-table-1-col-2",
+                "key": "Capacity",
+                "valueText": "2020: 250; 2021: 400; 2022: 700",
+                "source": "main_text",
+                "side": "left",
+            }
+        ],
+        "paragraphs": [],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    table_attr = next(item for item in pool if item["source"] == "main_text")
+    assert table_attr["key"] == "Capacity"
+    assert table_attr["valueText"] == "2020: 250; 2021: 400; 2022: 700"
+    assert table_attr["sourceIds"] == ["left-table-1-col-2"]
+
+
+def test_build_attribute_pool_merges_duplicate_text_attribute_as_related_evidence():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "GDP growth",
+                "valueText": "2.3% (2024)",
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "GDP growth was 2.3% in 2024.",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "GDP growth was 2.3% in 2024."},
+                ],
+            }
+        ],
+    }
+
+    class DuplicateLLM:
+        def extract_text_attributes(self, side, paragraphs):
+            return [
+                {
+                    "key": "GDP growth",
+                    "valueText": "2.3% in 2024",
+                    "paragraphId": "left-p-1",
+                    "sentenceIds": ["left-s-1-1"],
+                }
+            ]
+
+    pool = build_attribute_pool(article, "left", DuplicateLLM())
+
+    assert len(pool) == 1
+    assert pool[0]["sourceIds"] == ["left-info-1"]
+    assert pool[0]["relatedSourceIds"] == ["left-s-1-1"]
+
+
+def test_build_attribute_pool_links_infobox_to_matching_text_without_llm():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "GDP growth",
+                "valueText": "2.3% (2024)",
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "GDP growth was 2.3% in 2024. Exports expanded later.",
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "GDP growth was 2.3% in 2024."},
+                    {"id": "left-s-1-2", "text": "Exports expanded later."},
+                ],
+            }
+        ],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    assert len(pool) == 1
+    assert pool[0]["sourceIds"] == ["left-info-1"]
+    assert pool[0]["relatedSourceIds"] == ["left-s-1-1"]
+
+
+def test_build_attribute_pool_links_infobox_to_acronym_text_evidence():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "Human Development Index",
+                "valueText": "0.929 very high (2023) (19th)",
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "The country recorded an HDI of 0.929 in 2023, ranking 19th globally.",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "The country recorded an HDI of 0.929 in 2023, ranking 19th globally.",
+                    },
+                ],
+            }
+        ],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    assert pool[0]["relatedSourceIds"] == ["left-s-1-1"]
+
+
+def test_build_attribute_pool_preserves_structured_values_from_infobox_and_text():
+    article = {
+        "infobox": [
+            {
+                "id": "left-info-1",
+                "key": "Main industries",
+                "valueText": "Electronics Telecommunications Shipbuilding",
+                "structuredValues": [
+                    {"label": "Electronics", "value": "Electronics", "kind": "list_item"},
+                    {"label": "Telecommunications", "value": "Telecommunications", "kind": "list_item"},
+                ],
+            }
+        ],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "The main industries are electronics and shipbuilding.",
+                "sentences": [{"id": "left-s-1-1", "text": "The main industries are electronics and shipbuilding."}],
+            }
+        ],
+    }
+
+    class StructuredLLM:
+        def extract_text_attributes(self, side, paragraphs):
+            return [
+                {
+                    "key": "Main industries",
+                    "valueText": "electronics; shipbuilding",
+                    "paragraphId": "left-p-1",
+                    "sentenceIds": ["left-s-1-1"],
+                    "structuredValues": [
+                        {"label": "electronics", "value": "electronics", "kind": "list_item"},
+                        {"label": "shipbuilding", "value": "shipbuilding", "kind": "list_item"},
+                    ],
+                }
+            ]
+
+    pool = build_attribute_pool(article, "left", StructuredLLM())
+
+    assert pool[0]["structuredValues"] == [
+        {"label": "Electronics", "value": "Electronics", "kind": "list_item"},
+        {"label": "Telecommunications", "value": "Telecommunications", "kind": "list_item"},
+    ]
+    assert pool[1]["structuredValues"] == [
+        {"label": "electronics", "value": "electronics", "kind": "list_item"},
+        {"label": "shipbuilding", "value": "shipbuilding", "kind": "list_item"},
+    ]
+
+
+def test_llm_client_refines_extracted_values_from_items_response():
+    client = LLMClient(LLMConfig(model="test", base_url="http://example.test", api_key=None))
+
+    def fake_chat_json(messages):
+        assert "ruleValues" in messages[-1]["content"]
+        assert "lowest 10%" in messages[-1]["content"]
+        return {
+            "items": [
+                {
+                    "value": 2.7,
+                    "label": "lowest 10%",
+                    "year": 2016,
+                    "rawText": "lowest 10%: 2.7%",
+                    "confidence": 0.9,
+                }
+            ]
+        }
+
+    client.chat_json = fake_chat_json
+
+    assert client.refine_extracted_values(
+        key="Income share",
+        value_text="lowest 10%: 2.7%",
+        rule_values=[{"value": 10.0}, {"value": 2.7}],
+        data_type="Proportional",
+    ) == [
+        {
+            "value": 2.7,
+            "label": "lowest 10%",
+            "year": 2016,
+            "rawText": "lowest 10%: 2.7%",
+            "confidence": 0.9,
+        }
+    ]
+
+
+def test_llm_client_extracts_paired_text_attributes_with_data_first_prompt():
+    client = LLMClient(LLMConfig(model="test", base_url="http://example.test", api_key=None))
+    captured = {}
+    pair = {
+        "dimensionLabel": "Historical emergence",
+        "comparisonQuestion": "When did it emerge?",
+        "left": {"valueText": "founded in 1956", "sentenceIds": ["left-s-1-1"]},
+        "right": {"valueText": "emerged in the 1950s", "sentenceIds": ["right-s-1-1"]},
+        "dataPriority": True,
+        "dataRole": "emergence_time",
+        "confidence": 0.9,
+    }
+
+    def fake_chat_json(messages):
+        captured["messages"] = messages
+        return {"pairs": [pair]}
+
+    client.chat_json = fake_chat_json
+
+    result = client.extract_text_attribute_pairs(
+        left_body={
+            "side": "left",
+            "paragraphs": [
+                {"id": "left-p-1", "text": "AI was founded in 1956.", "sentences": [{"id": "left-s-1-1", "text": "AI was founded in 1956."}]}
+            ],
+        },
+        right_body={
+            "side": "right",
+            "paragraphs": [
+                {"id": "right-p-1", "text": "ML emerged in the 1950s.", "sentences": [{"id": "right-s-1-1", "text": "ML emerged in the 1950s."}]}
+            ],
+        },
+        left_candidates=[{"claimText": "AI was founded in 1956.", "sentenceIds": ["left-s-1-1"]}],
+        right_candidates=[{"claimText": "ML emerged in the 1950s.", "sentenceIds": ["right-s-1-1"]}],
+        infobox_context={"left": [], "right": []},
+    )
+
+    assert result == {"pairs": [pair]}
+    assert [message["role"] for message in captured["messages"]] == ["system", "user"]
+    system_prompt = captured["messages"][0]["content"]
+    prompt = captured["messages"][-1]["content"]
+    assert "Return JSON only" in system_prompt
+    assert "source page main text" in system_prompt
+    assert "Wikipedia article main text" not in system_prompt
+    assert "Return this JSON shape only" in prompt
+    assert "Do not classify the article pair before extraction" in prompt
+    assert "Do not fill or follow a fixed template" in prompt
+    assert "Discover comparison dimensions from the full body text" in prompt
+    assert "Prioritize chartable measurements found in ordinary prose paragraphs" in prompt
+    assert "Scan every provided paragraph before choosing pairs" in prompt
+    assert "Do not overrepresent early paragraphs" in prompt
+    assert "cover early, middle, and late sections" in prompt
+    assert "Extract measurements from prose sentences even when they are not formatted as tables or infobox rows" in prompt
+    assert "Do not stop after finding table-like rows" in prompt
+    assert "If one sentence contains multiple comparable measurements, split them into separate dimensions" in prompt
+    assert "For every chartable pair, populate both left.values and right.values" in prompt
+    assert "standard comparable rows" in prompt
+    assert "Do not put an aggregate total and component categories in the same values array" in prompt
+    assert "Alcohol consumption per capita: total" in prompt
+    assert "Alcohol consumption per capita: beverage categories" in prompt
+    assert "Return every strongly supported comparable measurement pair you find" in prompt
+    assert "Treat candidateHints as a coverage checklist" in prompt
+    assert "For each candidateHint with a same-metric counterpart" in prompt
+    assert "do not omit it merely because earlier pairs were already found" in prompt
+    assert "Do not mark standalone years, dates, founding years, or emergence years as dataPriority" in prompt
+    assert "Use dataPriority only for comparable measurements" in prompt
+    assert "same semantic role" in prompt
+    assert "Return only dimensions that have evidence on both sides" in prompt
+    assert "Use only provided sentence IDs" in prompt
+    assert "Do not invent values" in prompt
+    assert "Keep valueText short and directly supported" in prompt
+    assert '"values":[{"value":number' in prompt
+    assert '"unit":string|null' in prompt
+    assert '"valueKind":"aggregate|component|rate|share|point"|null' in prompt
+    assert "rawText" in prompt
+    assert "leftBody" in prompt
+    assert "rightBody" in prompt
+    assert "candidateHints" in prompt
+    assert "infoboxContext" in prompt
+
+
+def test_llm_client_reviews_paired_text_attributes_for_comparability():
+    client = LLMClient(LLMConfig(model="test", base_url="http://example.test", api_key=None))
+    captured = {}
+    reviewed_pair = {
+        "dimensionLabel": "Broadband fixed subscriptions per 100 inhabitants",
+        "comparisonQuestion": "How do broadband fixed subscriptions per 100 inhabitants compare?",
+        "left": {
+            "valueText": "2 subscriptions per 100 inhabitants in 2022",
+            "sentenceIds": ["left-s-1-2"],
+            "values": [{"value": 2, "year": 2022, "rawText": "2"}],
+        },
+        "right": {
+            "valueText": "5 subscriptions per 100 inhabitants in 2023",
+            "sentenceIds": ["right-s-1-2"],
+            "values": [{"value": 5, "year": 2023, "rawText": "5"}],
+        },
+        "dataPriority": True,
+        "dataRole": "quantity",
+        "confidence": 0.94,
+    }
+
+    def fake_chat_json(messages):
+        captured["messages"] = messages
+        return {"pairs": [reviewed_pair]}
+
+    client.chat_json = fake_chat_json
+
+    result = client.review_text_attribute_pairs(
+        left_body={"side": "left", "paragraphs": []},
+        right_body={"side": "right", "paragraphs": []},
+        infobox_context={"left": [], "right": []},
+        pair_response={"pairs": [reviewed_pair]},
+    )
+
+    assert result == {"pairs": [reviewed_pair]}
+    assert [message["role"] for message in captured["messages"]] == ["system", "user"]
+    system_prompt = captured["messages"][0]["content"]
+    prompt = captured["messages"][-1]["content"]
+    assert "strict comparison-data reviewer" in system_prompt
+    assert "same metric" in prompt
+    assert "units or denominators differ" in prompt
+    assert "total subscriptions vs subscriptions per 100 inhabitants" in prompt
+    assert "aggregate total and component categories in one values array" in prompt
+    assert "split it into standard comparable rows" in prompt
+    assert "misleading chart" in prompt
+    assert "Return only pairs that are logically comparable and chart-safe" in prompt
+    assert "Prefer fewer high-quality pairs over many weak pairs" in prompt
+    assert "candidatePairs" in prompt
+
+
+def test_llm_client_extracts_single_side_text_attributes_with_prose_measurement_prompt():
+    client = LLMClient(LLMConfig(model="test", base_url="http://example.test", api_key=None))
+    captured = {}
+    result_attributes = [
+        {
+            "key": "Operating margin",
+            "valueText": "operating margin reached 18.4% in 2024",
+            "paragraphId": "left-p-1",
+            "sentenceIds": ["left-s-1-1"],
+            "confidence": 0.91,
+        }
+    ]
+
+    def fake_chat_json(messages):
+        captured["messages"] = messages
+        return result_attributes
+
+    client.chat_json = fake_chat_json
+
+    result = client.extract_text_attributes(
+        "left",
+        [
+            {
+                "id": "left-p-1",
+                "text": "Operating margin reached 18.4% in 2024 after logistics costs declined.",
+                "sentences": [
+                    {
+                        "id": "left-s-1-1",
+                        "text": "Operating margin reached 18.4% in 2024 after logistics costs declined.",
+                    }
+                ],
+            }
+        ],
+    )
+
+    assert result == result_attributes
+    prompt = captured["messages"][-1]["content"]
+    system_prompt = captured["messages"][0]["content"]
+    assert "source page main text" in system_prompt
+    assert "Wikipedia article main text" not in system_prompt
+    assert "Extract prose measurements, not just overview facts" in prompt
+    assert "Scan every provided paragraph and sentence" in prompt
+    assert "Do not overrepresent early paragraphs" in prompt
+    assert "If one sentence contains multiple measurable attributes, return separate items" in prompt
+    assert "Do not stop after finding table-like or infobox-like attributes" in prompt
+    assert "Preserve numbers, units, years, and category labels in valueText" in prompt
 
 
 def test_build_attribute_pool_drops_text_attribute_with_invalid_source_id():
@@ -240,6 +644,43 @@ def test_build_attribute_pool_rejects_blank_text_key_or_value_and_missing_senten
     assert build_attribute_pool(article, "left", NoisyLLM()) == []
 
 
+def test_build_attribute_pool_adds_rule_text_attributes_without_llm_for_concept_articles():
+    article = {
+        "infobox": [],
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": (
+                    "Artificial intelligence is intelligence exhibited by machines. "
+                    "The field was founded as an academic discipline in 1956."
+                ),
+                "sentences": [
+                    {"id": "left-s-1-1", "text": "Artificial intelligence is intelligence exhibited by machines."},
+                    {"id": "left-s-1-2", "text": "The field was founded as an academic discipline in 1956."},
+                ],
+            },
+            {
+                "id": "left-p-2",
+                "text": "Applications include search engines, recommendation systems, and robotics.",
+                "sentences": [
+                    {
+                        "id": "left-s-2-1",
+                        "text": "Applications include search engines, recommendation systems, and robotics.",
+                    },
+                ],
+            },
+        ],
+    }
+
+    pool = build_attribute_pool(article, "left", None)
+
+    assert [(item["key"], item["sourceIds"]) for item in pool] == [
+        ("Overview", ["left-s-1-1"]),
+        ("History", ["left-s-1-2"]),
+        ("Applications", ["left-s-2-1"]),
+    ]
+
+
 def test_build_attribute_pool_ignores_non_list_llm_output():
     article = {
         "infobox": [],
@@ -298,6 +739,13 @@ def test_build_attribute_pool_times_out_slow_text_attribute_extraction():
     assert [item["key"] for item in pool] == ["GDP growth"]
 
 
+def test_text_attribute_timeout_caps_slow_provider_for_initial_compare():
+    class SlowProviderLLM:
+        config = SimpleNamespace(timeout_seconds=20)
+
+    assert _text_attribute_timeout(SlowProviderLLM()) == 8.0
+
+
 def test_prompt_paragraphs_prioritizes_numeric_text_and_limits_payload():
     paragraphs = [
         {
@@ -325,6 +773,74 @@ def test_prompt_paragraphs_prioritizes_numeric_text_and_limits_payload():
     assert "p-plain" not in [paragraph["id"] for paragraph in prompt_paragraphs]
     assert all(len(paragraph["sentences"]) == MAX_SENTENCES_PER_PARAGRAPH for paragraph in prompt_paragraphs)
     assert all(len(paragraph["text"]) <= 700 for paragraph in prompt_paragraphs)
+
+
+def test_prompt_article_body_keeps_full_main_text_order_with_sentence_ids():
+    article = {
+        "title": "Example",
+        "paragraphs": [
+            {
+                "id": "left-p-1",
+                "text": "The company operates marketplaces and cloud services.",
+                "sentences": [{"id": "left-s-1-1", "text": "The company operates marketplaces and cloud services."}],
+            },
+            {
+                "id": "left-p-2",
+                "text": "Operating margin reached 18.4% in 2024 after logistics costs declined.",
+                "sentences": [{"id": "left-s-2-1", "text": "Operating margin reached 18.4% in 2024 after logistics costs declined."}],
+            },
+        ],
+    }
+
+    body = prompt_article_body(article, "left")
+
+    assert body["side"] == "left"
+    assert body["title"] == "Example"
+    assert body["truncated"] is False
+    assert [paragraph["id"] for paragraph in body["paragraphs"]] == ["left-p-1", "left-p-2"]
+    assert body["paragraphs"][1]["sentences"] == [
+        {"id": "left-s-2-1", "text": "Operating margin reached 18.4% in 2024 after logistics costs declined."}
+    ]
+
+
+def test_prompt_article_body_samples_late_paragraphs_when_body_exceeds_budget(monkeypatch):
+    monkeypatch.setattr(llm_client, "MAX_BODY_PROMPT_CHARS", 12_000)
+    article = {
+        "title": "Long report",
+        "paragraphs": [
+            {
+                "id": f"left-p-{index}",
+                "text": (f"Paragraph {index} background. " + "General operating context. " * 45),
+                "sentences": [
+                    {
+                        "id": f"left-s-{index}-1",
+                        "text": (f"Paragraph {index} background. " + "General operating context. " * 45),
+                    }
+                ],
+            }
+            for index in range(1, 50)
+        ]
+        + [
+            {
+                "id": "left-p-50",
+                "text": "Late section reported net income of $4 billion in 2024.",
+                "sentences": [
+                    {
+                        "id": "left-s-50-1",
+                        "text": "Late section reported net income of $4 billion in 2024.",
+                    }
+                ],
+            }
+        ],
+    }
+
+    body = prompt_article_body(article, "left")
+
+    paragraph_ids = [paragraph["id"] for paragraph in body["paragraphs"]]
+    assert body["truncated"] is True
+    assert "left-p-1" in paragraph_ids
+    assert "left-p-50" in paragraph_ids
+    assert paragraph_ids == sorted(paragraph_ids, key=lambda value: int(value.rsplit("-", 1)[1]))
 
 
 def test_llm_client_disabled_config_does_not_instantiate_openai():

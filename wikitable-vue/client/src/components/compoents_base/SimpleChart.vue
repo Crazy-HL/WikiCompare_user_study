@@ -1,5 +1,14 @@
 <template>
 	<div class="simple-chart">
+		<div
+			v-if="isCompressedScale"
+			class="compressed-scale-badge"
+			title="由于共享线性坐标会使一侧图形不可见，当前使用共享压缩刻度。图中标签和悬浮提示仍为原始数值。">
+			压缩刻度
+		</div>
+		<div v-if="compressedTrendText" class="compressed-trend-change">
+			{{ compressedTrendText }}
+		</div>
 		<!-- 文本显示 -->
 		<template v-if="visualization === 'text-only'">
 			<!-- GDP Rank 的直接显示 -->
@@ -77,7 +86,29 @@
 <script>
 	import { computed, ref, onMounted, watch, nextTick } from "vue";
 	import * as d3 from "d3";
-	const { barChartDomain, formatChartNumber, xLabelForPoint } = require("@/js/chartValueDisplay");
+	const {
+		barChartDomain,
+		categoryLabelForPoint,
+		compactMiddleText,
+		displayTextForPoint,
+		formatChartNumber,
+		normalizePreviewChartItems,
+		pieLegendLabelForPoint,
+		shouldShowPreviewLabel,
+		shortValueText,
+		xLabelForPoint
+	} = require("@/js/chartValueDisplay");
+	const {
+		CHART_COLORS,
+		CHART_REMAINDER_COLOR,
+		categoryColor
+	} = require("@/js/chartTheme");
+	const {
+		SYMLOG_CONSTANT,
+		adaptiveDomain,
+		detectAdaptiveScale,
+		trendChange,
+	} = require("@/js/adaptiveChartScale");
 
 	export default {
 		props: {
@@ -108,6 +139,14 @@
 			categoryColors: {
 				type: Object,
 				default: () => ({})
+			},
+			side: {
+				type: String,
+				default: ""
+			},
+			scaleContext: {
+				type: Object,
+				default: null
 			}
 		},
 
@@ -122,9 +161,108 @@
 			const barContainer = ref(null);
 			const lineContainer = ref(null);
 			const stackedContainer = ref(null);
+			const activeScaleDecision = ref({
+				mode: "linear",
+				constrainedSide: null,
+				reason: null,
+				diagnostics: {},
+			});
+			const resetScaleDecision = (drawableHeight = 0) => {
+				activeScaleDecision.value = {
+					mode: "linear",
+					constrainedSide: null,
+					reason: null,
+					diagnostics: { drawableHeight },
+				};
+			};
+			const supportsAdaptiveScale = computed(() =>
+				["bar-chart", "line-chart"].includes(props.visualization)
+			);
+			const hasValidScaleContext = computed(() => {
+				const context = props.scaleContext;
+				if (!context || context.visualization !== props.visualization) return false;
+				if (!Array.isArray(context.leftValues) || !Array.isArray(context.rightValues)) {
+					return false;
+				}
+				if (
+					!Array.isArray(context.domain) ||
+					context.domain.length !== 2 ||
+					!context.domain.every(value => Number.isFinite(Number(value))) ||
+					Number(context.domain[0]) === Number(context.domain[1])
+				) {
+					return false;
+				}
+				return [...context.leftValues, ...context.rightValues].some(value =>
+					Number.isFinite(Number(value))
+				);
+			});
+			const isCompressedScale = computed(
+				() =>
+					hasData.value &&
+					hasValidScaleContext.value &&
+					supportsAdaptiveScale.value &&
+					activeScaleDecision.value.mode !== "linear"
+			);
+			const contextValues = computed(() => [
+				...(props.scaleContext?.leftValues || []),
+				...(props.scaleContext?.rightValues || []),
+			]);
+			const activeDomain = computed(() =>
+				adaptiveDomain(
+					contextValues.value,
+					activeScaleDecision.value.mode,
+					props.scaleContext?.domain || props.yDomain
+				)
+			);
+			const updateScaleDecision = (height, margin) => {
+				const drawableHeight = Math.max(0, height - margin.top - margin.bottom);
+				if (
+					!hasData.value ||
+					!supportsAdaptiveScale.value ||
+					!hasValidScaleContext.value
+				) {
+					resetScaleDecision(drawableHeight);
+					return;
+				}
+				activeScaleDecision.value = detectAdaptiveScale({
+					leftValues: props.scaleContext.leftValues,
+					rightValues: props.scaleContext.rightValues,
+					domain: props.scaleContext.domain,
+					drawableHeight,
+					visualization: props.visualization,
+				});
+			};
+			const compressedTrendText = computed(() => {
+				if (!isCompressedScale.value || props.visualization !== "line-chart") {
+					return "";
+				}
+				const change = trendChange(lineData.value.map(point => ({
+					year: point.x,
+					value: point.originalValue
+				})));
+				if (change.absoluteChange === null) return "";
+				if (change.percentChange === null) {
+					return `变化 ${formatNumber(change.absoluteChange)}`;
+				}
+				const sign = change.percentChange > 0 ? "+" : "";
+				return `变化 ${sign}${change.percentChange.toFixed(1)}%`;
+			});
+			const createYScale = (domain, range) => {
+				if (activeScaleDecision.value.mode === "log") {
+					return d3.scaleLog().domain(domain).range(range).clamp(true);
+				}
+				if (activeScaleDecision.value.mode === "symlog") {
+					return d3.scaleSymlog()
+						.constant(SYMLOG_CONSTANT)
+						.domain(domain)
+						.range(range)
+						.clamp(true);
+				}
+				return d3.scaleLinear().domain(domain).range(range);
+			};
 
-			const colors = ["#3498db", "#e74c3c", "#2ecc71", "#f39c12", "#9b59b6"];
-			const remainderColor = "#f0f0f0";
+			const colors = CHART_COLORS;
+			const remainderColor = CHART_REMAINDER_COLOR;
 
 			const isYearEntry = value => {
 				if (typeof value !== "string") return false;
@@ -153,55 +291,59 @@
 				return 0;
 			};
 
-			const displayTextForItem = item => {
-				if (!item) return "-";
-				return String(item.display || item.raw || item.value || "-").trim();
-			};
-
-			const shortValueText = item => {
-				const display = displayTextForItem(item);
-				const colonIndex = display.lastIndexOf(":");
-				return colonIndex >= 0 ? display.slice(colonIndex + 1).trim() : display;
-			};
-
 			const compactSvgText = (text, maxChars = 18) => {
 				const value = String(text || "-").replace(/\s+/g, " ").trim();
 				return value.length > maxChars ? `${value.slice(0, maxChars - 1)}…` : value;
 			};
 
-			// 饼图专用：统一格式化名称的函数
-			const formatPieLabelName = name => {
-				if (!name || typeof name !== "string") return "项目";
-
-				// 移除数字和百分比符号
-				let cleaned = name.replace(/:?\s*\d+\.?\d*%?/g, "").trim();
-
-				// 如果是空字符串，返回默认值
-				if (!cleaned) return "项目";
-
-				// 特殊处理常见的缩写和专有名词
-				const specialCases = {
-					gdp: "GDP",
-					cpi: "CPI",
-					usa: "USA",
-					uk: "UK",
-					eu: "EU",
-					asean: "ASEAN",
-					nafta: "NAFTA",
-					who: "WHO",
-					un: "UN",
-					us: "US"
-				};
-
-				// 检查是否是特殊缩写
-				const lowerName = cleaned.toLowerCase();
-				if (specialCases[lowerName]) {
-					return specialCases[lowerName];
+			const originalDisplayText = item => {
+				const display = item?.originalDisplay ?? item?.fullDisplay ?? item?.display;
+				if (display !== null && display !== undefined && String(display).trim()) {
+					return String(display);
 				}
-
-				// 首字母大写，其余小写
-				return cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+				return formatNumber(item?.originalValue ?? item?.value ?? item?.y);
 			};
+
+			const previewTextAnchor = (index, total) => {
+				if (total <= 1) return "middle";
+				if (index === 0) return "start";
+				if (index === total - 1) return "end";
+				return "middle";
+			};
+
+			const previewMaxLabels = (width, desired = 3) => {
+				const innerWidth = Math.max(0, Number(width) || 0);
+				return Math.max(2, Math.min(desired, Math.floor(innerWidth / 54) || 2));
+			};
+
+			const previewHorizontalGap = (width, count) => {
+				if (count <= 1) return 0;
+				return Math.max(4, Math.min(8, width * 0.035));
+			};
+
+			const previewBarWidth = (width, margin, count) => {
+				const safeCount = Math.max(1, count);
+				const availableWidth = Math.max(12, width - margin.left - margin.right);
+				const gap = previewHorizontalGap(width, safeCount);
+				const previewSingleBarFill = 0.72;
+				const previewSingleBarMaxWidth = 112;
+				const maxBySpace =
+					safeCount === 1
+						? availableWidth * previewSingleBarFill
+						: (availableWidth - gap * (safeCount - 1)) / safeCount;
+				const maxByDensity =
+					safeCount === 1 ? previewSingleBarMaxWidth : safeCount === 2 ? 88 : 72;
+				return Math.max(10, Math.min(maxByDensity, maxBySpace));
+			};
+
+			const previewLinePadding = (pointCount, width) => {
+				if (pointCount <= 2) return 0.08;
+				if (width < 150) return 0.1;
+				return 0.12;
+			};
+
+			const previewStackSideGutter = width =>
+				Math.min(28, Math.max(18, width * 0.15));
 
 			const processedField = computed(() => {
 				const field = props.field;
@@ -216,7 +358,13 @@
 								label: item.label || item.raw,
 								parent: item.parent || null,
 								year: item.year || null,
-								display: item.display || item.raw || item.value
+								display: item.display || item.raw || item.value,
+								originalDisplay: item.originalDisplay ?? item.display ?? item.rawText ?? item.raw,
+								rawText: item.rawText || null,
+								unit: item.unit || null,
+								normalizedBaseValue: item.normalizedBaseValue,
+								previewDivisor: item.previewDivisor,
+								stripPreviewUnit: item.stripPreviewUnit === true
 							};
 						}
 						return {
@@ -236,6 +384,10 @@
 					);
 			});
 
+			const normalizedPreviewField = computed(() =>
+				normalizePreviewChartItems(processedField.value, props.type)
+			);
+
 			const getRawTextForRank = field => {
 				if (!field || field.length === 0) return "-";
 				return field.map(item => item.raw).join("\n");
@@ -243,8 +395,18 @@
 
 			onMounted(() => {
 				watch(
-					() => [processedField.value, props.visualization, props.unifiedMax],
+					() => [
+						processedField.value,
+						props.visualization,
+						props.unifiedMax,
+						props.yDomain,
+						props.scaleContext,
+						props.side,
+					],
 					() => {
+						if (!hasData.value || !supportsAdaptiveScale.value) {
+							resetScaleDecision();
+						}
 						nextTick(() => {
 							if (
 								props.visualization === "pie-chart" &&
@@ -305,7 +467,7 @@
 					  ]
 					: pieData.value.map((d, i) => ({
 							...d,
-							color: colors[i % colors.length],
+							color: d.color || colors[i % colors.length],
 							isMainValue: true
 					  }));
 				const pie = d3
@@ -317,6 +479,10 @@
 					.innerRadius(0)
 					.outerRadius(radius * 0.9)
 					.cornerRadius(2);
+				const labelArc = d3
+					.arc()
+					.innerRadius(radius * 0.62)
+					.outerRadius(radius * 0.62);
 				const arcs = chart
 					.selectAll(".arc")
 					.data(pie(processedData))
@@ -381,6 +547,30 @@
 							value: d.data.value
 						});
 					});
+				if (!isSingleValue && pieData.value.length > 1) {
+					const labelData = pie(processedData).filter(d => !d.data.isRemainder);
+					const pieValueLabelText = d => compactSvgText(
+						d.data.display || formatChartNumber(d.data.displayValue ?? d.data.value, props.type),
+						9
+					);
+					chart
+						.selectAll(".pie-value-label")
+						.data(labelData)
+						.enter()
+						.append("text")
+						.attr("class", "pie-value-label")
+						.attr("x", d => labelArc.centroid(d)[0])
+						.attr("y", d => labelArc.centroid(d)[1] + 2)
+						.attr("text-anchor", "middle")
+						.attr("font-size", "8px")
+						.attr("font-weight", "700")
+						.attr("fill", "#111827")
+						.attr("paint-order", "stroke")
+						.attr("stroke", "rgba(255,255,255,0.88)")
+						.attr("stroke-width", 2)
+						.attr("stroke-linejoin", "round")
+						.text(pieValueLabelText);
+				}
 				if (isSingleValue) {
 					chart
 						.append("text")
@@ -410,7 +600,7 @@
 					const legendStartX = 6;
 					const legendStartY = Math.min(containerHeight - 30, centerY + radius + 8);
 					pieData.value.slice(0, 4).forEach((d, i) => {
-						const label = d.name.length > 12 ? `${d.name.slice(0, 11)}…` : d.name;
+						const label = compactMiddleText(d.name, 16);
 						const legendItem = legend
 							.append("g")
 							.attr(
@@ -423,7 +613,7 @@
 							.append("rect")
 							.attr("width", legendItemSize)
 							.attr("height", legendItemSize)
-							.attr("fill", colors[i % colors.length]);
+							.attr("fill", d.color || colors[i % colors.length]);
 						legendItem
 							.append("text")
 							.attr("x", legendItemSize + 2)
@@ -443,7 +633,8 @@
 					container.node().clientWidth,
 					container.node().clientHeight
 				];
-				const margin = { top: 10, right: 10, bottom: 30, left: 10 };
+				const margin = { top: 14, right: 8, bottom: 12, left: 8 };
+				updateScaleDecision(height, margin);
 				const svg = container
 					.append("svg")
 					.attr("width", "100%")
@@ -455,11 +646,11 @@
 						: props.unifiedMax
 							? [0, props.unifiedMax]
 							: barChartDomain(simpleBarData.value.map(d => d.value));
-				const y = d3
-					.scaleLinear()
-					.domain([minYValue, maxYValue])
-					.range([height - margin.bottom, margin.top]);
-				if (minYValue < 0 && maxYValue > 0) {
+				const renderDomain = isCompressedScale.value
+					? activeDomain.value
+					: [minYValue, maxYValue];
+				const y = createYScale(renderDomain, [height - margin.bottom, margin.top]);
+				if (!isCompressedScale.value && minYValue < 0 && maxYValue > 0) {
 					svg
 						.append("line")
 						.attr("x1", margin.left)
@@ -471,37 +662,72 @@
 						.attr("stroke-dasharray", "3 2");
 				}
 				const barCount = simpleBarData.value.length;
-				const barWidth = Math.min(
-					60,
-					(width - margin.left - margin.right) / barCount - 10
-				);
+				const barGap = previewHorizontalGap(width, barCount);
+				const barWidth = previewBarWidth(width, margin, barCount);
 				const startX =
 					(width -
 						barCount * barWidth -
-						(barCount > 1 ? (barCount - 1) * 10 : 0)) /
+						(barCount > 1 ? (barCount - 1) * barGap : 0)) /
 					2;
+				const renderCompressedPoints = () => {
+					svg
+						.selectAll(".compressed-point")
+						.data(simpleBarData.value)
+						.enter()
+						.append("circle")
+						.attr("class", "compressed-point")
+						.attr("cx", (d, i) => startX + i * (barWidth + barGap) + barWidth / 2)
+						.attr("cy", d => y(d.value))
+						.attr("r", 4)
+						.attr("fill", (d, i) => colors[i % colors.length])
+						.append("title")
+						.text(d => originalDisplayText(d));
+				};
+				const compactBarLabelText = d => compactSvgText(d.display, 10);
+
+				if (isCompressedScale.value) {
+					renderCompressedPoints();
+				} else {
+					svg
+						.selectAll(".bar")
+						.data(simpleBarData.value)
+						.enter()
+						.append("rect")
+						.attr("x", (d, i) => startX + i * (barWidth + barGap))
+						.attr("y", d => y(Math.max(0, d.value)))
+						.attr("width", barWidth)
+						.attr("height", d => Math.abs(y(d.value) - y(0)))
+						.attr("fill", (d, i) => colors[i % colors.length])
+						.style("opacity", 0.8);
+				}
 				svg
-					.selectAll(".bar")
-					.data(simpleBarData.value)
-					.enter()
-					.append("rect")
-					.attr("x", (d, i) => startX + i * (barWidth + 10))
-					.attr("y", d => y(Math.max(0, d.value)))
-					.attr("width", barWidth)
-					.attr("height", d => Math.abs(y(d.value) - y(0)))
-					.attr("fill", (d, i) => colors[i % colors.length])
-					.style("opacity", 0.8);
-				svg
-					.selectAll(".bar-label")
-					.data(simpleBarData.value)
+					.selectAll(".bar-value-label")
+					.data(simpleBarData.value
+						.map((item, index) => ({ ...item, index }))
+						.filter(item =>
+							shouldShowPreviewLabel(item.index, simpleBarData.value.length, width, {
+								maxVisible: previewMaxLabels(width, 3)
+							})
+					))
 					.enter()
 					.append("text")
-					.attr("x", (d, i) => startX + i * (barWidth + 10) + barWidth / 2)
-					.attr("y", height - 5)
+					.attr("class", "bar-value-label")
+					.attr("x", d => startX + d.index * (barWidth + barGap) + barWidth / 2)
+					.attr("y", d =>
+						isCompressedScale.value
+							? Math.max(8, y(d.value) - 6)
+							: d.value >= 0
+								? Math.max(8, y(d.value) - 5)
+								: Math.min(height - 4, y(d.value) + 11)
+					)
 					.attr("text-anchor", "middle")
-					.attr("font-size", "10px")
-					.attr("fill", "#000000")
-					.text(d => compactSvgText(d.display, simpleBarData.value.length <= 2 ? 18 : 14));
+					.attr("font-size", "9px")
+					.attr("fill", "#1f2937")
+					.text(d =>
+						isCompressedScale.value
+							? compactSvgText(originalDisplayText(d), 10)
+							: compactBarLabelText(d)
+					);
 			};
 
 			const renderLineChart = () => {
@@ -512,7 +738,8 @@
 					container.node().clientWidth,
 					container.node().clientHeight
 				];
-				const margin = { top: 10, right: 10, bottom: 30, left: 10 };
+				const margin = { top: 14, right: 8, bottom: 12, left: 8 };
+				updateScaleDecision(height, margin);
 				const svg = container
 					.append("svg")
 					.attr("width", "100%")
@@ -522,14 +749,19 @@
 					.scalePoint()
 					.domain(lineData.value.map(d => d.xLabel))
 					.range([margin.left, width - margin.right])
-					.padding(0.45);
-				const yExtent = d3.extent(lineData.value, d => d.y);
+					.padding(previewLinePadding(lineData.value.length, width));
+				const yExtent =
+					Array.isArray(props.yDomain) && props.yDomain.length === 2
+						? props.yDomain
+						: d3.extent(lineData.value, d => d.y);
 				const yPadding =
 					yExtent[0] === yExtent[1] ? Math.max(1, Math.abs(yExtent[0]) * 0.15) : 0;
-				const y = d3
-					.scaleLinear()
-					.domain([yExtent[0] - yPadding, yExtent[1] + yPadding])
-					.range([height - margin.bottom, margin.top]);
+				const linearDomain =
+					Array.isArray(props.yDomain) && props.yDomain.length === 2
+						? yExtent
+						: [yExtent[0] - yPadding, yExtent[1] + yPadding];
+				const renderDomain = isCompressedScale.value ? activeDomain.value : linearDomain;
+				const y = createYScale(renderDomain, [height - margin.bottom, margin.top]);
 				const line = d3
 					.line()
 					.x(d => x(d.xLabel))
@@ -539,7 +771,7 @@
 					.append("path")
 					.datum(lineData.value)
 					.attr("fill", "none")
-					.attr("stroke", "#3498db")
+					.attr("stroke", colors[0])
 					.attr("stroke-width", 2)
 					.attr("d", line);
 				svg
@@ -550,75 +782,43 @@
 					.attr("cx", d => x(d.xLabel))
 					.attr("cy", d => y(d.y))
 					.attr("r", 3)
-					.attr("fill", "#3498db")
+					.attr("fill", colors[0])
 					.append("title")
-					.text(d => d.fullDisplay || d.display || formatNumber(d.y));
-				svg
-					.selectAll(".line-x-label")
-					.data(lineData.value)
-					.enter()
-					.append("text")
-					.attr("class", "line-x-label")
-					.attr("x", d => x(d.xLabel))
-					.attr("y", height - 5)
-					.attr("text-anchor", "middle")
-					.attr("font-size", lineData.value.length > 4 ? "9px" : "10px")
-					.attr("fill", "#334155")
-					.text(d => d.xLabel);
-
-				if (lineData.value.length <= 5) {
+					.text(d => originalDisplayText(d));
+				if (isCompressedScale.value || lineData.value.length <= 5) {
+					const labelData = lineData.value
+						.map((item, index) => ({ ...item, index }))
+						.filter(item =>
+							isCompressedScale.value
+								? item.index === 0 || item.index === lineData.value.length - 1
+								: shouldShowPreviewLabel(item.index, lineData.value.length, width, {
+										maxVisible: previewMaxLabels(width, 2)
+									})
+						);
 					svg
 						.selectAll(".line-value-label")
-						.data(lineData.value)
+						.data(labelData)
 						.enter()
 						.append("text")
 						.attr("class", "line-value-label")
 						.attr("x", d => x(d.xLabel))
 						.attr("y", d => Math.max(8, y(d.y) - 6))
-						.attr("text-anchor", "middle")
+						.attr("text-anchor", d => previewTextAnchor(d.index, lineData.value.length))
 						.attr("font-size", "8px")
 						.attr("fill", "#1f2937")
-						.text(d => compactSvgText(d.display, 12));
+						.text(d =>
+							compactSvgText(
+								isCompressedScale.value ? originalDisplayText(d) : d.display,
+								12
+							)
+						);
 				}
-			};
-
-			const CATEGORY_COLORS = {
-				Machinery: "#8dd3c7",
-				"Mineral Fuels": "#ffffb3",
-				"Integrated Circuits": "#bebada",
-				"Vehicles and their parts": "#fb8072",
-				Plastics: "#80b1d3",
-				"Iron and Steel": "#fdb462",
-				"Instruments and Apparatus": "#b3de69",
-				"Organic Chemicals": "#fccde5",
-				"Transport Equipment": "#bc80bd",
-				"Electrical Machinery": "#ccebc5",
-				Chemicals: "#ffed6f",
-				"Manufactured Goods": "#d9d9d9",
-				"Raw Materials": "#fdb462",
-				Foodstuff: "#ffb347",
-				Others: "#a9a9a9",
-				Electronics: "#fdb462",
-				telecommunications: "#b3de69",
-				"automobile production": "#fccde5",
-				shipbuilding: "#d9d9d9",
-				steel: "#bc80bd",
-				"High technology": "#ccebc5",
-				"Motor vehicles": "#ffed6f",
-				"Machine tools": "#8dd3c7",
-				China: "#fb8072",
-				"United States": "#80b1d3",
-				ASEAN: "#fdb462",
-				"European Union": "#b3de69",
-				Taiwan: "#fccde5",
-				Japan: "#d9d9d9",
-				"South Korea": "#bc80bd"
 			};
 
 			const renderStackedChart = () => {
 				if (!stackedContainer.value) return;
 
-				const filteredData = processedField.value || [];
+				const filteredData = normalizedPreviewField.value || [];
 				if (filteredData.length === 0) {
 					d3.select(stackedContainer.value).html(
 						'<div class="no-data">-</div>'
@@ -646,27 +846,27 @@
 				if (isPurelyCategorical) {
 					const categoryCount = filteredData.length;
 					const equalShare = categoryCount > 0 ? 100 / categoryCount : 0;
-					stackData = filteredData.map(item => {
+					stackData = filteredData.map((item, index) => {
 						const cleanName = cleanCategoryName(item.label || item.raw);
 							return {
 								name: cleanName,
 								value: equalShare,
 								display: `${trimPercent(equalShare)}%`,
-								color: props.categoryColors[cleanName] || "#cccccc",
+								color: categoryColor(cleanName, index, props.categoryColors),
 								parent: item.parent
 							};
 					});
 				} else {
 					stackData = filteredData
-						.map(item => {
+						.map((item, index) => {
 							const cleanName = cleanCategoryName(item.label || item.raw);
 							return {
 								name: cleanName,
 								value: safeToNumber(item.value),
-								color: props.categoryColors[cleanName] || "#cccccc",
+								color: categoryColor(cleanName, index, props.categoryColors),
 								parent: item.parent,
 								raw: item.raw,
-								display: shortValueText(item)
+								display: previewDisplayText(item)
 							};
 						})
 						.filter(d => d.value > 0);
@@ -699,17 +899,19 @@
 						.attr("height", "100%")
 						.attr("viewBox", `0 0 ${width} ${height}`);
 
-				const sideGutter = Math.min(42, Math.max(28, width * 0.3));
+				const sideGutter = previewStackSideGutter(width);
 				const margin = { top: 8, right: sideGutter, bottom: 8, left: sideGutter };
 				const barAreaHeight = Math.max(36, height - margin.top - margin.bottom);
 				const availableBarWidth = Math.max(14, width - margin.left - margin.right);
-				const barWidth = Math.min(38, Math.max(16, availableBarWidth * 0.72));
+				const previewStackMaxBarWidth = 86;
+				const barWidth = Math.min(
+					previewStackMaxBarWidth,
+					Math.max(24, availableBarWidth * 0.88)
+				);
 				const barX = (width - barWidth) / 2;
 				const barBaseY = margin.top + barAreaHeight;
 				const colorFor = (name, index) =>
-					props.categoryColors[name] ||
-					CATEGORY_COLORS[name] ||
-					d3.schemeTableau10[index % d3.schemeTableau10.length];
+					categoryColor(name, index, props.categoryColors);
 
 				let cumulative = 0;
 				const segments = stackData.map((d, index) => {
@@ -871,27 +1073,25 @@
 			};
 
 			const isValidPieData = computed(() => pieData.value.length > 0);
-			const pieData = computed(() => {
-				if (!processedField.value) return [];
-				return processedField.value
-					.map((item, index) => {
+				const pieData = computed(() => {
+					if (!normalizedPreviewField.value) return [];
+					return normalizedPreviewField.value
+						.map((item, index) => {
 						let rawValue = item.raw || item.value || item;
 						if (isYearEntry(String(rawValue))) return null;
 						const value = safeToNumber(item.value ?? rawValue);
 						if (value === 0 && isNaN(parseFloat(rawValue))) return null;
-						let name = item.label
-							? String(item.label).trim()
-							: String(rawValue)
-								.replace(/:?\s*\d+\.?\d*%?/g, "")
-								.trim();
+						let name = pieLegendLabelForPoint(item, index, {
+							fallback: props.fieldKey,
+							total: normalizedPreviewField.value.length
+						});
 						if (isYearEntry(name)) return null;
-
-						// 使用饼图专用的名称格式化函数
-						const formattedName = formatPieLabelName(name);
 
 						return {
 							value,
-							name: formattedName,
+							name,
+							display: previewDisplayText(item),
+							color: categoryColor(name, index, props.categoryColors),
 							index
 						};
 					})
@@ -900,7 +1100,7 @@
 
 			const previewTextItems = value => {
 				if (!value || value.length === 0) return ["-"];
-				const items = value.map(item => displayTextForItem(item));
+				const items = value.map(item => displayTextForPoint(item));
 				const visibleItems = items.slice(0, 3);
 				if (items.length > 3) visibleItems.push(`+${items.length - 3}`);
 				return visibleItems;
@@ -908,38 +1108,58 @@
 
 			const formatSimpleText = value => previewTextItems(value).join("; ");
 
+			const previewDisplayText = item =>
+				item?.stripPreviewUnit ? item.unitlessDisplay : shortValueText(item, props.type);
+
 			const simpleBarData = computed(() => {
-				if (!processedField.value) return [];
-				return processedField.value
-					.map((item, index) => ({
-						value: safeToNumber(item.value ?? item.raw),
-						display: shortValueText(item),
-						fullDisplay: displayTextForItem(item),
-						label: item.label,
-						year: item.year,
-						index
-					}))
+				if (!normalizedPreviewField.value) return [];
+				return normalizedPreviewField.value
+					.map((item, index) => {
+						const originalValue = Number(item.normalizedBaseValue);
+						return {
+							value: safeToNumber(item.value ?? item.raw),
+							originalValue: Number.isFinite(originalValue)
+								? originalValue
+								: safeToNumber(item.value ?? item.raw),
+							display: previewDisplayText(item),
+							originalDisplay: item.originalDisplay,
+							fullDisplay: displayTextForPoint(item),
+							categoryLabel: categoryLabelForPoint(item, index, {
+								fallback: props.fieldKey,
+								total: normalizedPreviewField.value.length
+							}),
+							label: item.label,
+							year: item.year,
+							index
+						};
+					})
 					.filter(item => item.value !== 0 || !isYearEntry(String(item.value)));
 			});
 
 			const lineData = computed(() => {
-				if (!processedField.value) return [];
-				return processedField.value
+				if (!normalizedPreviewField.value) return [];
+				return normalizedPreviewField.value
 					.filter(item => !isYearEntry(String(item.raw)))
-					.map((item, index) => ({
-						x: item.year || index,
-						xLabel: xLabelForPoint(item, index),
-						y: safeToNumber(item.value ?? item.raw),
-						display: shortValueText(item),
-						fullDisplay: displayTextForItem(item),
-						label: item.label
-					}));
+					.map((item, index) => {
+						const originalValue = Number(item.normalizedBaseValue);
+						return {
+							x: item.year || index,
+							xLabel: xLabelForPoint(item, index),
+							y: safeToNumber(item.value ?? item.raw),
+							originalValue: Number.isFinite(originalValue)
+								? originalValue
+								: safeToNumber(item.value ?? item.raw),
+							display: previewDisplayText(item),
+							originalDisplay: item.originalDisplay,
+							fullDisplay: displayTextForPoint(item),
+							label: item.label
+						};
+					});
 			});
 
 			const hasData = computed(
 				() => processedField.value && processedField.value.length > 0
 			);
-
 			return {
 				hoveredIndex,
 				activeIndex,
@@ -958,6 +1178,9 @@
 				pieData,
 				simpleBarData,
 				lineData,
+				normalizedPreviewField,
+				isCompressedScale,
+				compressedTrendText,
 				formatNumber,
 				processedField,
 				getRawTextForRank
@@ -977,6 +1200,30 @@
 		font-family:
 			Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
 			"Segoe UI", sans-serif;
+	}
+	.compressed-scale-badge {
+		position: absolute;
+		top: 2px;
+		right: 4px;
+		z-index: 2;
+		border: 1px solid #cbd5e1;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.94);
+		padding: 1px 5px;
+		color: #64748b;
+		font-size: 9px;
+		font-weight: 600;
+		line-height: 1.4;
+	}
+
+	.compressed-trend-change {
+		position: absolute;
+		left: 4px;
+		bottom: 1px;
+		z-index: 2;
+		color: #475569;
+		font-size: 9px;
+		font-weight: 600;
 	}
 	.simple-text {
 		display: flex;
@@ -1042,8 +1289,8 @@
 	}
 	.d3-chart-container {
 		width: 100%;
-		height: 160px;
-		min-height: 120px;
+		height: 84px;
+		min-height: 76px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1076,11 +1323,11 @@
 			font-size: 14px;
 		}
 		.d3-chart-container {
-			min-height: 60px;
+			min-height: 76px;
 		}
 	}
-	.bar-label,
-	.line-label,
+	.bar-value-label,
+	.line-value-label,
 	.stack-label {
 		font-family: Arial, sans-serif;
 		pointer-events: none;
@@ -1088,8 +1335,8 @@
 		color: #000000;
 	}
 	@media (max-width: 768px) {
-		.bar-label,
-		.line-label,
+		.bar-value-label,
+		.line-value-label,
 		.stack-label {
 			font-size: 10px;
 		}

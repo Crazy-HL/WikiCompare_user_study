@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -104,12 +104,14 @@ def parse_article_html(
     title: str,
     url: str,
     revision: str | None,
+    source_kind: str = "wikipedia",
 ) -> dict[str, Any]:
     soup = BeautifulSoup(html, "lxml")
     content_root = _article_content_root(soup)
     source_map: dict[str, SourceRef] = {}
     outline: list[dict[str, Any]] = []
     infobox: list[dict[str, Any]] = []
+    body_tables: list[dict[str, Any]] = []
     paragraphs: list[dict[str, Any]] = []
 
     for tag in content_root.select(
@@ -139,6 +141,9 @@ def parse_article_html(
     ):
         tag.decompose()
 
+    if source_kind != "wikipedia":
+        _resolve_relative_urls(content_root, url)
+
     for index, heading in enumerate(content_root.select("h1, h2, h3, h4, h5, h6"), start=1):
         source_id = f"{side}-heading-{index}"
         text = _node_text(heading)
@@ -160,22 +165,25 @@ def parse_article_html(
 
     for index, row in enumerate(_infobox_rows(content_root), start=1):
         source_id = f"{side}-info-{index}"
+        value_cell = row.find("td")
         key = _node_text(row.find("th"))
-        value_text = _node_text(row.find("td"))
+        value_text = _node_text(value_cell)
         if not key or not value_text:
             continue
         row["data-source-id"] = source_id
 
-        infobox.append(
-            {
-                "id": source_id,
-                "key": key,
-                "valueText": value_text,
-                "section": None,
-                "source": "infobox",
-                "side": side,
-            }
-        )
+        row_record = {
+            "id": source_id,
+            "key": key,
+            "valueText": value_text,
+            "section": None,
+            "source": "infobox",
+            "side": side,
+        }
+        structured_values = _structured_values(value_cell)
+        if structured_values:
+            row_record["structuredValues"] = structured_values
+        infobox.append(row_record)
         source_map[source_id] = _source_ref(
             source_id,
             side,
@@ -183,7 +191,58 @@ def parse_article_html(
             f"{key}: {value_text}",
         )
 
-    for paragraph_index, paragraph in enumerate(_non_empty_paragraphs(content_root), start=1):
+    for table_attribute in _body_table_year_series(content_root):
+        source_id = f"{side}-table-{table_attribute['tableIndex']}-col-{table_attribute['columnIndex']}"
+        cell = table_attribute.pop("_cell")
+        cell["data-source-id"] = source_id
+        body_table_record = {
+            "id": source_id,
+            "key": table_attribute["key"],
+            "valueText": table_attribute["valueText"],
+            "section": None,
+            "source": "main_text",
+            "side": side,
+        }
+        body_tables.append(body_table_record)
+        source_map[source_id] = _source_ref(
+            source_id,
+            side,
+            "body_table",
+            f"{body_table_record['key']}: {body_table_record['valueText']}",
+        )
+
+    paragraph_index = 0
+    for field_record in _factbook_field_paragraphs(content_root):
+        paragraph_index += 1
+        paragraph_id = f"{side}-p-{paragraph_index}"
+        text = field_record["text"]
+        sentences = split_sentences(text) or [text]
+        sentence_records = []
+        field_node = field_record["node"]
+        field_node["data-source-id"] = f"{side}-s-{paragraph_index}-1"
+        for sentence_index, sentence in enumerate(sentences, start=1):
+            sentence_id = f"{side}-s-{paragraph_index}-{sentence_index}"
+            sentence_records.append({"id": sentence_id, "text": sentence, "side": side})
+            source_map[sentence_id] = _source_ref(
+                sentence_id,
+                side,
+                "sentence",
+                sentence,
+            )
+
+        paragraphs.append(
+            {
+                "id": paragraph_id,
+                "text": text,
+                "sentences": sentence_records,
+                "side": side,
+                "section": field_record["section"],
+            }
+        )
+        source_map[paragraph_id] = _source_ref(paragraph_id, side, "paragraph", text)
+
+    for paragraph in _non_empty_paragraphs(content_root):
+        paragraph_index += 1
         paragraph_id = f"{side}-p-{paragraph_index}"
         text = _node_text(paragraph)
         sentences = split_sentences(text)
@@ -215,9 +274,11 @@ def parse_article_html(
         "title": title,
         "url": url,
         "revision": revision,
+        "sourceKind": source_kind,
         "html": _inner_html(content_root),
         "outline": outline,
         "infobox": infobox,
+        "bodyTables": body_tables,
         "paragraphs": paragraphs,
         "sourceMap": {
             source_id: source_ref.to_dict()
@@ -243,14 +304,186 @@ def _inner_html(node: Tag) -> str:
     return "".join(str(child) for child in node.contents)
 
 
+def _resolve_relative_urls(root: Tag, base_url: str) -> None:
+    if not base_url:
+        return
+    for tag in root.find_all(True):
+        for attr in ("href", "src", "poster"):
+            value = tag.get(attr)
+            if value:
+                tag[attr] = _absolute_url(base_url, value)
+        srcset = tag.get("srcset")
+        if srcset:
+            tag["srcset"] = _absolute_srcset(base_url, srcset)
+
+
+def _absolute_url(base_url: str, value: str) -> str:
+    value = str(value).strip()
+    if not value or value.startswith(("#", "data:", "mailto:", "tel:", "javascript:")):
+        return value
+    return urljoin(base_url, value)
+
+
+def _absolute_srcset(base_url: str, value: str) -> str:
+    candidates = []
+    for candidate in str(value).split(","):
+        parts = candidate.strip().split()
+        if not parts:
+            continue
+        absolute = _absolute_url(base_url, parts[0])
+        candidates.append(" ".join([absolute, *parts[1:]]))
+    return ", ".join(candidates)
+
+
 def _infobox_rows(root: Tag):
     for row in root.select("table.infobox tr, table.sidebar tr, table.toccolours tr"):
         if row.find("th") and row.find("td"):
             yield row
 
 
+def _body_table_year_series(root: Tag) -> list[dict[str, Any]]:
+    attributes: list[dict[str, Any]] = []
+    for table_index, table in enumerate(root.select("table.wikitable, table.sortable"), start=1):
+        classes = set(table.get("class") or [])
+        if classes.intersection({"infobox", "navbox", "sidebar", "metadata"}):
+            continue
+        rows = table.find_all("tr")
+        if len(rows) < 4:
+            continue
+        headers = [_node_text(cell) for cell in rows[0].find_all(["th", "td"])]
+        header_cells = rows[0].find_all(["th", "td"])
+        if len(headers) < 2 or _normalized_table_header(headers[0]) not in {"year", "date"}:
+            continue
+        row_values: list[list[str]] = []
+        for row in rows[1:]:
+            cells = [_node_text(cell) for cell in row.find_all(["th", "td"])]
+            if len(cells) < len(headers):
+                continue
+            year = _year_token(cells[0])
+            if year is None:
+                continue
+            row_values.append([str(year)] + cells[1:len(headers)])
+        if len(row_values) < 3:
+            continue
+        for column_index in range(1, len(headers)):
+            points = []
+            for values in row_values:
+                value = _table_numeric_text(values[column_index])
+                if not value:
+                    continue
+                points.append((values[0], value))
+            if len(points) < 3:
+                continue
+            attributes.append(
+                {
+                    "_table": table,
+                    "_cell": header_cells[column_index],
+                    "tableIndex": table_index,
+                    "columnIndex": column_index + 1,
+                    "key": _clean_table_metric_header(headers[column_index], headers),
+                    "valueText": "; ".join(f"{year}: {value}" for year, value in points),
+                }
+            )
+    return attributes
+
+
+def _factbook_field_paragraphs(root: Tag) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for field_node in root.find_all(_is_factbook_field_card):
+        label_node = field_node.find(["h2", "h3", "h4", "h5", "h6"])
+        label = _node_text(label_node)
+        value = _factbook_field_value(field_node, label_node)
+        if not label or not value:
+            continue
+        records.append(
+            {
+                "node": field_node,
+                "section": label,
+                "text": f"{label}: {value}",
+            }
+        )
+    return records
+
+
+def _is_factbook_field_card(node) -> bool:
+    if not isinstance(node, Tag):
+        return False
+    return "group/field" in set(node.get("class") or [])
+
+
+def _factbook_field_value(field_node: Tag, label_node: Tag | None) -> str:
+    paragraphs = [
+        _node_text(paragraph)
+        for paragraph in field_node.find_all("p")
+        if _node_text(paragraph)
+    ]
+    if paragraphs:
+        return " ".join(paragraphs)
+
+    text = _node_text(field_node)
+    label = _node_text(label_node)
+    if label and text.startswith(label):
+        text = text[len(label):].strip()
+    return text
+
+
+def _normalized_table_header(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def _clean_table_metric_header(value: str, table_headers: list[str] | None = None) -> str:
+    raw_header = str(value or "")
+    if _is_total_capacity_header(raw_header, table_headers):
+        return "Capacity"
+    header = re.sub(r"\([^)]*\)", " ", raw_header)
+    header = re.sub(r"/\s*yr\b", "", header, flags=re.IGNORECASE)
+    header = re.sub(r"\byr\b", "", header, flags=re.IGNORECASE)
+    header = re.sub(r"\btotal\b", " ", header, flags=re.IGNORECASE)
+    header = re.sub(r"\binstalled capacity\b", "Installed", header, flags=re.IGNORECASE)
+    header = re.sub(r"\s+", " ", header).strip(" -:/")
+    return header or raw_header.strip()
+
+
+def _is_total_capacity_header(value: str, table_headers: list[str] | None) -> bool:
+    normalized = _normalized_table_header(value)
+    if not normalized.startswith("total"):
+        return False
+    if _has_capacity_unit(value):
+        return True
+    return any("capacity" in _normalized_table_header(header) for header in table_headers or [])
+
+
+def _has_capacity_unit(value: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:kw|mw|gw|kwh|mwh|gwh|kwp|mwp|gwp|kilowatts?|megawatts?|gigawatts?)\b",
+            str(value or ""),
+            re.IGNORECASE,
+        )
+    )
+
+
+def _year_token(value: str) -> int | None:
+    match = re.search(r"\b((?:18|19|20|21)\d{2})\b", str(value or ""))
+    return int(match.group(1)) if match else None
+
+
+def _table_numeric_text(value: str) -> str:
+    text = _clean_wikipedia_text(value)
+    match = re.search(
+        r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s*%|\s*(?:thousand|million|billion|trillion))?",
+        text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return match.group(0).strip()
+
+
 def _non_empty_paragraphs(root: Tag):
     for paragraph in root.find_all("p"):
+        if paragraph.find_parent(_is_factbook_field_card) is not None:
+            continue
         if _node_text(paragraph):
             yield paragraph
 
@@ -415,6 +648,33 @@ def _node_text(node) -> str:
     if node is None:
         return ""
     return _clean_wikipedia_text(node.get_text(" ", strip=True))
+
+
+def _structured_values(node) -> list[dict[str, str]]:
+    if node is None:
+        return []
+
+    list_items = [_node_text(item) for item in node.find_all("li", recursive=True)]
+    clean_items = _unique_nonempty(list_items)
+    if len(clean_items) >= 2:
+        return [
+            {"label": item, "value": item, "kind": "list_item"}
+            for item in clean_items
+        ]
+    return []
+
+
+def _unique_nonempty(values: list[str]) -> list[str]:
+    seen = set()
+    items = []
+    for value in values:
+        clean = _clean_wikipedia_text(value)
+        normalized = clean.lower()
+        if not clean or normalized in seen:
+            continue
+        seen.add(normalized)
+        items.append(clean)
+    return items
 
 
 def _clean_wikipedia_text(text: Any) -> str:

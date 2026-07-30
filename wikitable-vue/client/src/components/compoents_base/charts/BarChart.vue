@@ -5,6 +5,7 @@
 <script setup>
 	import { ref, onMounted, watch } from "vue";
 	import * as echarts from "echarts";
+	const { formatAxisNumber } = require("@/js/chartValueDisplay");
 
 	const props = defineProps({
 		data: {
@@ -23,6 +24,7 @@
 
 	const chartEl = ref(null);
 	let chartInstance = null;
+	const AXIS_SPLIT_NUMBER = 4;
 
 	const initChart = () => {
 		if (!chartEl.value) return;
@@ -78,7 +80,15 @@
 			yAxis: {
 				type: "value",
 				min: 0,
-				max: maxValue // 使用计算的最大值
+				max: maxValue, // 使用计算的最大值
+				splitNumber: AXIS_SPLIT_NUMBER,
+				axisLabel: {
+					formatter: value => formatAxisNumber(value, {
+						min: 0,
+						max: maxValue,
+						splitNumber: AXIS_SPLIT_NUMBER
+					})
+				}
 			},
 			series
 		};

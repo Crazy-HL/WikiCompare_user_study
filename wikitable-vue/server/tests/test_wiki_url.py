@@ -18,6 +18,9 @@ def test_parse_oldid_revision_url():
 
     assert parsed.title == "Economy_of_Japan"
     assert parsed.revision == "1297943898"
+    assert parsed.display_url == (
+        "https://en.wikipedia.org/w/index.php?title=Economy_of_Japan&oldid=1297943898"
+    )
 
 
 def test_parse_url_normalizes_spaces_to_underscores():
