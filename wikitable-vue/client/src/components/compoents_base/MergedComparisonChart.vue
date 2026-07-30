@@ -1,5 +1,23 @@
 <template>
 	<div class="merged-comparison">
+		<div
+			v-if="adaptiveTriggered"
+			class="merged-scale-controls"
+			role="group"
+			aria-label="合并图表刻度模式">
+			<button
+				v-for="option in scaleModeOptions"
+				:key="option.value"
+				type="button"
+				:class="{ active: selectedScaleMode === option.value }"
+				:disabled="option.value === 'index' && !canUseMergedTrendIndex"
+				@click="selectScaleMode(option.value)">
+				{{ option.label }}
+			</button>
+		</div>
+		<div v-if="mergedTrendText" class="merged-scale-note">
+			{{ mergedTrendText }}
+		</div>
 		<div v-if="emptyMergedChart" class="merged-empty">无可合并图表数据</div>
 		<div v-else ref="chartEl" class="merged-chart"></div>
 	</div>
@@ -11,10 +29,18 @@
 	const { buildMergedComparison } = require("@/js/mergedComparisonData");
 	const { formatAxisNumber } = require("@/js/chartValueDisplay");
 	const {
-		CHART_COLORS,
-		CHART_LINE_WIDTH,
-		categoryColor
-	} = require("@/js/chartTheme");
+		detectAdaptiveScale,
+		trendChange,
+		trendIndexPoints
+	} = require("@/js/adaptiveChartScale");
+	const {
+		buildMergedAdaptiveState,
+		buildMergedComparisonOption,
+		linearScaleDecision
+	} = require("@/js/mergedComparisonAdaptiveOptions");
+	const {
+		createChartRenderController
+	} = require("@/js/chartRenderScheduler");
 
 	const props = defineProps({
 		row: {
@@ -27,175 +53,127 @@
 		}
 	});
 
-	const chartEl = ref(null);
-	let chart = null;
 	const AXIS_SPLIT_NUMBER = 4;
+	const chartEl = ref(null);
+	const selectedScaleMode = ref("auto");
+	const scaleDecision = ref(linearScaleDecision());
+	const scaleModeOptions = [
+		{ value: "auto", label: "自动优化" },
+		{ value: "linear", label: "原始线性" },
+		{ value: "index", label: "趋势指数" }
+	];
 
 	const merged = computed(() => buildMergedComparison(props.row, props.titles));
+	const adaptiveState = ref(buildMergedAdaptiveState({ data: merged.value }));
+	const adaptiveTriggered = computed(() => adaptiveState.value.adaptiveTriggered);
+	const canUseMergedTrendIndex = computed(() =>
+		adaptiveState.value.canUseTrendIndex &&
+		merged.value.mode === "line" &&
+		merged.value.series.every(series => trendIndexPoints(series.data).length > 0)
+	);
 	const emptyMergedChart = computed(() => {
 		const data = merged.value;
 		return (
 			data.mode === "text" ||
 			!data.series?.some(series =>
-				series.data?.some(point => Number.isFinite(Number(point.value)))
+				series.data?.some(point => Number.isFinite(point.value))
 			)
 		);
 	});
+	const mergedTrendText = computed(() => {
+		if (!adaptiveTriggered.value || merged.value.mode !== "line") return "";
+		return merged.value.series
+			.map(series => {
+				const change = trendChange(series.data);
+				if (change.absoluteChange === null) return "";
+				if (change.percentChange === null) {
+					return `${series.name}：绝对变化 ${formatAxis(
+						change.absoluteChange,
+						merged.value
+					)}`;
+				}
+				const sign = change.percentChange > 0 ? "+" : "";
+				return `${series.name}：${sign}${change.percentChange.toFixed(1)}%`;
+			})
+			.filter(Boolean)
+			.join("；");
+	});
 
-	const resize = () => chart?.resize();
+	const selectScaleMode = value => {
+		selectedScaleMode.value = value;
+	};
 
-	const renderChart = () => {
-		if (emptyMergedChart.value) {
-			chart?.dispose();
-			chart = null;
-			return;
+	const gridForData = data => ({
+		top: 48,
+		left: 56,
+		right: 28,
+		bottom: data.categories.length > 4 && data.mode !== "stacked" ? 70 : 42,
+		containLabel: true
+	});
+
+	const resetAdaptiveState = () => {
+		scaleDecision.value = linearScaleDecision();
+		adaptiveState.value = buildMergedAdaptiveState({
+			data: merged.value,
+			selectedScaleMode: selectedScaleMode.value,
+			scaleDecision: scaleDecision.value
+		});
+	};
+
+	const resetRenderState = () => {
+		selectedScaleMode.value = "auto";
+		resetAdaptiveState();
+	};
+
+	const requestFrame = callback =>
+		typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+			? window.requestAnimationFrame(callback)
+			: setTimeout(callback, 0);
+	const cancelFrame = id => {
+		if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+			window.cancelAnimationFrame(id);
+		} else {
+			clearTimeout(id);
 		}
-		if (!chartEl.value) return;
-		if (!chart) chart = echarts.init(chartEl.value);
-		chart.setOption(chartOption(merged.value), true);
 	};
 
-	const chartOption = data => {
-		const isLine = data.mode === "line";
-		const isSingle = data.mode === "single";
-		const isStacked = data.mode === "stacked";
-		const colors = [CHART_COLORS[0], CHART_COLORS[1]];
-		const series = isStacked ? stackedSeries(data) : standardSeries(data, colors, isLine, isSingle);
-
-		return {
-			color: isStacked
-				? data.categories.map((category, index) => categoryColor(category, index))
-				: colors,
-			tooltip: {
-				trigger: "axis",
-				axisPointer: { type: isLine ? "line" : "shadow" },
-				formatter: params =>
-					params
-						.map(param => {
-							const display = param.data?.display || "-";
-							return `${param.marker}${param.seriesName}: ${display}`;
-						})
-						.join("<br/>")
-			},
-			legend: {
-				top: 0,
-				left: "center",
-				icon: "roundRect",
-				itemWidth: 14,
-				itemHeight: 8,
-				textStyle: { color: "#334155", fontSize: 12 }
-			},
-			grid: {
-				top: 48,
-				left: 56,
-				right: 28,
-				bottom: data.categories.length > 4 && !isStacked ? 70 : 42,
-				containLabel: true
-			},
-			xAxis: {
-				type: "category",
-				data: isStacked ? data.series.map(item => item.name) : data.categories,
-				axisTick: { alignWithLabel: true },
-				axisLabel: {
-					interval: 0,
-					rotate: data.categories.length > 4 && !isStacked ? 24 : 0,
-					color: "#475569",
-					fontSize: 11,
-					hideOverlap: true
-				},
-				axisLine: { lineStyle: { color: "#cbd5e1" } }
-			},
-			yAxis: {
-				type: "value",
-				min: isStacked ? 0 : data.yDomain[0],
-				max: isStacked ? 100 : data.yDomain[1],
-				splitNumber: AXIS_SPLIT_NUMBER,
-				name: axisMeasureLabel(data),
-				nameLocation: "middle",
-				nameGap: 42,
-				nameTextStyle: {
-					color: "#475569",
-					fontSize: 11,
-					fontWeight: 600
-				},
-				axisLabel: {
-					color: "#475569",
-					formatter: value => isStacked ? `${value}%` : formatAxis(value, data)
-				},
-				splitLine: { lineStyle: { color: "#e5eaf1" } },
-				axisLine: { show: false }
-			},
-			series,
-			dataZoom: []
-		};
-	};
-
-	const standardSeries = (data, colors, isLine, isSingle) => data.series.map((item, index) => ({
-		name: item.name,
-		type: isLine ? "line" : "bar",
-		smooth: false,
-		symbol: isLine ? "circle" : "none",
-		symbolSize: 8,
-		barMaxWidth: isSingle ? 42 : 28,
-		barGap: "14%",
-		data: item.data.map(point => ({
-			value: point.value,
-			display: point.display,
-			raw: point.raw
-		})),
-		label: {
-			show: shouldShowPointLabels(data, isLine),
-			position: pointLabelPosition(data, item),
-			distance: 8,
-			color: "#243447",
-			fontSize: 11,
-			formatter: params => params.data?.display || "-"
-		},
-		lineStyle: { width: CHART_LINE_WIDTH },
-		itemStyle: {
-			color: colors[index % colors.length],
-			borderRadius: isLine ? 0 : [4, 4, 0, 0]
-		}
-	}));
-
-	const shouldShowPointLabels = (data, isLine) => {
-		if (!isLine) return true;
-		return (data.categories || []).length <= 16;
-	};
-
-	const stackedSeries = data => data.categories.map((category, categoryIndex) => ({
-		name: category,
-		type: "bar",
-		stack: "total",
-		barMaxWidth: 72,
-		data: data.series.map(side => {
-			const point = side.data[categoryIndex] || {};
-			const total = side.data.reduce((sum, item) => (
-				Number.isFinite(item.value) && item.value > 0 ? sum + item.value : sum
-			), 0);
-			const renderTotal = total > 101 ? total : 100;
-			const percent = renderTotal && Number.isFinite(point.value) && point.value > 0
-				? (point.value / renderTotal) * 100
-				: null;
+	const renderController = createChartRenderController({
+		nextTick,
+		requestFrame,
+		cancelFrame,
+		eventTarget: typeof window !== "undefined" ? window : null,
+		getElement: () => chartEl.value,
+		isEmpty: () => emptyMergedChart.value,
+		createChart: element => echarts.init(element),
+		buildOption: () => {
+			const data = merged.value;
+			const grid = gridForData(data);
+			const drawableHeight = Math.max(
+				0,
+				chartEl.value.clientHeight -
+					Number(grid.top || 0) -
+					Number(grid.bottom || 0)
+			);
+			const decision = detectAdaptiveScale({
+				...(data.scaleContext || {}),
+				drawableHeight
+			});
+			const previousTriggered = adaptiveState.value.adaptiveTriggered;
+			scaleDecision.value = decision;
+			const state = buildMergedAdaptiveState({
+				data,
+				selectedScaleMode: selectedScaleMode.value,
+				scaleDecision: decision
+			});
+			adaptiveState.value = state;
 			return {
-				value: percent,
-				display: point.display,
-				raw: point.raw
+				option: buildMergedComparisonOption({ data, state, grid }),
+				layoutKey: state.adaptiveTriggered,
+				layoutChanged: previousTriggered !== state.adaptiveTriggered
 			};
-		}),
-		label: {
-			show: false
 		},
-		emphasis: {
-			focus: "series"
-		}
-	}));
-
-	const pointLabelPosition = (data, item) => {
-		if (data.mode !== "single") return "top";
-		const first = item.data.find(point => Number.isFinite(point.value));
-		return first?.value < 0 ? "bottom" : "top";
-	};
+		reset: resetRenderState
+	});
 
 	const formatAxis = (value, data) => {
 		const number = Number(value);
@@ -218,44 +196,71 @@
 		});
 	};
 
-	const axisMeasureLabel = data => {
-		const unit = String(data?.unit || "").trim();
-		const basis = String(data?.basis || "").trim();
-		if (!unit) return "";
-		if (unit === "%" && basis) return `${basis} share (%)`;
-		if (unit === "%") return "";
-		return unit;
-	};
-
-	onMounted(() => {
-		nextTick(renderChart);
-		window.addEventListener("resize", resize);
-	});
+	onMounted(() => renderController.mount());
 
 	watch(
 		() => [props.row, props.titles],
-		() => nextTick(renderChart),
+		() => renderController.schedule({ reset: true }),
 		{ deep: true }
 	);
 
-	onUnmounted(() => {
-		window.removeEventListener("resize", resize);
-		chart?.dispose();
-		chart = null;
-	});
+	watch(
+		() => selectedScaleMode.value,
+		() => renderController.schedule()
+	);
+
+	onUnmounted(() => renderController.destroy());
 </script>
 
 <style scoped>
 	.merged-comparison {
-		display: block;
+		display: flex;
+		flex-direction: column;
 		height: 100%;
 		min-height: 420px;
+		box-sizing: border-box;
 		color: #1f2937;
 	}
 
+	.merged-scale-controls {
+		display: flex;
+		justify-content: center;
+		gap: 6px;
+		margin-bottom: 8px;
+	}
+
+	.merged-scale-controls button {
+		border: 1px solid #cbd5e1;
+		border-radius: 999px;
+		background: #ffffff;
+		padding: 5px 11px;
+		color: #475569;
+		cursor: pointer;
+		font-size: 12px;
+		font-weight: 600;
+	}
+
+	.merged-scale-controls button.active {
+		border-color: #2563eb;
+		background: #eff6ff;
+		color: #1d4ed8;
+	}
+
+	.merged-scale-controls button:disabled {
+		cursor: not-allowed;
+		opacity: 0.45;
+	}
+
+	.merged-scale-note {
+		margin: -2px 0 8px;
+		color: #64748b;
+		font-size: 12px;
+		text-align: center;
+	}
+
 	.merged-chart {
+		flex: 1 1 auto;
 		width: 100%;
-		height: 100%;
 		min-height: 420px;
 		background: #ffffff;
 	}

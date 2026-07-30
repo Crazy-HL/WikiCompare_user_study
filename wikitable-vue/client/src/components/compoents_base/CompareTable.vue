@@ -74,7 +74,9 @@
 						:type="chartDataType(row)"
 						:visualization="chartVisualization(row)"
 						:fieldKey="row.label"
-						:yDomain="chartDomain(row)" />
+						:yDomain="chartDomain(row)"
+						:side="'left'"
+						:scaleContext="adaptiveScaleContext(row)" />
 					</div>
 
 					<div
@@ -157,7 +159,9 @@
 						:type="chartDataType(row)"
 						:visualization="chartVisualization(row)"
 						:fieldKey="row.label"
-						:yDomain="chartDomain(row)" />
+						:yDomain="chartDomain(row)"
+						:side="'right'"
+						:scaleContext="adaptiveScaleContext(row)" />
 				</div>
 			</div>
 		</div>
@@ -186,7 +190,9 @@
 						:field="currentChart.data"
 						:type="currentChart.type"
 						:visualization="currentChart.visualization"
-						:fieldKey="currentChart.fieldKey" />
+						:fieldKey="currentChart.fieldKey"
+						:side="currentChart.side"
+						:scaleContext="currentChart.scaleContext" />
 				</div>
 			</div>
 		</div>
@@ -201,9 +207,14 @@
 	import { sessionStore as store } from "@/js/sessionStore";
 	const {
 		barChartDomain,
+		canonicalBaseChartItems,
 		formatValueDisplay,
 		normalizePreviewChartItems,
 	} = require("@/js/chartValueDisplay");
+	const {
+		PREVIEW_DRAWABLE_HEIGHT,
+		detectAdaptiveScale,
+	} = require("@/js/adaptiveChartScale");
 	const {
 		buildCreditRatingPairs,
 		isCreditRatingRow,
@@ -229,7 +240,9 @@
 		details: [],
 		combined: false,
 		row: null,
-		titles: {}
+		titles: {},
+		scaleContext: null,
+		side: ""
 	});
 	let fullChartRenderToken = 0;
 
@@ -242,7 +255,9 @@
 		details: [],
 		combined: false,
 		row: null,
-		titles: {}
+		titles: {},
+		scaleContext: null,
+		side: ""
 	});
 
 	const deferFullChartRender = callback => {
@@ -266,11 +281,7 @@
 			if (compactPreview) {
 				return normalizedRowPreviewValues(row)
 					.filter(value => value.side === side)
-					.map(({ side: _side, sourceIndex: _sourceIndex, ...value }) => ({
-						...value,
-						raw: value.display,
-						rawText: value.display,
-					}));
+					.map(({ side: _side, sourceIndex: _sourceIndex, ...value }) => value);
 			}
 			return sideData.values.map(value => ({
 				...value,
@@ -299,6 +310,13 @@
 			});
 		});
 		return normalizePreviewChartItems(entries, chartDataType(row));
+	};
+
+	const canonicalFullChartField = (row, side) => {
+		const normalized = normalizedRowPreviewValues(row)
+			.filter(value => value.side === side)
+			.map(({ side: _side, sourceIndex: _sourceIndex, ...value }) => value);
+		return canonicalBaseChartItems(normalized);
 	};
 
 	const valueDisplayText = (value, sourceRaw = "", dataType = "") => {
@@ -437,8 +455,7 @@
 		const values = normalizedRowPreviewValues(row)
 			.map(value => Number(value.value))
 			.filter(Number.isFinite);
-		if (!values.length) return null;
-		return visualization === "line-chart" ? lineChartDomain(values) : barChartDomain(values);
+		return sharedDomainForValues(values, visualization);
 	};
 
 	const lineChartDomain = values => {
@@ -452,6 +469,53 @@
 		}
 		const padding = (max - min) * 0.12;
 		return [min - padding, max + padding];
+	};
+
+	const sharedDomainForValues = (values, visualization) => {
+		const numbers = values.map(Number).filter(Number.isFinite);
+		if (!numbers.length) return null;
+		return visualization === "line-chart"
+			? lineChartDomain(numbers)
+			: barChartDomain(numbers);
+	};
+
+	const adaptiveScaleContext = (row, { compactPreview = true } = {}) => {
+		const visualization = chartVisualization(row);
+		if (!["bar-chart", "line-chart"].includes(visualization)) return null;
+		const normalized = normalizedRowPreviewValues(row);
+		const valuesForSide = side => {
+			return normalized
+				.filter(value => value.side === side)
+				.map(value =>
+					Number(compactPreview ? value.value : value.normalizedBaseValue)
+				)
+				.filter(Number.isFinite);
+		};
+		const leftValues = valuesForSide("left");
+		const rightValues = valuesForSide("right");
+		const domain = sharedDomainForValues(
+			[...leftValues, ...rightValues],
+			visualization
+		);
+		if (!domain) return null;
+		return {
+			leftValues,
+			rightValues,
+			domain,
+			visualization,
+			valueSpace: compactPreview ? "compact-preview" : "normalized-base",
+			decisionStatus: compactPreview ? "resolved" : "pending",
+			requiresActualHeightDecision: !compactPreview,
+			decision: compactPreview
+				? detectAdaptiveScale({
+						leftValues,
+						rightValues,
+						domain,
+						drawableHeight: PREVIEW_DRAWABLE_HEIGHT,
+						visualization,
+					})
+				: null,
+		};
 	};
 
 	const canMergeChart = row => {
@@ -569,16 +633,21 @@
 		isFullChartPending.value = true;
 		deferFullChartRender(() => {
 			if (token !== fullChartRenderToken || !showFullChartModal.value) return;
+			const scaleContext = adaptiveScaleContext(row, { compactPreview: false });
 			currentChart.value = {
 				title,
-				data: chartField(row, side),
+				data: scaleContext?.valueSpace === "normalized-base"
+					? canonicalFullChartField(row, side)
+					: chartField(row, side),
 				type: chartDataType(row),
 				visualization: chartVisualization(row),
 				fieldKey: row.label,
 				details: detailRows(row, side),
 				combined: false,
 				row: null,
-				titles: {}
+				titles: {},
+				scaleContext,
+				side
 			};
 			isFullChartPending.value = false;
 		});
@@ -596,6 +665,8 @@
 			fieldKey: row.label,
 			details: [],
 			combined: true,
+			scaleContext: null,
+			side: "",
 			row: {
 				...row,
 				mergeVisualization: chartVisualization(row)

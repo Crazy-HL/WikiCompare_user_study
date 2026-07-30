@@ -5,13 +5,77 @@ const {
 	formatChartNumber,
 	formatAxisNumber,
 	barChartDomain,
+	canonicalBaseChartItems,
 	categoryLabelForPoint,
 	compactMiddleText,
 	pieLegendLabelForPoint,
 	normalizePreviewChartItems,
+	matchingValueDisplayToken,
 	shortValueText,
 	xLabelForPoint,
 } = require("../src/js/chartValueDisplay.js");
+
+assert.strictEqual(
+	matchingValueDisplayToken(
+		239694000000000,
+		"¥239,694 billion 43.4% of GDP (2022)",
+		"Numerical"
+	),
+	"¥239,694 billion"
+);
+
+assert.strictEqual(
+	matchingValueDisplayToken(
+		43.4,
+		"¥239,694 billion 43.4% of GDP (2022)",
+		"Proportional"
+	),
+	"43.4%"
+);
+
+assert.strictEqual(
+	matchingValueDisplayToken(
+		10,
+		"A 10 B 20",
+		"Numerical"
+	),
+	"10",
+	"A separated single-letter category must not be attached as a magnitude abbreviation"
+);
+
+assert.deepStrictEqual(
+	canonicalBaseChartItems(
+		normalizePreviewChartItems(
+			[
+				{ value: 10, label: "A", display: "10", raw: "A 10 B 20" },
+				{ value: 20, label: "B", display: "20", raw: "A 10 B 20" },
+			],
+			"Numerical"
+		)
+	).map(item => item.value),
+	[10, 20],
+	"Category labels and unrelated raw text must not supply a magnitude divisor"
+);
+
+assert.deepStrictEqual(
+	canonicalBaseChartItems(
+		normalizePreviewChartItems(
+			[{ value: 1.2, display: "1.2B" }],
+			"Numerical"
+		)
+	).map(item => item.value),
+	[1200000000],
+	"A compact abbreviation directly attached to its measurement number remains supported"
+);
+
+assert.strictEqual(
+	matchingValueDisplayToken(
+		7.4,
+		"Sales totaled 7.4 market share 30.2%.",
+		"Numerical"
+	),
+	"7.4"
+);
 
 assert.strictEqual(
 	formatValueDisplay(
@@ -233,6 +297,240 @@ assert.deepStrictEqual(
 		{ value: 814.9, display: "814.9" },
 	],
 	"Preview chart normalization should handle values that were extracted in display units"
+);
+const onceNormalizedTrillionValues = normalizePreviewChartItems(
+	[
+		{ value: 3913000000000, display: "$3.913 trillion" },
+		{ value: 1396000000000, display: "$1.396 trillion" },
+	],
+	"number"
+);
+const twiceNormalizedTrillionValues = normalizePreviewChartItems(
+	onceNormalizedTrillionValues,
+	"number"
+);
+assert.deepStrictEqual(
+	twiceNormalizedTrillionValues.map(item => ({
+		value: item.value,
+		display: item.display,
+		previewDivisor: item.previewDivisor,
+	})),
+	onceNormalizedTrillionValues.map(item => ({
+		value: item.value,
+		display: item.display,
+		previewDivisor: item.previewDivisor,
+	})),
+	"Preview chart normalization must be idempotent so pre-normalized table values stay aligned with their shared y-domain"
+);
+
+const assertSplitNormalizationPreservesSharedScale = (items, expectedValues, message) => {
+	const jointlyNormalized = normalizePreviewChartItems(items, "number");
+	assert.deepStrictEqual(
+		jointlyNormalized.map(item => item.value),
+		expectedValues,
+		`${message}: joint normalization should establish the expected shared drawing scale`
+	);
+	jointlyNormalized.forEach((item, index) => {
+		const [sideNormalized] = normalizePreviewChartItems([item], "number");
+		assert.strictEqual(
+			sideNormalized.previewDivisor,
+			item.previewDivisor,
+			`${message}: side ${index} must retain the shared preview divisor`
+		);
+		assert.strictEqual(
+			sideNormalized.value,
+			item.value,
+			`${message}: side ${index} drawing value must stay aligned with scaleContext`
+		);
+		assert.strictEqual(
+			sideNormalized.normalizedBaseValue,
+			item.normalizedBaseValue,
+			`${message}: side ${index} must retain its original numeric base value`
+		);
+		assert.strictEqual(
+			sideNormalized.originalDisplay,
+			items[index].display,
+			`${message}: side ${index} must retain its original display text`
+		);
+	});
+};
+
+assertSplitNormalizationPreservesSharedScale(
+	[
+		{ value: 999, display: "$999" },
+		{ value: 1000, display: "$1,000" },
+	],
+	[0.999, 1],
+	"999/1000 cross-side split regression"
+);
+assertSplitNormalizationPreservesSharedScale(
+	[
+		{ value: 1000000, display: "$1 million" },
+		{ value: 1000000000, display: "$1 billion" },
+	],
+	[0.001, 1],
+	"1e6/1e9 cross-side split regression"
+);
+
+const canonicalFullMagnitudeItems = canonicalBaseChartItems(
+	normalizePreviewChartItems(
+		[
+			{ value: 1.87, display: "$1.87 trillion" },
+			{ value: 814.9, display: "$814.9 billion" },
+		],
+		"number"
+	)
+);
+assert.deepStrictEqual(
+	canonicalFullMagnitudeItems.map(item => ({
+		value: item.value,
+		originalValue: item.originalValue,
+		display: item.display,
+		valueSpace: item.valueSpace,
+	})),
+	[
+		{
+			value: 1870000000000,
+			originalValue: 1870000000000,
+			display: "$1.87 trillion",
+			valueSpace: "normalized-base",
+		},
+		{
+			value: 814900000000,
+			originalValue: 814900000000,
+			display: "$814.9 billion",
+			valueSpace: "normalized-base",
+		},
+	],
+	"Full-chart points must draw in the same normalized-base value space as their scale context while retaining original display text"
+);
+
+const negativeCurrencyMagnitudeItems = normalizePreviewChartItems(
+	[
+		{ value: -1.87, display: "-$1.87 trillion" },
+		{ value: -1.87, display: "$-1.87 trillion" },
+	],
+	"number"
+);
+assert.deepStrictEqual(
+	negativeCurrencyMagnitudeItems.map(item => item.normalizedBaseValue),
+	[-1870000000000, -1870000000000],
+	"Magnitude normalization must preserve a negative sign on either side of the currency symbol"
+);
+assert.deepStrictEqual(
+	canonicalBaseChartItems(negativeCurrencyMagnitudeItems).map(item => ({
+		value: item.value,
+		originalValue: item.originalValue,
+	})),
+	[
+		{ value: -1870000000000, originalValue: -1870000000000 },
+		{ value: -1870000000000, originalValue: -1870000000000 },
+	],
+	"Canonical full-chart points must retain negative currency magnitude values"
+);
+
+const prefixedMagnitudeItems = normalizePreviewChartItems(
+	[
+		{ value: 814.9, display: "2024: $814.9 billion" },
+		{ value: -1.87, display: "GDP 2024: -$1.87 trillion" },
+	],
+	"number"
+);
+assert.deepStrictEqual(
+	prefixedMagnitudeItems.map(item => item.normalizedBaseValue),
+	[814900000000, -1870000000000],
+	"Magnitude normalization must match the numeric subject instead of multiplying a year prefix"
+);
+assert.deepStrictEqual(
+	canonicalBaseChartItems(prefixedMagnitudeItems).map(item => ({
+		value: item.value,
+		originalValue: item.originalValue,
+		display: item.display,
+	})),
+	[
+		{
+			value: 814900000000,
+			originalValue: 814900000000,
+			display: "2024: $814.9 billion",
+		},
+		{
+			value: -1870000000000,
+			originalValue: -1870000000000,
+			display: "GDP 2024: -$1.87 trillion",
+		},
+	],
+	"Canonical full-chart points must retain matched prefixed magnitude values and signs"
+);
+
+const closestPrefixedMagnitudeItems = normalizePreviewChartItems(
+	[
+		{ value: 2000, display: "2024: $2,000 billion" },
+		{ value: 10.1, display: "Top 10: $10.1 billion" },
+		{ value: 2.01, display: "Q2 2024: $2.01 billion" },
+	],
+	"number"
+);
+assert.deepStrictEqual(
+	closestPrefixedMagnitudeItems.map(item => Math.round(item.normalizedBaseValue)),
+	[2000000000000, 10100000000, 2010000000],
+	"Magnitude normalization must choose the closest matching numeric token instead of the first token within tolerance"
+);
+assert.deepStrictEqual(
+	canonicalBaseChartItems(closestPrefixedMagnitudeItems)
+		.map(item => Math.round(item.value)),
+	[2000000000000, 10100000000, 2010000000],
+	"Canonical full-chart values must retain the closest matched magnitude token"
+);
+
+const [trustedMetadataItem] = normalizePreviewChartItems(
+	[{ value: 1000, display: "$1 thousand" }],
+	"number"
+);
+const [dirtyMetadataItem] = normalizePreviewChartItems(
+	[{ ...trustedMetadataItem, value: 1.01 }],
+	"number"
+);
+assert.deepStrictEqual(
+	{
+		value: dirtyMetadataItem.value,
+		normalizedBaseValue: dirtyMetadataItem.normalizedBaseValue,
+		previewDivisor: dirtyMetadataItem.previewDivisor,
+		originalDisplay: dirtyMetadataItem.originalDisplay,
+	},
+	{
+		value: 1.01,
+		normalizedBaseValue: 1.01,
+		previewDivisor: 1,
+		originalDisplay: "1.01",
+	},
+	"Dirty preview metadata must discard stale original display text as well as stale numeric metadata"
+);
+
+const [percentageFromNumberMetadata] = normalizePreviewChartItems(
+	[trustedMetadataItem],
+	"percentage"
+);
+assert.deepStrictEqual(
+	{
+		value: percentageFromNumberMetadata.value,
+		normalizedBaseValue: percentageFromNumberMetadata.normalizedBaseValue,
+		previewDivisor: percentageFromNumberMetadata.previewDivisor,
+	},
+	{ value: 1000, normalizedBaseValue: 1000, previewDivisor: 1 },
+	"Percentage normalization must reject reusable non-unit preview divisors"
+);
+
+const canonicalMagnitudeItems = normalizePreviewChartItems(
+	[
+		{ value: 1.87, display: "$1.87 trillion" },
+		{ value: 814.9, display: "$814.9 billion" },
+	],
+	"number"
+);
+assert.deepStrictEqual(
+	canonicalMagnitudeItems.map(item => item.normalizedBaseValue),
+	[1870000000000, 814900000000],
+	"Canonical full-chart values must reconstruct trillion and billion displays into one base-value space"
 );
 assert.deepStrictEqual(
 	normalizePreviewChartItems(

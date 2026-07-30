@@ -19,7 +19,13 @@ const compareTablePath = path.join(
 	"CompareTable.vue"
 );
 
-const fullChartSource = fs.readFileSync(fullChartPath, "utf8");
+const fullChartComponentSource = fs.readFileSync(fullChartPath, "utf8");
+const fullChartOptionSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "js", "fullChartAdaptiveOptions.js"),
+	"utf8"
+);
+const fullChartSource = `${fullChartComponentSource}
+${fullChartOptionSource}`;
 const compareTableSource = fs.readFileSync(compareTablePath, "utf8");
 
 assert(
@@ -27,20 +33,22 @@ assert(
 	"FullChart should use a local category label helper for bar-like charts"
 );
 assert(
-	fullChartSource.includes("data.map((item, index) => categoryLabelForPoint(item, index, {") &&
-		fullChartSource.includes("fallback: props.fieldKey") &&
-		fullChartSource.includes("total: data.length"),
+	fullChartSource.includes("rendered.map((item, index) => categoryLabelForPoint(item, index, {") &&
+			fullChartSource.includes("fallback: fieldKey") &&
+			fullChartSource.includes("total: rendered.length"),
 	"FullChart bar charts should prefer comparison labels over years on the x-axis"
 );
 assert(
-	fullChartSource.includes("data.map((item, index) => xLabelForPoint(item, index))"),
+	fullChartSource.includes("dataPoints.map((item, index) => xLabelForPoint(item, index))"),
 	"FullChart line charts should still use year-like x labels"
 );
 assert(
 	fullChartSource.includes("shortValueText") &&
-		fullChartSource.includes("return shortValueText(item, axisType.value);"),
+			fullChartSource.includes("function fullChartShortDisplay") &&
+			fullChartSource.includes("axisType"),
 	"FullChart value labels should use the shared value formatter so stale display text cannot turn years into values"
 );
+
 assert(
 	!fullChartSource.includes("display.lastIndexOf(\":\")"),
 	"FullChart should not hand-slice display text after a colon for value labels"

@@ -10,14 +10,26 @@ const compareTableSource = fs.readFileSync(
 	path.join(__dirname, "..", "src", "components", "compoents_base", "CompareTable.vue"),
 	"utf8"
 );
-const mergedChartSource = fs.readFileSync(
+const mergedChartComponentSource = fs.readFileSync(
 	path.join(__dirname, "..", "src", "components", "compoents_base", "MergedComparisonChart.vue"),
 	"utf8"
 );
-const fullChartSource = fs.readFileSync(
+const mergedChartOptionSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "js", "mergedComparisonAdaptiveOptions.js"),
+	"utf8"
+);
+const mergedChartSource = `${mergedChartComponentSource}
+${mergedChartOptionSource}`;
+const fullChartComponentSource = fs.readFileSync(
 	path.join(__dirname, "..", "src", "components", "compoents_base", "FullChart.vue"),
 	"utf8"
 );
+const fullChartOptionSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "js", "fullChartAdaptiveOptions.js"),
+	"utf8"
+);
+const fullChartSource = `${fullChartComponentSource}
+${fullChartOptionSource}`;
 const legacyChartSources = ["BarChart.vue", "LineChart.vue", "CombinedChart.vue"].map(file =>
 	fs.readFileSync(
 		path.join(__dirname, "..", "src", "components", "compoents_base", "charts", file),
@@ -56,7 +68,7 @@ assert(
 );
 
 assert(
-	fullChartSource.includes("name: axisUnitLabel.value") &&
+	fullChartSource.includes("name: axisUnitLabel ||") &&
 		fullChartSource.includes("liters of pure alcohol per capita"),
 	"FullChart should display inferred y-axis units for non-percent measurements"
 );

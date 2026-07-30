@@ -22,10 +22,16 @@ const div2Source = fs.readFileSync(
 	path.join(componentDir, "..", "Div2.vue"),
 	"utf8"
 );
-const mergedChartSource = fs.readFileSync(
+const mergedChartComponentSource = fs.readFileSync(
 	path.join(componentDir, "MergedComparisonChart.vue"),
 	"utf8"
 );
+const mergedChartOptionSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "js", "mergedComparisonAdaptiveOptions.js"),
+	"utf8"
+);
+const mergedChartSource = `${mergedChartComponentSource}
+${mergedChartOptionSource}`;
 
 assert(
 	!simpleChartSource.includes('attr("class", "line-x-label")') &&

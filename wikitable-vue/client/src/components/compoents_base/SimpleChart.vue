@@ -1,5 +1,14 @@
 <template>
 	<div class="simple-chart">
+		<div
+			v-if="isCompressedScale"
+			class="compressed-scale-badge"
+			title="由于共享线性坐标会使一侧图形不可见，当前使用共享压缩刻度。图中标签和悬浮提示仍为原始数值。">
+			压缩刻度
+		</div>
+		<div v-if="compressedTrendText" class="compressed-trend-change">
+			{{ compressedTrendText }}
+		</div>
 		<!-- 文本显示 -->
 		<template v-if="visualization === 'text-only'">
 			<!-- GDP Rank 的直接显示 -->
@@ -94,6 +103,12 @@
 		CHART_REMAINDER_COLOR,
 		categoryColor
 	} = require("@/js/chartTheme");
+	const {
+		SYMLOG_CONSTANT,
+		adaptiveDomain,
+		detectAdaptiveScale,
+		trendChange,
+	} = require("@/js/adaptiveChartScale");
 
 	export default {
 		props: {
@@ -124,6 +139,14 @@
 			categoryColors: {
 				type: Object,
 				default: () => ({})
+			},
+			side: {
+				type: String,
+				default: ""
+			},
+			scaleContext: {
+				type: Object,
+				default: null
 			}
 		},
 
@@ -138,6 +161,105 @@
 			const barContainer = ref(null);
 			const lineContainer = ref(null);
 			const stackedContainer = ref(null);
+			const activeScaleDecision = ref({
+				mode: "linear",
+				constrainedSide: null,
+				reason: null,
+				diagnostics: {},
+			});
+			const resetScaleDecision = (drawableHeight = 0) => {
+				activeScaleDecision.value = {
+					mode: "linear",
+					constrainedSide: null,
+					reason: null,
+					diagnostics: { drawableHeight },
+				};
+			};
+			const supportsAdaptiveScale = computed(() =>
+				["bar-chart", "line-chart"].includes(props.visualization)
+			);
+			const hasValidScaleContext = computed(() => {
+				const context = props.scaleContext;
+				if (!context || context.visualization !== props.visualization) return false;
+				if (!Array.isArray(context.leftValues) || !Array.isArray(context.rightValues)) {
+					return false;
+				}
+				if (
+					!Array.isArray(context.domain) ||
+					context.domain.length !== 2 ||
+					!context.domain.every(value => Number.isFinite(Number(value))) ||
+					Number(context.domain[0]) === Number(context.domain[1])
+				) {
+					return false;
+				}
+				return [...context.leftValues, ...context.rightValues].some(value =>
+					Number.isFinite(Number(value))
+				);
+			});
+			const isCompressedScale = computed(
+				() =>
+					hasData.value &&
+					hasValidScaleContext.value &&
+					supportsAdaptiveScale.value &&
+					activeScaleDecision.value.mode !== "linear"
+			);
+			const contextValues = computed(() => [
+				...(props.scaleContext?.leftValues || []),
+				...(props.scaleContext?.rightValues || []),
+			]);
+			const activeDomain = computed(() =>
+				adaptiveDomain(
+					contextValues.value,
+					activeScaleDecision.value.mode,
+					props.scaleContext?.domain || props.yDomain
+				)
+			);
+			const updateScaleDecision = (height, margin) => {
+				const drawableHeight = Math.max(0, height - margin.top - margin.bottom);
+				if (
+					!hasData.value ||
+					!supportsAdaptiveScale.value ||
+					!hasValidScaleContext.value
+				) {
+					resetScaleDecision(drawableHeight);
+					return;
+				}
+				activeScaleDecision.value = detectAdaptiveScale({
+					leftValues: props.scaleContext.leftValues,
+					rightValues: props.scaleContext.rightValues,
+					domain: props.scaleContext.domain,
+					drawableHeight,
+					visualization: props.visualization,
+				});
+			};
+			const compressedTrendText = computed(() => {
+				if (!isCompressedScale.value || props.visualization !== "line-chart") {
+					return "";
+				}
+				const change = trendChange(lineData.value.map(point => ({
+					year: point.x,
+					value: point.originalValue
+				})));
+				if (change.absoluteChange === null) return "";
+				if (change.percentChange === null) {
+					return `变化 ${formatNumber(change.absoluteChange)}`;
+				}
+				const sign = change.percentChange > 0 ? "+" : "";
+				return `变化 ${sign}${change.percentChange.toFixed(1)}%`;
+			});
+			const createYScale = (domain, range) => {
+				if (activeScaleDecision.value.mode === "log") {
+					return d3.scaleLog().domain(domain).range(range).clamp(true);
+				}
+				if (activeScaleDecision.value.mode === "symlog") {
+					return d3.scaleSymlog()
+						.constant(SYMLOG_CONSTANT)
+						.domain(domain)
+						.range(range)
+						.clamp(true);
+				}
+				return d3.scaleLinear().domain(domain).range(range);
+			};
 
 			const colors = CHART_COLORS;
 			const remainderColor = CHART_REMAINDER_COLOR;
@@ -172,6 +294,14 @@
 			const compactSvgText = (text, maxChars = 18) => {
 				const value = String(text || "-").replace(/\s+/g, " ").trim();
 				return value.length > maxChars ? `${value.slice(0, maxChars - 1)}…` : value;
+			};
+
+			const originalDisplayText = item => {
+				const display = item?.originalDisplay ?? item?.fullDisplay ?? item?.display;
+				if (display !== null && display !== undefined && String(display).trim()) {
+					return String(display);
+				}
+				return formatNumber(item?.originalValue ?? item?.value ?? item?.y);
 			};
 
 			const previewTextAnchor = (index, total) => {
@@ -229,8 +359,12 @@
 								parent: item.parent || null,
 								year: item.year || null,
 								display: item.display || item.raw || item.value,
+								originalDisplay: item.originalDisplay ?? item.display ?? item.rawText ?? item.raw,
 								rawText: item.rawText || null,
-								unit: item.unit || null
+								unit: item.unit || null,
+								normalizedBaseValue: item.normalizedBaseValue,
+								previewDivisor: item.previewDivisor,
+								stripPreviewUnit: item.stripPreviewUnit === true
 							};
 						}
 						return {
@@ -261,8 +395,18 @@
 
 			onMounted(() => {
 				watch(
-					() => [processedField.value, props.visualization, props.unifiedMax, props.yDomain],
+					() => [
+						processedField.value,
+						props.visualization,
+						props.unifiedMax,
+						props.yDomain,
+						props.scaleContext,
+						props.side,
+					],
 					() => {
+						if (!hasData.value || !supportsAdaptiveScale.value) {
+							resetScaleDecision();
+						}
 						nextTick(() => {
 							if (
 								props.visualization === "pie-chart" &&
@@ -490,6 +634,7 @@
 					container.node().clientHeight
 				];
 				const margin = { top: 14, right: 8, bottom: 12, left: 8 };
+				updateScaleDecision(height, margin);
 				const svg = container
 					.append("svg")
 					.attr("width", "100%")
@@ -501,11 +646,11 @@
 						: props.unifiedMax
 							? [0, props.unifiedMax]
 							: barChartDomain(simpleBarData.value.map(d => d.value));
-				const y = d3
-					.scaleLinear()
-					.domain([minYValue, maxYValue])
-					.range([height - margin.bottom, margin.top]);
-				if (minYValue < 0 && maxYValue > 0) {
+				const renderDomain = isCompressedScale.value
+					? activeDomain.value
+					: [minYValue, maxYValue];
+				const y = createYScale(renderDomain, [height - margin.bottom, margin.top]);
+				if (!isCompressedScale.value && minYValue < 0 && maxYValue > 0) {
 					svg
 						.append("line")
 						.attr("x1", margin.left)
@@ -524,17 +669,37 @@
 						barCount * barWidth -
 						(barCount > 1 ? (barCount - 1) * barGap : 0)) /
 					2;
-				svg
-					.selectAll(".bar")
-					.data(simpleBarData.value)
-					.enter()
-					.append("rect")
-					.attr("x", (d, i) => startX + i * (barWidth + barGap))
-					.attr("y", d => y(Math.max(0, d.value)))
-					.attr("width", barWidth)
-					.attr("height", d => Math.abs(y(d.value) - y(0)))
-					.attr("fill", (d, i) => colors[i % colors.length])
-					.style("opacity", 0.8);
+				const renderCompressedPoints = () => {
+					svg
+						.selectAll(".compressed-point")
+						.data(simpleBarData.value)
+						.enter()
+						.append("circle")
+						.attr("class", "compressed-point")
+						.attr("cx", (d, i) => startX + i * (barWidth + barGap) + barWidth / 2)
+						.attr("cy", d => y(d.value))
+						.attr("r", 4)
+						.attr("fill", (d, i) => colors[i % colors.length])
+						.append("title")
+						.text(d => originalDisplayText(d));
+				};
+				const compactBarLabelText = d => compactSvgText(d.display, 10);
+
+				if (isCompressedScale.value) {
+					renderCompressedPoints();
+				} else {
+					svg
+						.selectAll(".bar")
+						.data(simpleBarData.value)
+						.enter()
+						.append("rect")
+						.attr("x", (d, i) => startX + i * (barWidth + barGap))
+						.attr("y", d => y(Math.max(0, d.value)))
+						.attr("width", barWidth)
+						.attr("height", d => Math.abs(y(d.value) - y(0)))
+						.attr("fill", (d, i) => colors[i % colors.length])
+						.style("opacity", 0.8);
+				}
 				svg
 					.selectAll(".bar-value-label")
 					.data(simpleBarData.value
@@ -548,15 +713,21 @@
 					.append("text")
 					.attr("class", "bar-value-label")
 					.attr("x", d => startX + d.index * (barWidth + barGap) + barWidth / 2)
-					.attr("y", d => (
-						d.value >= 0
-							? Math.max(8, y(d.value) - 5)
-							: Math.min(height - 4, y(d.value) + 11)
-					))
+					.attr("y", d =>
+						isCompressedScale.value
+							? Math.max(8, y(d.value) - 6)
+							: d.value >= 0
+								? Math.max(8, y(d.value) - 5)
+								: Math.min(height - 4, y(d.value) + 11)
+					)
 					.attr("text-anchor", "middle")
 					.attr("font-size", "9px")
 					.attr("fill", "#1f2937")
-					.text(d => compactSvgText(d.display, 10));
+					.text(d =>
+						isCompressedScale.value
+							? compactSvgText(originalDisplayText(d), 10)
+							: compactBarLabelText(d)
+					);
 			};
 
 			const renderLineChart = () => {
@@ -568,6 +739,7 @@
 					container.node().clientHeight
 				];
 				const margin = { top: 14, right: 8, bottom: 12, left: 8 };
+				updateScaleDecision(height, margin);
 				const svg = container
 					.append("svg")
 					.attr("width", "100%")
@@ -584,14 +756,12 @@
 						: d3.extent(lineData.value, d => d.y);
 				const yPadding =
 					yExtent[0] === yExtent[1] ? Math.max(1, Math.abs(yExtent[0]) * 0.15) : 0;
-				const y = d3
-					.scaleLinear()
-					.domain(
-						Array.isArray(props.yDomain) && props.yDomain.length === 2
-							? yExtent
-							: [yExtent[0] - yPadding, yExtent[1] + yPadding]
-					)
-					.range([height - margin.bottom, margin.top]);
+				const linearDomain =
+					Array.isArray(props.yDomain) && props.yDomain.length === 2
+						? yExtent
+						: [yExtent[0] - yPadding, yExtent[1] + yPadding];
+				const renderDomain = isCompressedScale.value ? activeDomain.value : linearDomain;
+				const y = createYScale(renderDomain, [height - margin.bottom, margin.top]);
 				const line = d3
 					.line()
 					.x(d => x(d.xLabel))
@@ -614,17 +784,20 @@
 					.attr("r", 3)
 					.attr("fill", colors[0])
 					.append("title")
-					.text(d => d.fullDisplay || d.display || formatNumber(d.y));
-				if (lineData.value.length <= 5) {
+					.text(d => originalDisplayText(d));
+				if (isCompressedScale.value || lineData.value.length <= 5) {
+					const labelData = lineData.value
+						.map((item, index) => ({ ...item, index }))
+						.filter(item =>
+							isCompressedScale.value
+								? item.index === 0 || item.index === lineData.value.length - 1
+								: shouldShowPreviewLabel(item.index, lineData.value.length, width, {
+										maxVisible: previewMaxLabels(width, 2)
+									})
+						);
 					svg
 						.selectAll(".line-value-label")
-						.data(lineData.value
-							.map((item, index) => ({ ...item, index }))
-							.filter(item =>
-								shouldShowPreviewLabel(item.index, lineData.value.length, width, {
-									maxVisible: previewMaxLabels(width, 2)
-								})
-							))
+						.data(labelData)
 						.enter()
 						.append("text")
 						.attr("class", "line-value-label")
@@ -633,7 +806,12 @@
 						.attr("text-anchor", d => previewTextAnchor(d.index, lineData.value.length))
 						.attr("font-size", "8px")
 						.attr("fill", "#1f2937")
-						.text(d => compactSvgText(d.display, 12));
+						.text(d =>
+							compactSvgText(
+								isCompressedScale.value ? originalDisplayText(d) : d.display,
+								12
+							)
+						);
 				}
 			};
 
@@ -936,18 +1114,25 @@
 			const simpleBarData = computed(() => {
 				if (!normalizedPreviewField.value) return [];
 				return normalizedPreviewField.value
-					.map((item, index) => ({
-						value: safeToNumber(item.value ?? item.raw),
-						display: previewDisplayText(item),
-						fullDisplay: displayTextForPoint(item),
-						categoryLabel: categoryLabelForPoint(item, index, {
-							fallback: props.fieldKey,
-							total: normalizedPreviewField.value.length
-						}),
-						label: item.label,
-						year: item.year,
-						index
-					}))
+					.map((item, index) => {
+						const originalValue = Number(item.normalizedBaseValue);
+						return {
+							value: safeToNumber(item.value ?? item.raw),
+							originalValue: Number.isFinite(originalValue)
+								? originalValue
+								: safeToNumber(item.value ?? item.raw),
+							display: previewDisplayText(item),
+							originalDisplay: item.originalDisplay,
+							fullDisplay: displayTextForPoint(item),
+							categoryLabel: categoryLabelForPoint(item, index, {
+								fallback: props.fieldKey,
+								total: normalizedPreviewField.value.length
+							}),
+							label: item.label,
+							year: item.year,
+							index
+						};
+					})
 					.filter(item => item.value !== 0 || !isYearEntry(String(item.value)));
 			});
 
@@ -955,14 +1140,21 @@
 				if (!normalizedPreviewField.value) return [];
 				return normalizedPreviewField.value
 					.filter(item => !isYearEntry(String(item.raw)))
-					.map((item, index) => ({
-						x: item.year || index,
-						xLabel: xLabelForPoint(item, index),
-						y: safeToNumber(item.value ?? item.raw),
-						display: previewDisplayText(item),
-						fullDisplay: displayTextForPoint(item),
-						label: item.label
-					}));
+					.map((item, index) => {
+						const originalValue = Number(item.normalizedBaseValue);
+						return {
+							x: item.year || index,
+							xLabel: xLabelForPoint(item, index),
+							y: safeToNumber(item.value ?? item.raw),
+							originalValue: Number.isFinite(originalValue)
+								? originalValue
+								: safeToNumber(item.value ?? item.raw),
+							display: previewDisplayText(item),
+							originalDisplay: item.originalDisplay,
+							fullDisplay: displayTextForPoint(item),
+							label: item.label
+						};
+					});
 			});
 
 			const hasData = computed(
@@ -987,6 +1179,8 @@
 				simpleBarData,
 				lineData,
 				normalizedPreviewField,
+				isCompressedScale,
+				compressedTrendText,
 				formatNumber,
 				processedField,
 				getRawTextForRank
@@ -1006,6 +1200,30 @@
 		font-family:
 			Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
 			"Segoe UI", sans-serif;
+	}
+	.compressed-scale-badge {
+		position: absolute;
+		top: 2px;
+		right: 4px;
+		z-index: 2;
+		border: 1px solid #cbd5e1;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.94);
+		padding: 1px 5px;
+		color: #64748b;
+		font-size: 9px;
+		font-weight: 600;
+		line-height: 1.4;
+	}
+
+	.compressed-trend-change {
+		position: absolute;
+		left: 4px;
+		bottom: 1px;
+		z-index: 2;
+		color: #475569;
+		font-size: 9px;
+		font-weight: 600;
 	}
 	.simple-text {
 		display: flex;

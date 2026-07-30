@@ -444,7 +444,12 @@ function formatValueDisplay(value, sourceRaw = "", dataType = "") {
 	const rawText = value && value.rawText ? normalizeSource(value.rawText) : "";
 	const source = normalizeSource(sourceRaw);
 	const type = inferredChartType(dataType, label, source);
-	const sourceNumber = findNumberWithContext(source, label, year);
+	const matchedSourceNumber = matchingValueDisplayToken(
+		value && value.value,
+		source,
+		dataType
+	);
+	const sourceNumber = matchedSourceNumber || findNumberWithContext(source, label, year);
 	const fallback = formatChartNumber(value && value.value, type);
 	const validRawText = isYearOnlyMeasurementText(rawText, value) ? "" : rawText;
 	const validSourceNumber = isYearOnlyMeasurementText(sourceNumber, value) ? "" : sourceNumber;
@@ -452,10 +457,14 @@ function formatValueDisplay(value, sourceRaw = "", dataType = "") {
 	const yearText = year ? ` (${year})` : "";
 	if (
 		label.startsWith("%") &&
-		Number.isFinite(Number(value && value.value)) &&
-		!String(numberText).includes("%")
+		Number.isFinite(Number(value && value.value))
 	) {
-		numberText = `${formatChartNumber(value.value, "percentage")}${label.replace(/^%/, "")}`;
+		const basis = label.replace(/^%/, "");
+		if (!String(numberText).includes("%")) {
+			numberText = `${formatChartNumber(value.value, "percentage")}${basis}`;
+		} else if (basis && !String(numberText).toLowerCase().endsWith(basis.toLowerCase())) {
+			numberText = `${numberText}${basis}`;
+		}
 	}
 
 	if (label) return `${label}${yearText}: ${numberText}`;
@@ -495,34 +504,94 @@ function shouldShowPreviewLabel(index, total, width, options = {}) {
 	return previewLabelIndexes(total, width, options).includes(index);
 }
 
-const MAGNITUDE_SCALES = [
-	{ pattern: /\b(?:quadrillion|Q)\b/i, divisor: 1e15 },
-	{ pattern: /\b(?:trillion|T)\b/i, divisor: 1e12 },
-	{ pattern: /\b(?:billion|B)\b/i, divisor: 1e9 },
-	{ pattern: /\b(?:million|M)\b/i, divisor: 1e6 },
-	{ pattern: /\b(?:thousand|K)\b/i, divisor: 1e3 },
-];
 
-function firstDisplayNumber(text) {
-	const match = cleanChartText(text).match(/[+-]?\d[\d,]*(?:\.\d+)?/);
-	if (!match) return null;
-	const number = Number(match[0].replace(/,/g, ""));
-	return Number.isFinite(number) ? number : null;
+function valuesHaveMatchingSign(left, right) {
+	return Object.is(Math.sign(Number(left)), Math.sign(Number(right)));
 }
 
-function inferredMagnitudeDivisor(point) {
-	const text = [
-		point?.display,
-		point?.rawText,
-		point?.raw,
-		point?.unit,
-		point?.label,
-	]
-		.filter(Boolean)
-		.join(" ");
-	if (/%|percent/i.test(text)) return 1;
-	const match = MAGNITUDE_SCALES.find(scale => scale.pattern.test(text));
-	return match ? match.divisor : 1;
+function valueMatchError(rawValue, candidateValue) {
+	const absolute = Math.abs(Number(rawValue) - Number(candidateValue));
+	const scale = Math.max(
+		Math.abs(Number(rawValue)),
+		Math.abs(Number(candidateValue)),
+		Number.EPSILON
+	);
+	return { relative: absolute / scale, absolute };
+}
+
+function magnitudeDivisorForToken(unit) {
+	const normalized = String(unit || "").toLowerCase();
+	if (normalized === "quadrillion" || normalized === "q") return 1e15;
+	if (normalized === "trillion" || normalized === "t") return 1e12;
+	if (normalized === "billion" || normalized === "b") return 1e9;
+	if (normalized === "million" || normalized === "m") return 1e6;
+	if (normalized === "thousand" || normalized === "k") return 1e3;
+	return 1;
+}
+
+function valueDisplayTokenCandidates(text) {
+	const tokenPattern = /(?:([+-])\s*)?((?:US\$|[$¥₩€£]))?\s*([+-])?\s*(\d[\d,]*(?:\.\d+)?)(st|nd|rd|th)?((?:\s*(?:quadrillion|trillion|billion|million|thousand|percent)(?![A-Za-z])|[QTBMK](?![A-Za-z])|\s*%))?/gi;
+	return [...cleanChartText(text).matchAll(tokenPattern)]
+		.map((match, index) => {
+			const sign = match[1] || match[3] || "";
+			const value = Number(`${sign}${match[4].replace(/,/g, "")}`);
+			const unit = String(match[6] || "").trim();
+			return {
+				index,
+				text: normalizeSource(match[0]),
+				value,
+				currency: match[2] || "",
+				unit,
+				isPercent: unit === "%" || /^percent$/i.test(unit),
+				divisor: magnitudeDivisorForToken(unit),
+			};
+		})
+		.filter(candidate => Number.isFinite(candidate.value));
+}
+
+function tokenSemanticRank(candidate, type, candidates) {
+	const normalized = normalizedChartType(type);
+	const prefersPercentage =
+		normalized === "percentage" ||
+		(normalized === "trend" && candidates.some(item => item.isPercent));
+	if (prefersPercentage) return candidate.isPercent ? 0 : 3;
+	if (normalized === "numerical") {
+		if (candidate.isPercent) return 4;
+		if (candidate.currency) return 0;
+		if (candidate.divisor > 1) return 1;
+		return 2;
+	}
+	if (candidate.currency || candidate.divisor > 1) return 0;
+	if (candidate.isPercent) return 1;
+	return 2;
+}
+
+function matchingValueDisplayCandidate(rawValue, text, type = "") {
+	const candidates = valueDisplayTokenCandidates(text);
+	const rankedMatches = candidates
+		.flatMap(candidate => [candidate.value * candidate.divisor, candidate.value]
+			.filter((interpretedValue, interpretationIndex, values) =>
+				values.indexOf(interpretedValue) === interpretationIndex &&
+				valuesHaveMatchingSign(rawValue, interpretedValue) &&
+				valuesNearlyEqual(rawValue, interpretedValue)
+			)
+			.map(interpretedValue => ({
+				...candidate,
+				interpretedValue,
+				...valueMatchError(rawValue, interpretedValue),
+				semanticRank: tokenSemanticRank(candidate, type, candidates),
+			})))
+		.sort((left, right) =>
+			left.relative - right.relative ||
+			left.absolute - right.absolute ||
+			left.semanticRank - right.semanticRank ||
+			left.index - right.index
+		);
+	return rankedMatches[0] || null;
+}
+
+function matchingValueDisplayToken(rawValue, text, type = "") {
+	return matchingValueDisplayCandidate(rawValue, text, type)?.text || "";
 }
 
 function valuesNearlyEqual(left, right) {
@@ -533,21 +602,49 @@ function valuesNearlyEqual(left, right) {
 	return Math.abs(a - b) <= tolerance;
 }
 
+function metadataValuesMatch(left, right) {
+	const a = Number(left);
+	const b = Number(right);
+	if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+	const scale = Math.max(1, Math.abs(a), Math.abs(b));
+	return Math.abs(a - b) <= Number.EPSILON * scale * 8;
+}
+
+function hasExistingPreviewMetadata(point) {
+	const existingBaseValue = Number(point?.normalizedBaseValue);
+	const existingDivisor = Number(point?.previewDivisor);
+	return (
+		point?.stripPreviewUnit === true &&
+		Number.isFinite(existingBaseValue) &&
+		Number.isFinite(existingDivisor) &&
+		existingDivisor > 0
+	);
+}
+
+function previewMetadataMatchesCurrentValue(point) {
+	if (!hasExistingPreviewMetadata(point)) return false;
+	return metadataValuesMatch(
+		Number(point?.value) * Number(point?.previewDivisor),
+		Number(point?.normalizedBaseValue)
+	);
+}
+
 function normalizedBaseValue(point) {
 	const rawValue = Number(point?.value);
 	if (!Number.isFinite(rawValue)) return rawValue;
-	const divisor = inferredMagnitudeDivisor(point);
-	if (divisor <= 1) return rawValue;
-	const displayNumber = firstDisplayNumber(
+	const existingBaseValue = Number(point?.normalizedBaseValue);
+	if (previewMetadataMatchesCurrentValue(point)) {
+		return existingBaseValue;
+	}
+	if (hasExistingPreviewMetadata(point)) return rawValue;
+	const matchedToken = matchingValueDisplayCandidate(
+		rawValue,
 		point?.display || point?.rawText || point?.raw || ""
 	);
-	if (displayNumber === null) return rawValue;
-	const scaledDisplayValue = displayNumber * divisor;
+	if (!matchedToken || matchedToken.divisor <= 1) return rawValue;
+	const scaledDisplayValue = matchedToken.value * matchedToken.divisor;
 	if (valuesNearlyEqual(rawValue, scaledDisplayValue)) return rawValue;
-	if (valuesNearlyEqual(rawValue, displayNumber)) return scaledDisplayValue;
-	if (Math.abs(rawValue) < divisor / 10 && Math.abs(displayNumber) < divisor / 10) {
-		return scaledDisplayValue;
-	}
+	if (valuesNearlyEqual(rawValue, matchedToken.value)) return scaledDisplayValue;
 	return rawValue;
 }
 
@@ -564,6 +661,31 @@ function commonPreviewDivisor(values, type = "") {
 	return 1;
 }
 
+function reusablePreviewDivisor(items = [], type = "") {
+	if (!items.length) return null;
+	const requiresUnitDivisor = normalizedChartType(type) === "percentage";
+	let sharedDivisor = null;
+	for (const item of items) {
+		const divisor = Number(item?.previewDivisor);
+		const baseValue = Number(item?.normalizedBaseValue);
+		const value = Number(item?.value);
+		if (
+			item?.stripPreviewUnit !== true ||
+			!Number.isFinite(divisor) ||
+			divisor <= 0 ||
+			(requiresUnitDivisor && divisor !== 1) ||
+			!Number.isFinite(baseValue) ||
+			!Number.isFinite(value) ||
+			!metadataValuesMatch(value * divisor, baseValue)
+		) {
+			return null;
+		}
+		if (sharedDivisor === null) sharedDivisor = divisor;
+		else if (divisor !== sharedDivisor) return null;
+	}
+	return sharedDivisor;
+}
+
 function formatUnitlessPreviewValue(value) {
 	const number = Number(value);
 	if (!Number.isFinite(number)) return "-";
@@ -575,18 +697,44 @@ function formatUnitlessPreviewValue(value) {
 function normalizePreviewChartItems(items = [], type = "") {
 	const source = Array.isArray(items) ? items : [];
 	const baseValues = source.map(normalizedBaseValue);
-	const divisor = commonPreviewDivisor(baseValues, type);
+	const divisor =
+		reusablePreviewDivisor(source, type) ?? commonPreviewDivisor(baseValues, type);
 	return source.map((item, index) => {
 		const baseValue = baseValues[index];
 		const value = Number.isFinite(baseValue) ? baseValue / divisor : baseValue;
+		const originalDisplay =
+			hasExistingPreviewMetadata(item) &&
+			!previewMetadataMatchesCurrentValue(item)
+				? formatUnitlessPreviewValue(Number(item?.value))
+				: item.originalDisplay ?? item.display ?? item.rawText ?? item.raw;
 		return {
 			...item,
 			value,
 			normalizedBaseValue: baseValue,
 			previewDivisor: divisor,
+			originalDisplay,
 			display: formatUnitlessPreviewValue(value),
 			unitlessDisplay: formatUnitlessPreviewValue(value),
 			stripPreviewUnit: true,
+		};
+	});
+}
+
+function canonicalBaseChartItems(items = []) {
+	const source = Array.isArray(items) ? items : [];
+	return source.map(item => {
+		const normalizedBaseValue = Number(item?.normalizedBaseValue);
+		const value = Number.isFinite(normalizedBaseValue)
+			? normalizedBaseValue
+			: Number(item?.value);
+		const originalDisplay =
+			item?.originalDisplay ?? item?.display ?? item?.rawText ?? item?.raw;
+		return {
+			...item,
+			value,
+			originalValue: value,
+			display: originalDisplay ?? formatUnitlessPreviewValue(value),
+			valueSpace: "normalized-base",
 		};
 	});
 }
@@ -596,11 +744,13 @@ module.exports = {
 	formatChartNumber,
 	formatAxisNumber,
 	barChartDomain,
+	canonicalBaseChartItems,
 	categoryLabelForPoint,
 	compactMiddleText,
 	displayTextForPoint,
 	pieLegendLabelForPoint,
 	normalizePreviewChartItems,
+	matchingValueDisplayToken,
 	shortValueText,
 	xLabelForPoint,
 	previewLabelIndexes,

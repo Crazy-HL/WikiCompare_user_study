@@ -14,14 +14,26 @@ const simpleChartSource = fs.readFileSync(
 	path.join(componentDir, "SimpleChart.vue"),
 	"utf8"
 );
-const fullChartSource = fs.readFileSync(
+const fullChartComponentSource = fs.readFileSync(
 	path.join(componentDir, "FullChart.vue"),
 	"utf8"
 );
-const mergedChartSource = fs.readFileSync(
+const fullChartOptionSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "js", "fullChartAdaptiveOptions.js"),
+	"utf8"
+);
+const fullChartSource = `${fullChartComponentSource}
+${fullChartOptionSource}`;
+const mergedChartComponentSource = fs.readFileSync(
 	path.join(componentDir, "MergedComparisonChart.vue"),
 	"utf8"
 );
+const mergedChartOptionSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "js", "mergedComparisonAdaptiveOptions.js"),
+	"utf8"
+);
+const mergedChartSource = `${mergedChartComponentSource}
+${mergedChartOptionSource}`;
 
 [
 	["SimpleChart", simpleChartSource],
@@ -29,7 +41,7 @@ const mergedChartSource = fs.readFileSync(
 	["MergedComparisonChart", mergedChartSource],
 ].forEach(([name, source]) => {
 	assert(
-		source.includes("@/js/chartTheme"),
+		source.includes("@/js/chartTheme") || source.includes('require("./chartTheme")'),
 		`${name} should use the shared chart theme so thumbnails, expanded charts, and merged charts stay visually consistent`
 	);
 });

@@ -1,7 +1,9 @@
 const {
 	barChartDomain,
+	canonicalBaseChartItems,
 	formatChartNumber,
 	formatValueDisplay,
+	normalizePreviewChartItems,
 	shortValueText,
 	xLabelForPoint,
 } = require("./chartValueDisplay");
@@ -18,7 +20,7 @@ function buildMergedComparison(row, articleTitles = {}) {
 		side: side.key,
 		raw: side.raw,
 		data: categories.map(category => {
-			const point = bestPointForCategory(side.points, category, mode);
+			const point = bestPointForCategory(side.points, category, mode, categories.length);
 			return point
 				? {
 						value: point.value,
@@ -33,6 +35,22 @@ function buildMergedComparison(row, articleTitles = {}) {
 	const numericValues = series
 		.flatMap(item => item.data.map(point => point.value))
 		.filter(Number.isFinite);
+	const leftValues = series[0]?.data
+		?.map(point => point.value)
+		.filter(Number.isFinite) || [];
+	const rightValues = series[1]?.data
+		?.map(point => point.value)
+		.filter(Number.isFinite) || [];
+	const yDomain = numericValues.length ? barChartDomain(numericValues) : [0, 1];
+	const visualization = mode === "line"
+		? "line-chart"
+		: mode === "stacked"
+			? "stacked-chart"
+			: "bar-chart";
+	const requestedVisualization = String(row?.mergeVisualization || "").toLowerCase();
+	const adaptiveEligible =
+		["line", "bar", "single"].includes(mode) &&
+		!["pie-chart", "text-only"].includes(requestedVisualization);
 
 	return {
 		title: row?.label || "Comparison",
@@ -40,7 +58,14 @@ function buildMergedComparison(row, articleTitles = {}) {
 		...inferMeasurement(row, allPoints),
 		categories,
 		series,
-		yDomain: numericValues.length ? barChartDomain(numericValues) : [0, 1],
+		yDomain,
+		scaleContext: {
+			leftValues,
+			rightValues,
+			domain: yDomain,
+			visualization,
+			adaptiveEligible,
+		},
 		stats: buildStats(sides, numericValues, row),
 		rawDetails: sides.map(side => ({ label: side.title, value: side.raw || "-" })),
 	};
@@ -55,7 +80,7 @@ function normalizeSide(row, side, title) {
 	const fallbackPoints = raw
 		? [{ value: null, label: row?.label || side, raw, display: raw }]
 		: [];
-	const points = filterAggregateComponentPoints((values.length ? values : fallbackPoints).map((value, index) => {
+	const displayPoints = filterAggregateComponentPoints((values.length ? values : fallbackPoints).map((value, index) => {
 		const point = typeof value === "object" && value !== null
 			? value
 			: { value, raw: String(value) };
@@ -76,6 +101,7 @@ function normalizeSide(row, side, title) {
 			display: displayForPoint(normalizedPoint, raw, row?.dataType),
 		};
 	}));
+	const points = canonicalizeNumericPoints(displayPoints, row?.dataType);
 
 	return {
 		key: side,
@@ -83,6 +109,24 @@ function normalizeSide(row, side, title) {
 		raw,
 		points,
 	};
+}
+
+function canonicalizeNumericPoints(points, dataType) {
+	const source = Array.isArray(points) ? points : [];
+	const numericIndexes = source
+		.map((point, index) => Number.isFinite(point?.value) ? index : -1)
+		.filter(index => index >= 0);
+	if (!numericIndexes.length) return source;
+	const canonical = canonicalBaseChartItems(
+		normalizePreviewChartItems(
+			numericIndexes.map(index => source[index]),
+			dataType
+		)
+	);
+	const byIndex = new Map(
+		numericIndexes.map((sourceIndex, index) => [sourceIndex, canonical[index]])
+	);
+	return source.map((point, index) => byIndex.get(index) || point);
 }
 
 function displayForPoint(point, raw, dataType) {
@@ -155,11 +199,19 @@ function chooseMode(row, sides, categories) {
 	return "text";
 }
 
-function bestPointForCategory(points, category, mode) {
+function bestPointForCategory(points, category, mode, categoryCount = 0) {
 	if (mode === "single") {
 		return points.find(point => Number.isFinite(point.value)) || points[0];
 	}
-	return points.find(point => point.category === category || point.label === category);
+	const matched = points.find(
+		point => point.category === category || point.label === category
+	);
+	if (matched) return matched;
+	if (categoryCount === 1) {
+		const numericPoints = points.filter(point => Number.isFinite(point.value));
+		if (numericPoints.length === 1) return numericPoints[0];
+	}
+	return undefined;
 }
 
 function buildStats(sides, numericValues, row) {
@@ -246,6 +298,13 @@ function firstDisplayValue(side) {
 }
 
 function toFiniteNumber(value) {
+	if (
+		value === null ||
+		value === undefined ||
+		(typeof value === "string" && value.trim() === "")
+	) {
+		return null;
+	}
 	const number = Number(value);
 	return Number.isFinite(number) ? number : null;
 }
