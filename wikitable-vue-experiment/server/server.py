@@ -44,6 +44,7 @@ from tool.chart_formats import (
     get_table_format
 )
 from tool.json_extractor import extract_json
+from experiment.handlers import experiment_routes
 import re
 from urllib.parse import urlparse
 
@@ -1185,7 +1186,7 @@ class AskInfoboxHandler(tornado.web.RequestHandler):
         except Exception as e:
             self.write(json.dumps({"error": str(e)}))
 def make_app():
-    return tornado.web.Application([
+    routes = [
         (r"/", MainHandler),
         (r"/api/compare-session", CompareSessionHandler),
         (r"/api/analyze-attribute", AnalyzeAttributeHandler),
@@ -1198,7 +1199,9 @@ def make_app():
         (r"/analyze_chart", AnalyzeChartHandler),
         (r"/gpt_ask_chart", GPTAskChartHandler),
         (r"/outline_match", OutlineMatchHandler),
-    ], debug=True)
+    ]
+    routes.extend(experiment_routes())
+    return tornado.web.Application(routes, debug=True)
 
 if __name__ == "__main__":
     app = make_app()
