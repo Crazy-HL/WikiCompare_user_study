@@ -6,6 +6,8 @@ from pathlib import Path
 import tornado.web
 
 from .assignment import assignment_for_code
+from .defaults import DEFAULT_MATERIALS
+from .question_generation import build_question_prompt, normalize_generated_questions
 from .storage import ExperimentStorage
 
 ADMIN_TOKENS = set()
@@ -133,6 +135,26 @@ class AdminAnswersCsvHandler(AdminExportHandler):
     export_name = "answersCsv"
 
 
+class AdminQuestionGenerateHandler(JsonHandler, AdminMixin):
+    def post(self):
+        if not self.require_admin():
+            return
+        body = self.read_json()
+        material_id = body.get("materialId", "")
+        material = next((item for item in DEFAULT_MATERIALS if item["id"] == material_id), None)
+        if not material:
+            self.write_error_json(f"Unknown material id: {material_id}", status=404)
+            return
+        raw_questions = body.get("rawQuestions")
+        if raw_questions is None:
+            self.write_error_json("rawQuestions is required until material session extraction is connected", status=400)
+            return
+        existing = storage().load_questions(material_id)
+        normalized = normalize_generated_questions(raw_questions, material_id, int(existing.get("version") or 0) + 1)
+        saved = storage().save_questions(material_id, normalized)
+        self.write_json(saved)
+
+
 class AdminQuestionFreezeHandler(JsonHandler, AdminMixin):
     frozen = True
 
@@ -161,6 +183,7 @@ def experiment_routes():
         (r"/api/admin/submissions", AdminSubmissionsHandler),
         (r"/api/admin/export/submissions.csv", AdminSummaryCsvHandler),
         (r"/api/admin/export/answers.csv", AdminAnswersCsvHandler),
+        (r"/api/admin/questions/generate", AdminQuestionGenerateHandler),
         (r"/api/admin/questions/freeze", AdminQuestionFreezeHandler),
         (r"/api/admin/questions/unfreeze", AdminQuestionUnfreezeHandler),
     ]

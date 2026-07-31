@@ -109,3 +109,33 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert unfreeze.code == 200
         assert json.loads(unfreeze.body)["frozen"] is False
 
+    def test_admin_generate_questions_saves_next_version(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        raw_questions = {
+            "material_id": "M1",
+            "questions": [
+                {"question_id": f"Q{index}", "question_text": f"Question {index}", "gold_atoms": []}
+                for index in range(1, 6)
+            ],
+        }
+
+        response = self.post_json(
+            "/api/admin/questions/generate",
+            {"materialId": "M1", "rawQuestions": raw_questions},
+            headers={"X-Admin-Token": token},
+        )
+
+        assert response.code == 200
+        generated = json.loads(response.body)
+        assert generated["material_id"] == "M1"
+        assert generated["version"] == 1
+        assert generated["frozen"] is False
+        assert [item["question_id"] for item in generated["questions"]] == ["Q1", "Q2", "Q3", "Q4", "Q5"]
+
+        questions_response = self.fetch("/api/experiment/questions?materialId=M1")
+        assert questions_response.code == 200
+        persisted = json.loads(questions_response.body)
+        assert persisted["version"] == 1
+        assert persisted["questions"][0]["question_text"] == "Question 1"
+
