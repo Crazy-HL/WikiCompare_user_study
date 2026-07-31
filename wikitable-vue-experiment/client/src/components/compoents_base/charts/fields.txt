@@ -1,0 +1,200 @@
+	// 可比较字段配置（顺序即显示顺序）
+	const COMPARABLE_FIELDS = [
+		{
+			key: "GDP growth",
+			type: "percentage",
+			typeLabel: "百分比(%)",
+			visualization: "line-chart",
+			legend: "GDP年增长率（%）"
+		},
+		{
+			key: "Export goods",
+			type: "percentage",
+			typeLabel: "百分比(%)",
+			visualization: "stacked-chart",
+			legend: "主要出口商品构成（%）"
+		},
+		{
+			key: "GDP",
+			type: "number",
+			typeLabel: "数值(美元)",
+			visualization: "bar-chart",
+			legend: "国内生产总值（单位：万亿美元）"
+		},
+		{
+			key: "Population",
+			type: "number",
+			typeLabel: "数值(人)",
+			visualization: "bar-chart",
+			legend: "人口数量（单位：亿人）"
+		},
+		{
+			key: "Labor force by occupation",
+			type: "percentage",
+			typeLabel: "百分比(%)",
+			visualization: "pie-chart",
+			legend: "按职业划分的劳动力"
+		},
+		{
+			key: "Inflation (CPI)",
+			type: "percentage",
+			typeLabel: "百分比(%)",
+			visualization: "pie-chart",
+			legend: "消费者价格指数变化"
+		},
+
+		{
+			key: "Main export partners",
+			type: "percentage",
+			typeLabel: "百分比(%)",
+			visualization: "pie-chart",
+			legend: "按职业划分的劳动力"
+		},
+		{
+			key: "GDP rank",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "全球GDP排名"
+		},
+		{
+			key: "Main industries",
+			type: "percentage",
+			typeLabel: "百分比(%)",
+			visualization: "stacked-chart",
+			legend: "主要产业（%）"
+		},
+		{
+			key: "Main export partners",
+			type: "percentage",
+			typeLabel: "百分比(%)",
+			visualization: "stacked-chart",
+			legend: "主要出口伙伴（%）"
+		},
+		{
+			key: "GDP per capita",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "人均国内生产总值"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Unemployment",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "失业"
+		},
+		{
+			key: "Gini coefficient",
+			type: "text",
+			typeLabel: "文本",
+			visualization: "text-only",
+			legend: "基尼系数"
+		}
+	];

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Scatter Chart Example</title>
+		<script src="https://d3js.org/d3.v7.min.js"></script>
+		<style>
+			.chart-container {
+				width: 800px;
+				margin: 20px auto;
+				position: relative;
+			}
+			.axis-label {
+				font-size: 14px;
+				fill: #333;
+			}
+			.legend {
+				font-size: 12px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="chart-container" id="chart-container"></div>
+
+		<script>
+			// 散点图数据
+			const scatterChartData = {
+				xAxis: { label: "Year", data: [2021, 2023, 2024] },
+				yAxis: { label: "Points per game (PPG)", data: [22.0, 30.0, 23.0] },
+				datasets: [
+					{
+						label: "L.A. Lakers",
+						data: [
+							{ x: 2021, y: 22.0 },
+							{ x: 2023, y: 30.0 },
+							{ x: 2024, y: 23.0 }
+						]
+					}
+				]
+			};
+
+			// 绘制散点图函数
+			function renderScatterChart(chartRef, data) {
+				// 参数校验
+				if (!chartRef) {
+					console.error("图表容器未找到");
+					return;
+				}
+
+				if (!data || typeof data !== "object") {
+					console.error("无效的图表数据格式", data);
+					return;
+				}
+
+				// 检查必要字段
+				const requiredFields = ["xAxis", "yAxis", "datasets"];
+				if (requiredFields.some(field => !data[field])) {
+					console.error(
+						"缺失必要字段，需要包含 xAxis、yAxis 和 datasets",
+						data
+					);
+					return;
+				}
+
+				console.log("渲染scatter_chart数据:", data);
+
+				// 配置参数
+				const margin = { top: 50, right: 100, bottom: 50, left: 50 };
+				const width = 800 - margin.left - margin.right;
+				const height = 400 - margin.top - margin.bottom;
+
+				// 清空之前的图表
+				d3.select(chartRef).html("");
+
+				// 创建 SVG 容器
+				const svg = d3
+					.select(chartRef)
+					.append("svg")
+					.attr("width", width + margin.left + margin.right)
+					.attr("height", height + margin.top + margin.bottom)
+					.append("g")
+					.attr("transform", `translate(${margin.left},${margin.top})`);
+
+				// X轴比例尺
+				const x = d3
+					.scaleLinear()
+					.domain([
+						d3.min(data.datasets, d => d3.min(d.data, p => p.x)), // 最小 x 值
+						d3.max(data.datasets, d => d3.max(d.data, p => p.x)) // 最大 x 值
+					])
+					.range([0, width]);
+
+				// Y轴比例尺
+				const y = d3
+					.scaleLinear()
+					.domain([
+						d3.min(data.datasets, d => d3.min(d.data, p => p.y)), // 最小 y 值
+						d3.max(data.datasets, d => d3.max(d.data, p => p.y)) // 最大 y 值
+					])
+					.range([height, 0]);
+
+				// 颜色生成器
+				const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+				// 添加 X 轴
+				svg
+					.append("g")
+					.attr("transform", `translate(0,${height})`)
+					.call(d3.axisBottom(x));
+
+				// 添加 Y 轴
+				svg.append("g").call(d3.axisLeft(y));
+
+				// 添加 X 轴标注
+				svg
+					.append("text")
+					.attr("class", "axis-label")
+					.attr("x", width / 2)
+					.attr("y", height + margin.bottom - 10)
+					.style("text-anchor", "middle")
+					.text(data.xAxis.label);
+
+				// 添加 Y 轴标注
+				svg
+					.append("text")
+					.attr("class", "axis-label")
+					.attr("transform", "rotate(-90)")
+					.attr("x", -height / 2)
+					.attr("y", -margin.left + 20)
+					.style("text-anchor", "middle")
+					.text(data.yAxis.label);
+
+				// 绘制散点
+				data.datasets.forEach((dataset, i) => {
+					svg
+						.selectAll(`.dot-${i}`)
+						.data(dataset.data)
+						.enter()
+						.append("circle")
+						.attr("class", `dot-${i}`)
+						.attr("cx", d => x(d.x))
+						.attr("cy", d => y(d.y))
+						.attr("r", 5) // 点的大小
+						.attr("fill", color(i))
+						.attr("opacity", 0.8);
+				});
+
+				// 添加图注
+				const legend = svg
+					.append("g")
+					.attr("class", "legend")
+					.attr("transform", `translate(${width + 20},${20})`);
+
+				data.datasets.forEach((dataset, i) => {
+					legend
+						.append("rect")
+						.attr("x", 0)
+						.attr("y", i * 20)
+						.attr("width", 16)
+						.attr("height", 16)
+						.attr("fill", color(i));
+
+					legend
+						.append("text")
+						.attr("x", 24)
+						.attr("y", i * 20 + 8)
+						.attr("dy", "0.35em")
+						.style("font-size", "12px")
+						.text(dataset.label);
+				});
+			}
+
+			// 渲染散点图
+			renderScatterChart("chart-container", scatterChartData);
+		</script>
+	</body>
+</html>

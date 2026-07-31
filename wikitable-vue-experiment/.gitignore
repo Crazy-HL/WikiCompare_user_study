@@ -1,0 +1,11 @@
+node_modules/
+client/node_modules/
+client/dist/
+server/.pytest_cache/
+server/**/__pycache__/
+server/experiment_data/submissions/
+server/experiment_data/exports/
+server/experiment_data/*.lock
+.env
+server/.env
+.DS_Store
