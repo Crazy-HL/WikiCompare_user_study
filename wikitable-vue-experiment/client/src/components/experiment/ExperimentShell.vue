@@ -121,6 +121,9 @@
 			leftTitle: material.leftTitle || preset.left.title,
 			rightTitle: material.rightTitle || preset.right.title
 		});
+		if (sessionStore.error) {
+			throw new Error(sessionStore.error);
+		}
 	};
 
 	const loadCurrentStage = async () => {
