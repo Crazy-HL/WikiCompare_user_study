@@ -1,6 +1,8 @@
 const assert = require("assert");
 const { Q6_TEXT } = require("../src/experiment/q6.js");
-const { createAnswerRecord, buildCompletionPayload } = require("../src/experiment/experimentStore.js");
+const fs = require("fs");
+const path = require("path");
+const { createAnswerRecord, buildCompletionPayload, validateStageAnswerRecords } = require("../src/experiment/experimentStore.js");
 
 assert(/在阅读两篇文章/.test(Q6_TEXT));
 
@@ -45,5 +47,41 @@ assert.strictEqual(falsyAnswer.answer, "0");
 assert.strictEqual(falsyAnswer.primarySource, "false");
 assert.strictEqual(falsyAnswer.leftEvidence, "");
 assert.strictEqual(falsyAnswer.rightEvidence, "");
+
+const completeAnswerSet = Array.from({ length: 5 }, (_, index) => ({
+	questionId: `Q${index + 1}`,
+	questionText: `Question ${index + 1}`,
+	answer: "answer",
+})).concat({ questionId: "Q6", questionText: Q6_TEXT, answer: "notes" });
+assert.strictEqual(validateStageAnswerRecords(completeAnswerSet), "");
+assert.match(validateStageAnswerRecords([{ questionId: "Q6", questionText: Q6_TEXT }]), /6 条/);
+assert.match(validateStageAnswerRecords(completeAnswerSet.slice(0, 5)), /Q6/);
+
+const experimentShellSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "components", "experiment", "ExperimentShell.vue"),
+	"utf8"
+);
+assert(
+	experimentShellSource.includes('v-if="isStageReady"') &&
+		experimentShellSource.includes("validateStageAnswerRecords"),
+	"ExperimentShell should only render AnswerPanel after the loaded stage is ready and should validate submitted answer records"
+);
+const continueStart = experimentShellSource.indexOf("const continueToNextStage = () => {");
+const continueEnd = experimentShellSource.indexOf("};", continueStart);
+assert(
+	continueStart >= 0 && !experimentShellSource.slice(continueStart, continueEnd).includes("loadCurrentStage()"),
+	"ExperimentShell should let the current-stage watcher load stage 2 instead of explicitly loading it twice"
+);
+
+const chatGptConditionSource = fs.readFileSync(
+	path.join(__dirname, "..", "src", "components", "experiment", "ChatGptCondition.vue"),
+	"utf8"
+);
+assert(!chatGptConditionSource.includes("rankedRows"), "ChatGPT static table should not derive frozen rows from the live session rankedRows");
+assert(
+	chatGptConditionSource.indexOf("const priorConversationHistory") >= 0 &&
+		chatGptConditionSource.indexOf("const priorConversationHistory") < chatGptConditionSource.indexOf('messages.value.push({ role: "user"'),
+	"ChatGptCondition should build /api/ask conversation history before pushing the current user message"
+);
 
 console.log("experiment payload tests passed");

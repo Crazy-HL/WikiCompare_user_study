@@ -74,11 +74,18 @@
 	import { postJson } from "@/api";
 	import { sessionStore } from "@/js/sessionStore";
 
+	const props = defineProps({
+		frozenRows: {
+			type: Array,
+			default: () => []
+		}
+	});
+
 	const question = ref("");
 	const messages = ref([]);
 	const isLoading = ref(false);
 	const hasSession = computed(() => Boolean(sessionStore.session?.sessionId));
-	const staticRows = computed(() => sessionStore.session?.rankedRows || []);
+	const staticRows = computed(() => props.frozenRows || []);
 
 	watch(
 		() => sessionStore.session?.sessionId,
@@ -120,6 +127,7 @@
 	const askQuestion = async () => {
 		const text = question.value.trim();
 		if (!text || !hasSession.value) return;
+		const priorConversationHistory = conversationHistory();
 		messages.value.push({ role: "user", content: text });
 		question.value = "";
 		isLoading.value = true;
@@ -127,7 +135,7 @@
 			const response = await postJson("api/ask", {
 				sessionId: sessionStore.session.sessionId,
 				question: text,
-				conversationHistory: conversationHistory()
+				conversationHistory: priorConversationHistory
 			});
 			messages.value.push({
 				role: "assistant",

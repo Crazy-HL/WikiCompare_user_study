@@ -1,5 +1,12 @@
 <template>
-	<BreakScreen v-if="screen === 'break'" @continue="continueToNextStage" />
+	<section v-if="assignmentValidationError" class="experiment-shell">
+		<div class="stage-error fatal" role="alert">
+			<strong>无法加载实验</strong>
+			<p>{{ assignmentValidationError }}</p>
+		</div>
+	</section>
+
+	<BreakScreen v-else-if="screen === 'break'" @continue="continueToNextStage" />
 	<CompleteScreen v-else-if="screen === 'complete'" />
 
 	<section v-else class="experiment-shell">
@@ -24,10 +31,14 @@
 			</div>
 
 			<AnswerPanel
+				v-if="isStageReady"
 				:key="`answers-${currentStageKey}`"
 				:questions="questions"
 				:q6-text="q6Text"
-				@submit="saveStageAnswers" />
+				@submit="handleStageSubmit" />
+			<aside v-else class="answer-panel-placeholder" aria-live="polite">
+				正在加载作答题目，加载完成前不能提交答案。
+			</aside>
 		</div>
 	</section>
 </template>
@@ -43,7 +54,8 @@
 	import { getQuestions, completeExperiment } from "@/experiment/experimentApi";
 	import { sessionStore } from "@/js/sessionStore";
 	const { MATERIAL_PRESETS, materialUrl } = require("@/js/materialPresets");
-	const { buildCompletionPayload } = require("@/experiment/experimentStore");
+	const { buildCompletionPayload, validateStageAnswerRecords } = require("@/experiment/experimentStore");
+	const { validateAssignmentStages } = require("@/experiment/assignment");
 	const { Q6_TEXT } = require("@/experiment/q6");
 
 	const props = defineProps({
@@ -61,6 +73,7 @@
 	const screen = ref("stage");
 	const currentStageIndex = ref(0);
 	const questionsPayload = ref(null);
+	const loadedStageKey = ref("");
 	const isStageLoading = ref(false);
 	const loadError = ref("");
 	const stageStartedAtMs = ref(Date.now());
@@ -73,11 +86,20 @@
 	};
 
 	const stages = computed(() => props.assignment?.stages || []);
-	const stageCount = computed(() => stages.value.length || 2);
+	const assignmentValidationError = computed(() => validateAssignmentStages(props.assignment));
+	const stageCount = computed(() => 2);
 	const currentStage = computed(() => stages.value[currentStageIndex.value] || null);
 	const currentStageDisplayIndex = computed(() => currentStage.value?.stageIndex || currentStageIndex.value + 1);
 	const currentStageKey = computed(() => `${currentStage.value?.stageIndex || currentStageIndex.value + 1}-${currentStage.value?.condition || ""}-${currentStage.value?.materialId || ""}`);
 	const questions = computed(() => questionsPayload.value?.questions || []);
+	const hasRequiredQuestions = computed(() => questions.value.length >= 5);
+	const isStageReady = computed(() => (
+		!assignmentValidationError.value &&
+		!isStageLoading.value &&
+		!loadError.value &&
+		loadedStageKey.value === currentStageKey.value &&
+		hasRequiredQuestions.value
+	));
 	const q6Text = computed(() => props.config?.q6Text || Q6_TEXT);
 	const materials = computed(() => props.config?.materials || []);
 	const currentMaterial = computed(() => materials.value.find(material => material.id === currentStage.value?.materialId) || null);
@@ -102,6 +124,10 @@
 	};
 
 	const loadCurrentStage = async () => {
+		if (assignmentValidationError.value) {
+			loadError.value = assignmentValidationError.value;
+			return;
+		}
 		const stage = currentStage.value;
 		if (!stage) {
 			loadError.value = "未找到当前阶段。";
@@ -110,13 +136,18 @@
 		isStageLoading.value = true;
 		loadError.value = "";
 		questionsPayload.value = null;
+		loadedStageKey.value = "";
 		stageStartedAtMs.value = Date.now();
 		try {
 			const [payload] = await Promise.all([
 				getQuestions(stage.materialId),
 				loadCurrentMaterialSession(stage)
 			]);
+			if (!Array.isArray(payload?.questions) || payload.questions.length < 5) {
+				throw new Error("当前材料的问题尚未加载完整，请联系研究人员。");
+			}
 			questionsPayload.value = payload;
+			loadedStageKey.value = currentStageKey.value;
 		} catch (error) {
 			loadError.value = error.response?.data?.error || error.message || "加载阶段材料或问题时出错。";
 		} finally {
@@ -127,14 +158,22 @@
 	watch(
 		() => currentStageKey.value,
 		() => {
-			if (screen.value === "stage") loadCurrentStage();
+			if (screen.value === "stage" && !assignmentValidationError.value) loadCurrentStage();
 		},
 		{ immediate: true }
 	);
 
-	const saveStageAnswers = async answers => {
+	const handleStageSubmit = async answers => {
 		const stage = currentStage.value;
-		if (!stage) return;
+		if (!stage || !isStageReady.value) {
+			loadError.value = "当前阶段尚未加载完成，请等待材料和问题加载后再提交。";
+			return;
+		}
+		const answerError = validateStageAnswerRecords(answers);
+		if (answerError) {
+			loadError.value = answerError;
+			return;
+		}
 		const stageSubmittedAtMs = Date.now();
 		stageResults.value[currentStageIndex.value] = {
 			stageIndex: stage.stageIndex,
@@ -152,13 +191,19 @@
 		}
 
 		const completedAtMs = Date.now();
+		const completedStages = stageResults.value.filter(Boolean);
+		if (completedStages.length !== stageCount.value) {
+			loadError.value = "实验阶段记录不完整，请联系研究人员。";
+			return;
+		}
+
 		const payload = buildCompletionPayload({
 			experimentId: props.assignment?.experimentId,
 			participantCode: props.assignment?.participantCode,
 			assignmentGroup: assignmentGroup.value,
 			startedAtMs: experimentStartedAtMs,
 			completedAtMs,
-			stages: stageResults.value.filter(Boolean)
+			stages: completedStages
 		});
 		try {
 			const saved = await completeExperiment(payload);
@@ -172,7 +217,6 @@
 	const continueToNextStage = () => {
 		currentStageIndex.value += 1;
 		screen.value = "stage";
-		loadCurrentStage();
 	};
 </script>
 
@@ -225,6 +269,25 @@
 		color: #991b1b;
 	}
 
+	.stage-error.fatal {
+		margin: 24px;
+	}
+
+	.answer-panel-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: min(420px, 100%);
+		max-width: 520px;
+		padding: 24px;
+		box-sizing: border-box;
+		border-left: 1px solid rgba(203, 213, 225, 0.9);
+		background: #f8fafc;
+		color: #475569;
+		font-weight: 760;
+		text-align: center;
+	}
+
 	.stage-error p {
 		margin: 6px 0 12px;
 	}
@@ -263,6 +326,12 @@
 
 		.condition-column {
 			min-height: 760px;
+		}
+
+		.answer-panel-placeholder {
+			max-width: none;
+			border-left: 0;
+			border-top: 1px solid rgba(203, 213, 225, 0.9);
 		}
 	}
 </style>

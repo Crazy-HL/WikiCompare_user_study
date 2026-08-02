@@ -17,6 +17,8 @@ const GROUP_STAGES = {
 	],
 };
 
+const PARTICIPANT_SAFE_ASSIGNMENT_ERROR = "实验分配异常，请联系研究人员。";
+
 const groupForNumber = number => ["S1", "S2", "S3", "S4"][(number - 1) % 4];
 
 const normalizeParticipantCode = value => {
@@ -47,8 +49,43 @@ const assignmentForCode = value => {
 	};
 };
 
+const stageSignature = stage => `${stage?.stageIndex}:${stage?.condition}:${stage?.materialId}`;
+
+const hasExactlyExpectedSystemsAndMaterials = stages => {
+	const conditions = stages.map(stage => stage?.condition).sort();
+	const materialIds = stages.map(stage => stage?.materialId).sort();
+	return (
+		conditions.length === 2 &&
+		conditions[0] === "chatgpt" &&
+		conditions[1] === "wikicompare" &&
+		materialIds.length === 2 &&
+		materialIds[0] === "M1" &&
+		materialIds[1] === "M2"
+	);
+};
+
+const validateAssignmentStages = assignment => {
+	const stages = Array.isArray(assignment?.stages) ? assignment.stages : [];
+	if (stages.length !== 2) return PARTICIPANT_SAFE_ASSIGNMENT_ERROR;
+	if (stageSignature(stages[0]).split(":")[0] !== "1" || stageSignature(stages[1]).split(":")[0] !== "2") {
+		return PARTICIPANT_SAFE_ASSIGNMENT_ERROR;
+	}
+	if (!hasExactlyExpectedSystemsAndMaterials(stages)) return PARTICIPANT_SAFE_ASSIGNMENT_ERROR;
+
+	const group = assignment?.assignmentGroup || assignment?.group || "";
+	const expectedStages = GROUP_STAGES[group];
+	if (expectedStages) {
+		const expectedSignature = expectedStages.map(stageSignature).join("|");
+		const actualSignature = stages.map(stageSignature).join("|");
+		if (actualSignature !== expectedSignature) return PARTICIPANT_SAFE_ASSIGNMENT_ERROR;
+	}
+	return "";
+};
+
 module.exports = {
 	GROUP_STAGES,
+	PARTICIPANT_SAFE_ASSIGNMENT_ERROR,
 	assignmentForCode,
 	normalizeParticipantCode,
+	validateAssignmentStages,
 };

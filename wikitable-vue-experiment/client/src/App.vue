@@ -17,25 +17,23 @@
 		<ExperimentShell
 			v-else-if="participantState === 'stage'"
 			:assignment="assignment"
-			:config="experimentConfig"
-			@complete="handleComplete" />
+			:config="experimentConfig" />
 	</section>
 </template>
 
 <script setup>
-	import { computed, onMounted, ref } from "vue";
+	import { computed, onMounted, onUnmounted, ref } from "vue";
 	import General from "./components/general.vue";
 	import ParticipantEntry from "./components/experiment/ParticipantEntry.vue";
 	import ExperimentShell from "./components/experiment/ExperimentShell.vue";
 	import { getExperimentConfig, startExperiment } from "@/experiment/experimentApi";
-	const { assignmentForCode } = require("@/experiment/assignment");
+	const { assignmentForCode, validateAssignmentStages } = require("@/experiment/assignment");
 
 	const currentPath = ref(window.location.pathname || "/");
 	const participantState = ref("entry");
 	const experimentConfig = ref(null);
 	const assignment = ref(null);
 	const errorMessage = ref("");
-	const completedSubmission = ref(null);
 
 	const routeMode = computed(() => {
 		if (currentPath.value.startsWith("/admin")) return "admin";
@@ -49,15 +47,21 @@
 		return experimentConfig.value;
 	};
 
+	const updateCurrentPath = () => {
+		currentPath.value = window.location.pathname || "/";
+	};
+
 	onMounted(() => {
-		window.addEventListener("popstate", () => {
-			currentPath.value = window.location.pathname || "/";
-		});
+		window.addEventListener("popstate", updateCurrentPath);
 		if (routeMode.value === "participant") {
 			loadConfig().catch(error => {
 				errorMessage.value = error.response?.data?.error || error.message || "实验配置加载失败。";
 			});
 		}
+	});
+
+	onUnmounted(() => {
+		window.removeEventListener("popstate", updateCurrentPath);
 	});
 
 	const beginExperiment = async participantCode => {
@@ -70,13 +74,16 @@
 				startExperiment(localAssignment.participantCode)
 			]);
 			experimentConfig.value = config;
-			assignment.value = {
+			const mergedAssignment = {
 				...localAssignment,
 				...startedAssignment,
 				group: startedAssignment.assignmentGroup || localAssignment.group,
 				assignmentGroup: startedAssignment.assignmentGroup || localAssignment.group,
 				stages: startedAssignment.stages || localAssignment.stages
 			};
+			const assignmentError = validateAssignmentStages(mergedAssignment);
+			if (assignmentError) throw new Error(assignmentError);
+			assignment.value = mergedAssignment;
 			participantState.value = "stage";
 		} catch (error) {
 			errorMessage.value = error.response?.data?.error || error.message || "开始实验失败，请联系研究人员。";
@@ -89,9 +96,6 @@
 		errorMessage.value = "";
 	};
 
-	const handleComplete = submission => {
-		completedSubmission.value = submission;
-	};
 </script>
 
 <style scoped>
