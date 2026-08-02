@@ -54,7 +54,10 @@
 				placeholder='{"material_id":"M1","questions":[...]}'
 				:disabled="saving || questionsFrozen"></textarea>
 			<div class="action-row">
-				<button type="button" class="primary" :disabled="saving || questionsFrozen || !rawQuestions.trim()" @click="saveGeneratedQuestions">
+				<button type="button" class="primary" :disabled="saving || questionsFrozen" @click="autoGenerateQuestions">
+					{{ savingAction === "auto-generate" ? "正在自动生成..." : "自动生成题目" }}
+				</button>
+				<button type="button" :disabled="saving || questionsFrozen || !rawQuestions.trim()" @click="saveGeneratedQuestions">
 					{{ savingAction === "generate" ? "正在保存..." : "保存本次生成结果" }}
 				</button>
 				<button type="button" :disabled="saving || questionsFrozen" @click="freezeSelectedQuestions">
@@ -169,6 +172,22 @@
 			questionPayload.value = await adminGenerateQuestions(props.token, selectedMaterial.value, rawQuestions.value);
 			rawQuestions.value = "";
 			message.value = "已保存本次生成结果。";
+		} catch (error) {
+			showError(error);
+		} finally {
+			savingAction.value = "";
+		}
+	};
+
+	const autoGenerateQuestions = async () => {
+		if (questionsFrozen.value) return;
+		savingAction.value = "auto-generate";
+		message.value = "";
+		errorMessage.value = "";
+		try {
+			questionPayload.value = await adminGenerateQuestions(props.token, selectedMaterial.value);
+			rawQuestions.value = "";
+			message.value = "题目已由系统自动生成并保存为未冻结版本，请检查后冻结。";
 		} catch (error) {
 			showError(error);
 		} finally {

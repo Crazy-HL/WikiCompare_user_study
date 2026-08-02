@@ -7,6 +7,7 @@ assert(!apiSource.includes("http://localhost:8888"), "experiment API must not ha
 assert(apiSource.includes("VUE_APP_EXPERIMENT_API_BASE"), "experiment API should support an env-configured API base");
 assert(apiSource.includes("getStaticTable"), "participant API should expose static-table fetch");
 assert(apiSource.includes("adminStaticTable"), "admin API should expose static-table management");
+assert(apiSource.includes("...(rawQuestions === undefined ? {} : { rawQuestions })"), "question generation API should allow backend auto-generation without rawQuestions");
 
 const shellSource = fs.readFileSync(path.join(__dirname, "../src/components/experiment/ExperimentShell.vue"), "utf8");
 assert(shellSource.includes("getStaticTable"), "ExperimentShell should fetch frozen static table data");
@@ -20,6 +21,8 @@ assert(!chatSource.includes("rankedRows"), "ChatGptCondition must not derive row
 
 const adminQuestionsSource = fs.readFileSync(path.join(__dirname, "../src/components/experiment/AdminQuestions.vue"), "utf8");
 assert(adminQuestionsSource.includes("adminStaticTable"), "AdminQuestions should manage static tables");
+assert(adminQuestionsSource.includes("autoGenerateQuestions"), "AdminQuestions should offer a backend auto-generate action");
+assert(adminQuestionsSource.includes("自动生成题目"), "AdminQuestions should label the auto-generate action for researchers");
 assert(/questionPayload\?\.frozen[\s\S]*raw-questions-json/.test(adminQuestionsSource) || adminQuestionsSource.includes("questionsFrozen"), "AdminQuestions should disable question save while frozen");
 assert(/staticTablePayload\?\.frozen/.test(adminQuestionsSource), "AdminQuestions should disable static-table save while frozen");
 

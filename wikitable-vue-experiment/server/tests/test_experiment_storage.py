@@ -124,3 +124,20 @@ def test_save_submission_assigns_id_and_exports_csv(tmp_path):
     assert rows[0]["primary_source"] == "T"
     assert rows[-1]["stage_index"] == "2"
     assert rows[-1]["question_id"] == "Q6"
+
+
+def test_save_submission_rejects_duplicate_client_supplied_experiment_id(tmp_path):
+    storage = ExperimentStorage(tmp_path)
+    storage.ensure_defaults()
+    first_payload = complete_submission_payload("P01")
+    first_payload["experimentId"] = "exp-20260731-deadbeef"
+    saved = storage.save_submission(first_payload)
+    assert saved["participantCode"] == "P01"
+
+    duplicate_payload = complete_submission_payload("P01")
+    duplicate_payload["experimentId"] = "exp-20260731-deadbeef"
+    duplicate_payload["startedAtMs"] = first_payload["startedAtMs"] + 99
+    with pytest.raises(ValueError, match="already exists"):
+        storage.save_submission(duplicate_payload)
+
+    assert storage.list_submissions()[0]["startedAtMs"] == first_payload["startedAtMs"]

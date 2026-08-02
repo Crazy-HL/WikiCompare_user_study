@@ -1,4 +1,13 @@
 import json
+from types import SimpleNamespace
+from urllib.parse import urlparse
+
+import requests
+
+from services.article_loader import fetch_article_html, parse_article_html
+from services.config import get_llm_config
+from services.llm_client import LLMClient
+from services.wiki_url import WikiUrlError, parse_english_wikipedia_url
 
 from .defaults import QUESTION_PROMPT_VERSION
 from .storage import utc_now_iso
@@ -134,3 +143,80 @@ def normalize_generated_questions(raw, material_id, version):
         "prompt_version": QUESTION_PROMPT_VERSION,
         "questions": questions,
     }
+
+
+
+def _generic_page_title(parsed):
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if path_parts:
+        return path_parts[-1].replace("-", " ").replace("_", " ").strip() or parsed.netloc
+    return parsed.netloc
+
+
+def parse_material_source(url):
+    try:
+        parsed_wiki = parse_english_wikipedia_url(url)
+        return SimpleNamespace(
+            title=parsed_wiki.title,
+            display_url=parsed_wiki.display_url,
+            revision=parsed_wiki.revision,
+            source_kind="wikipedia",
+        )
+    except WikiUrlError:
+        parsed = urlparse(str(url or ""))
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Material source URL must be an English Wikipedia or public http(s) URL")
+        normalized_url = parsed.geturl()
+        return SimpleNamespace(
+            title=_generic_page_title(parsed),
+            display_url=normalized_url,
+            revision=None,
+            source_kind="web",
+        )
+
+
+def fetch_material_html(source):
+    if source.source_kind == "wikipedia":
+        return fetch_article_html(source.title, source.revision)
+    response = requests.get(source.display_url, headers={"User-Agent": "WikiCompare/0.1"}, timeout=20)
+    response.raise_for_status()
+    return response.text
+
+
+def load_material_articles(material):
+    articles = []
+    for side in ("left", "right"):
+        source_url = material.get(f"{side}Url")
+        if not source_url:
+            raise ValueError(f"Material {material.get('id', '')} is missing {side}Url for question generation")
+        source = parse_material_source(source_url)
+        title = material.get(f"{side}Title") or source.title
+        html = fetch_material_html(source)
+        articles.append(parse_article_html(
+            html,
+            side=side,
+            title=title,
+            url=source.display_url,
+            revision=source.revision,
+            source_kind=source.source_kind,
+        ))
+    return articles[0], articles[1]
+
+
+def generate_questions_from_material(material, version, llm_client=None):
+    config = get_llm_config()
+    client = llm_client or (LLMClient(config) if config.enabled else None)
+    if client is None:
+        raise RuntimeError("OPENAI_API_KEY is required to auto-generate experiment questions")
+    left_article, right_article = load_material_articles(material)
+    raw_questions = client.chat_json([
+        {
+            "role": "system",
+            "content": "You generate bilingual comparison-reading experiment questions. Return JSON only.",
+        },
+        {
+            "role": "user",
+            "content": build_question_prompt(material, left_article, right_article),
+        },
+    ])
+    return normalize_generated_questions(raw_questions, material.get("id", ""), version)

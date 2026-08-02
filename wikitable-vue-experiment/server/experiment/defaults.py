@@ -25,6 +25,8 @@ DEFAULT_MATERIALS = [
         "rightTitle": "Economy of Japan",
         "leftPresetId": "economy-korea-japan",
         "rightPresetId": "economy-korea-japan",
+        "leftUrl": "https://en.wikipedia.org/w/index.php?title=Economy_of_South_Korea&oldid=1273871505",
+        "rightUrl": "https://en.wikipedia.org/w/index.php?title=Economy_of_Japan&oldid=1297943898",
     },
     {
         "id": "M2",
@@ -33,6 +35,8 @@ DEFAULT_MATERIALS = [
         "rightTitle": "Indonesia 2026",
         "leftPresetId": "openfactbook-india-indonesia",
         "rightPresetId": "openfactbook-india-indonesia",
+        "leftUrl": "https://openfactbook.org/countries/india/",
+        "rightUrl": "https://openfactbook.org/countries/indonesia/",
     },
 ]
 

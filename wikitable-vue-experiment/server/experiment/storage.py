@@ -82,6 +82,10 @@ def validate_question_set_complete(payload):
             raise ValueError(f"Question Q{index} is incomplete")
 
 
+def generate_experiment_id():
+    return f"exp-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
+
+
 def validate_experiment_id(experiment_id):
     if not isinstance(experiment_id, str) or not EXPERIMENT_ID_PATTERN.fullmatch(experiment_id):
         raise ValueError("experimentId must be a server-issued opaque id")
@@ -150,12 +154,14 @@ class ExperimentStorage:
         self.config_dir = self.data_dir / "config"
         self.questions_dir = self.config_dir / "questions"
         self.static_tables_dir = self.config_dir / "static_tables"
+        self.sessions_dir = self.data_dir / "sessions"
         self.submissions_dir = self.data_dir / "submissions"
         self.exports_dir = self.data_dir / "exports"
 
     def ensure_defaults(self):
         self.questions_dir.mkdir(parents=True, exist_ok=True)
         self.static_tables_dir.mkdir(parents=True, exist_ok=True)
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self.submissions_dir.mkdir(parents=True, exist_ok=True)
         self.exports_dir.mkdir(parents=True, exist_ok=True)
         materials_path = self.config_dir / "materials.json"
@@ -182,6 +188,52 @@ class ExperimentStorage:
                     "updated_at": "",
                     "frozen_at": "",
                 })
+
+
+    def _session_path(self, experiment_id):
+        sessions_root = self.sessions_dir.resolve()
+        target = (self.sessions_dir / f"{validate_experiment_id(experiment_id)}.json").resolve()
+        if target.parent != sessions_root:
+            raise ValueError("experimentId resolved outside sessions directory")
+        return target
+
+    def create_session(self, participant_code):
+        self.ensure_defaults()
+        expected_assignment = assignment_for_code(participant_code)
+        experiment_id = generate_experiment_id()
+        payload = {
+            "experimentId": experiment_id,
+            "participantCode": expected_assignment["participantCode"],
+            "assignmentGroup": expected_assignment["group"],
+            "stages": expected_assignment["stages"],
+            "startedAt": utc_now_iso(),
+        }
+        target = self._session_path(experiment_id)
+        if target.exists():
+            raise ValueError("experimentId already exists; retry start")
+        atomic_write_json(target, payload)
+        return payload
+
+    def load_session(self, experiment_id):
+        self.ensure_defaults()
+        target = self._session_path(experiment_id)
+        if not target.exists():
+            raise ValueError("experimentId has not been started")
+        with target.open(encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def validate_started_session(self, payload, participant_code, expected_assignment):
+        if not payload.get("experimentId"):
+            raise ValueError("experimentId is required from started experiment")
+        experiment_id = validate_experiment_id(payload.get("experimentId"))
+        session = self.load_session(experiment_id)
+        if session.get("participantCode") != participant_code:
+            raise ValueError("experimentId started for a different participantCode")
+        if session.get("assignmentGroup") != expected_assignment["group"]:
+            raise ValueError("experimentId assignmentGroup does not match started session")
+        if session.get("stages") != expected_assignment["stages"]:
+            raise ValueError("experimentId stages do not match started session")
+        return experiment_id
 
     def get_config(self):
         self.ensure_defaults()
@@ -283,22 +335,26 @@ class ExperimentStorage:
         atomic_write_json(self.static_tables_dir / f"{material_id}.json", payload)
         return payload
 
-    def save_submission(self, payload):
+    def save_submission(self, payload, require_started_session=False):
         self.ensure_defaults()
         participant_code, expected_assignment = validate_submission(payload)
         saved = dict(payload)
         saved["participantCode"] = participant_code
         saved["assignmentGroup"] = expected_assignment["group"]
-        if "experimentId" in saved:
+        if require_started_session:
+            saved["experimentId"] = self.validate_started_session(saved, participant_code, expected_assignment)
+        elif "experimentId" in saved:
             saved["experimentId"] = validate_experiment_id(saved["experimentId"])
         else:
-            saved["experimentId"] = f"exp-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
+            saved["experimentId"] = generate_experiment_id()
         saved["savedAt"] = utc_now_iso()
 
         submissions_root = self.submissions_dir.resolve()
         target = (self.submissions_dir / f"{saved['experimentId']}.json").resolve()
         if target.parent != submissions_root:
             raise ValueError("experimentId resolved outside submissions directory")
+        if target.exists():
+            raise ValueError("experimentId already exists; duplicate completion is not allowed")
         atomic_write_json(target, saved)
         self.write_exports()
         return saved

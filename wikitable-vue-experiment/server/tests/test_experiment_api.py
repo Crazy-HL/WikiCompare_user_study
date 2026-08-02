@@ -1,4 +1,5 @@
 import json
+from unittest import mock
 import os
 import tempfile
 
@@ -23,6 +24,14 @@ def raw_questions_payload(material_id="M1"):
             for index in range(1, 6)
         ],
     }
+
+
+def issued_completion_payload(test_case, participant_code="P01"):
+    start_response = test_case.post_json("/api/experiment/start", {"participantCode": participant_code})
+    assert start_response.code == 200
+    assignment = json.loads(start_response.body)
+    payload = valid_completion_payload(participant_code, assignment["experimentId"])
+    return assignment, payload
 
 
 def valid_completion_payload(participant_code="P01", experiment_id=None):
@@ -109,12 +118,14 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert payload["participantCode"] == "P02"
         assert payload["assignmentGroup"] == "S2"
         assert payload["stages"][0]["condition"] == "chatgpt"
+        assert payload["experimentId"].startswith("exp-")
 
     def test_complete_submission_and_admin_list(self):
-        complete_response = self.post_json("/api/experiment/complete", valid_completion_payload("P01"))
+        assignment, completion_payload = issued_completion_payload(self, "P01")
+        complete_response = self.post_json("/api/experiment/complete", completion_payload)
         assert complete_response.code == 200
         saved = json.loads(complete_response.body)
-        assert saved["experimentId"].startswith("exp-")
+        assert saved["experimentId"] == assignment["experimentId"]
 
         unauthorized = self.fetch("/api/admin/submissions")
         assert unauthorized.code == 401
@@ -126,6 +137,19 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert listing.code == 200
         records = json.loads(listing.body)["submissions"]
         assert records[0]["participantCode"] == "P01"
+
+
+    def test_complete_submission_requires_started_experiment_id(self):
+        no_id_response = self.post_json("/api/experiment/complete", valid_completion_payload("P01"))
+        assert no_id_response.code == 400
+        assert "experimentId" in json.loads(no_id_response.body)["error"]
+
+        unknown_id_response = self.post_json(
+            "/api/experiment/complete",
+            valid_completion_payload("P01", "exp-20260731-deadbeef"),
+        )
+        assert unknown_id_response.code == 400
+        assert "started" in json.loads(unknown_id_response.body)["error"]
 
     def test_complete_submission_rejects_zero_stages(self):
         response = self.post_json("/api/experiment/complete", {
@@ -143,19 +167,19 @@ class ExperimentApiTest(AsyncHTTPTestCase):
             assert "experimentId" in json.loads(response.body)["error"]
 
     def test_complete_submission_rejects_fabricated_assignment_and_bad_answers(self):
-        fabricated = valid_completion_payload("P01")
+        _assignment, fabricated = issued_completion_payload(self, "P01")
         fabricated["assignmentGroup"] = "S2"
         response = self.post_json("/api/experiment/complete", fabricated)
         assert response.code == 400
         assert "assignmentGroup" in json.loads(response.body)["error"]
 
-        wrong_stage = valid_completion_payload("P01")
+        _assignment, wrong_stage = issued_completion_payload(self, "P01")
         wrong_stage["stages"][0]["condition"] = "chatgpt"
         response = self.post_json("/api/experiment/complete", wrong_stage)
         assert response.code == 400
         assert "stage 1" in json.loads(response.body)["error"]
 
-        missing_answer = valid_completion_payload("P01")
+        _assignment, missing_answer = issued_completion_payload(self, "P01")
         missing_answer["stages"][0]["answers"] = missing_answer["stages"][0]["answers"][:5]
         response = self.post_json("/api/experiment/complete", missing_answer)
         assert response.code == 400
@@ -322,7 +346,58 @@ class ExperimentApiTest(AsyncHTTPTestCase):
                 for child in value:
                     assert_no_forbidden_keys(child)
 
+        assert "generated_at" not in participant_payload
+        assert "prompt_version" not in participant_payload
         assert_no_forbidden_keys(participant_payload)
+
+
+    def test_admin_generate_questions_without_raw_questions_uses_backend_generator(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        calls = []
+
+        def fake_generate_questions(material, version):
+            calls.append((material["id"], version))
+            return {
+                "material_id": material["id"],
+                "version": version,
+                "frozen": False,
+                "generated_at": "2026-07-31T00:00:00Z",
+                "prompt_version": "test-prompt",
+                "questions": [
+                    {
+                        "question_id": f"Q{index}",
+                        "question_type": "单维事实比较",
+                        "question_text": f"Generated question {index}",
+                        "answer_format": "free text",
+                        "understanding_target": "visible learning target",
+                        "answer_options": [],
+                        "gold_atoms": [
+                            {
+                                "atom_id": f"Q{index}-A1",
+                                "requirement": "hidden scoring requirement",
+                                "canonical_answer": "hidden canonical answer",
+                                "accepted_variants": [],
+                                "source_ids": ["L-P001", "R-P001"],
+                            }
+                        ],
+                    }
+                    for index in range(1, 6)
+                ],
+            }
+
+        with mock.patch("experiment.handlers.generate_questions_from_material", fake_generate_questions):
+            response = self.post_json(
+                "/api/admin/questions/generate",
+                {"materialId": "M1"},
+                headers={"X-Admin-Token": token},
+            )
+
+        assert response.code == 200
+        payload = json.loads(response.body)
+        assert calls == [("M1", 1)]
+        assert payload["questions"][0]["question_text"] == "Generated question 1"
+        assert payload["frozen"] is False
 
     def test_admin_generate_questions_rejects_invalid_raw_questions_as_json_error(self):
         login = self.post_json("/api/admin/login", {"password": "secret"})
