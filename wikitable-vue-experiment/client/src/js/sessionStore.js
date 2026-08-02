@@ -151,6 +151,7 @@ export const sessionStore = reactive({
 	},
 
 	applySession(session) {
+		this.error = "";
 		this.session = session;
 		this.activeHistoryKey = sessionPairKey(session);
 		this.history = addSessionToHistory(this.history, session);
