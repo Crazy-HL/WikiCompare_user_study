@@ -21,9 +21,31 @@ def storage():
     return ExperimentStorage(data_dir())
 
 
+def configured_cors_origins():
+    raw = os.environ.get("EXPERIMENT_CORS_ORIGIN", "").strip()
+    return {origin.strip() for origin in raw.split(",") if origin.strip()}
+
+
+def insecure_admin_default_enabled():
+    return os.environ.get("EXPERIMENT_ALLOW_INSECURE_ADMIN_DEFAULT", "").lower() in {"1", "true", "yes"}
+
+
+def expected_admin_password():
+    password = os.environ.get("EXPERIMENT_ADMIN_PASSWORD")
+    if password:
+        return password
+    if insecure_admin_default_enabled():
+        return "admin"
+    return None
+
+
 class JsonHandler(tornado.web.RequestHandler):
     def set_default_headers(self):
-        self.set_header("Access-Control-Allow-Origin", "*")
+        origins = configured_cors_origins()
+        request_origin = self.request.headers.get("Origin", "")
+        if request_origin and (request_origin in origins or "*" in origins):
+            self.set_header("Access-Control-Allow-Origin", request_origin if "*" not in origins else "*")
+            self.set_header("Vary", "Origin")
         self.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.set_header("Access-Control-Allow-Headers", "Content-Type, X-Admin-Token")
 
@@ -115,9 +137,9 @@ class ExperimentQuestionsHandler(JsonHandler):
     def get(self):
         material_id = self.get_argument("materialId", "")
         try:
-            self.write_json(participant_questions_payload(storage().load_questions(material_id)))
+            self.write_json(participant_questions_payload(storage().load_participant_questions(material_id)))
         except ValueError as error:
-            self.write_error_json(str(error), status=404)
+            self.write_error_json(str(error), status=400)
 
 
 class ExperimentCompleteHandler(JsonHandler):
@@ -131,7 +153,10 @@ class ExperimentCompleteHandler(JsonHandler):
 
 class AdminLoginHandler(JsonHandler):
     def post(self):
-        expected = os.environ.get("EXPERIMENT_ADMIN_PASSWORD", "admin")
+        expected = expected_admin_password()
+        if expected is None:
+            self.write_error_json("EXPERIMENT_ADMIN_PASSWORD is required", status=503)
+            return
         password = self.read_json().get("password", "")
         if not secrets.compare_digest(str(password), str(expected)):
             self.write_error_json("Invalid admin password", status=401)
@@ -201,7 +226,11 @@ class AdminQuestionGenerateHandler(JsonHandler, AdminMixin):
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             self.write_error_json(f"Invalid rawQuestions: {error}", status=400)
             return
-        saved = storage().save_questions(material_id, normalized)
+        try:
+            saved = storage().save_questions(material_id, normalized)
+        except ValueError as error:
+            self.write_error_json(str(error), status=400)
+            return
         self.write_json(saved)
 
 
@@ -216,10 +245,56 @@ class AdminQuestionFreezeHandler(JsonHandler, AdminMixin):
         try:
             self.write_json(storage().freeze_questions(material_id, self.frozen))
         except ValueError as error:
-            self.write_error_json(str(error), status=404)
+            self.write_error_json(str(error), status=400)
 
 
 class AdminQuestionUnfreezeHandler(AdminQuestionFreezeHandler):
+    frozen = False
+
+
+class ExperimentStaticTableHandler(JsonHandler):
+    def get(self):
+        material_id = self.get_argument("materialId", "")
+        try:
+            self.write_json(storage().load_participant_static_table(material_id))
+        except ValueError as error:
+            self.write_error_json(str(error), status=400)
+
+
+class AdminStaticTableHandler(JsonHandler, AdminMixin):
+    def get(self):
+        if not self.require_admin():
+            return
+        material_id = self.get_argument("materialId", "")
+        try:
+            self.write_json(storage().load_static_table(material_id))
+        except ValueError as error:
+            self.write_error_json(str(error), status=404)
+
+    def post(self):
+        if not self.require_admin():
+            return
+        body = self.read_json()
+        try:
+            self.write_json(storage().save_static_table(body.get("materialId", ""), body.get("rows")))
+        except ValueError as error:
+            self.write_error_json(str(error), status=400)
+
+
+class AdminStaticTableFreezeHandler(JsonHandler, AdminMixin):
+    frozen = True
+
+    def post(self):
+        if not self.require_admin():
+            return
+        body = self.read_json()
+        try:
+            self.write_json(storage().freeze_static_table(body.get("materialId", ""), self.frozen))
+        except ValueError as error:
+            self.write_error_json(str(error), status=400)
+
+
+class AdminStaticTableUnfreezeHandler(AdminStaticTableFreezeHandler):
     frozen = False
 
 
@@ -228,6 +303,7 @@ def experiment_routes():
         (r"/api/experiment/config", ExperimentConfigHandler),
         (r"/api/experiment/start", ExperimentStartHandler),
         (r"/api/experiment/questions", ExperimentQuestionsHandler),
+        (r"/api/experiment/static-table", ExperimentStaticTableHandler),
         (r"/api/experiment/complete", ExperimentCompleteHandler),
         (r"/api/admin/login", AdminLoginHandler),
         (r"/api/admin/submissions", AdminSubmissionsHandler),
@@ -237,4 +313,7 @@ def experiment_routes():
         (r"/api/admin/questions/freeze", AdminQuestionFreezeHandler),
         (r"/api/admin/questions/unfreeze", AdminQuestionUnfreezeHandler),
         (r"/api/admin/questions", AdminQuestionsHandler),
+        (r"/api/admin/static-table/freeze", AdminStaticTableFreezeHandler),
+        (r"/api/admin/static-table/unfreeze", AdminStaticTableUnfreezeHandler),
+        (r"/api/admin/static-table", AdminStaticTableHandler),
     ]

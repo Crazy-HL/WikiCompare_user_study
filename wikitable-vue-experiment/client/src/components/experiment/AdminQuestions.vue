@@ -2,8 +2,8 @@
 	<section class="admin-panel">
 		<header class="panel-header">
 			<div>
-				<h2>题目管理</h2>
-				<p>管理 Q1-Q5 的生成结果、隐藏标准答案和冻结状态。</p>
+				<h2>题目与静态三栏表管理</h2>
+				<p>管理 Q1-Q5 的生成结果、隐藏标准答案、冻结状态，以及 ChatGPT 条件使用的冻结静态三栏表。</p>
 			</div>
 			<label class="material-select">
 				材料
@@ -20,13 +20,14 @@
 
 		<div class="status-card">
 			<div><strong>Material ID</strong><span>{{ questionPayload?.material_id || selectedMaterial }}</span></div>
-			<div><strong>冻结状态</strong><span :class="questionPayload?.frozen ? 'frozen' : 'unfrozen'">{{ questionPayload?.frozen ? "已冻结" : "未冻结" }}</span></div>
-			<div><strong>版本</strong><span>{{ questionPayload?.version ?? "—" }}</span></div>
-			<div><strong>生成时间</strong><span>{{ questionPayload?.generated_at || "—" }}</span></div>
-			<div><strong>冻结时间</strong><span>{{ questionPayload?.frozen_at || "—" }}</span></div>
+			<div><strong>题目冻结状态</strong><span :class="questionsFrozen ? 'frozen' : 'unfrozen'">{{ questionsFrozen ? "已冻结" : "未冻结" }}</span></div>
+			<div><strong>题目版本</strong><span>{{ questionPayload?.version ?? "—" }}</span></div>
+			<div><strong>题目冻结时间</strong><span>{{ questionPayload?.frozen_at || "—" }}</span></div>
+			<div><strong>静态表冻结状态</strong><span :class="staticTablePayload?.frozen ? 'frozen' : 'unfrozen'">{{ staticTablePayload?.frozen ? "已冻结" : "未冻结" }}</span></div>
+			<div><strong>静态表版本</strong><span>{{ staticTablePayload?.version ?? "—" }}</span></div>
 		</div>
 
-		<div v-if="loading" class="loading-state">正在加载题目...</div>
+		<div v-if="loading" class="loading-state">正在加载配置...</div>
 
 		<div v-else class="questions-list">
 			<article v-for="question in questions" :key="question.question_id" class="question-card">
@@ -45,24 +46,46 @@
 		</div>
 
 		<section class="raw-json-card">
-			<label for="raw-questions-json">从系统自动生成结果粘贴或由后续自动生成按钮填入</label>
+			<label for="raw-questions-json">保存题目 JSON（冻结后需先解冻才能覆盖）</label>
 			<textarea
 				id="raw-questions-json"
 				v-model="rawQuestions"
-				rows="14"
+				rows="12"
 				placeholder='{"material_id":"M1","questions":[...]}'
-				:disabled="saving"></textarea>
+				:disabled="saving || questionsFrozen"></textarea>
 			<div class="action-row">
-				<button type="button" class="primary" :disabled="saving || !rawQuestions.trim()" @click="saveGeneratedQuestions">
+				<button type="button" class="primary" :disabled="saving || questionsFrozen || !rawQuestions.trim()" @click="saveGeneratedQuestions">
 					{{ savingAction === "generate" ? "正在保存..." : "保存本次生成结果" }}
 				</button>
-				<button type="button" :disabled="saving || questionPayload?.frozen" @click="freezeSelectedQuestions">
+				<button type="button" :disabled="saving || questionsFrozen" @click="freezeSelectedQuestions">
 					{{ savingAction === "freeze" ? "正在冻结..." : "冻结题目" }}
 				</button>
-				<button type="button" :disabled="saving || !questionPayload?.frozen" @click="unfreezeSelectedQuestions">
+				<button type="button" :disabled="saving || !questionsFrozen" @click="unfreezeSelectedQuestions">
 					{{ savingAction === "unfreeze" ? "正在解冻..." : "解冻题目" }}
 				</button>
 			</div>
+		</section>
+
+		<section class="raw-json-card">
+			<label for="static-table-json">ChatGPT 静态三栏表 rows JSON（参与者只会看到冻结版本）</label>
+			<textarea
+				id="static-table-json"
+				v-model="staticTableRowsJson"
+				rows="12"
+				placeholder='[{"id":"r1","label":"比较项","left":{"value":"左侧值"},"right":{"value":"右侧值"}}]'
+				:disabled="saving || staticTablePayload?.frozen"></textarea>
+			<div class="action-row">
+				<button type="button" class="primary" :disabled="saving || staticTablePayload?.frozen || !staticTableRowsJson.trim()" @click="saveStaticTableRows">
+					{{ savingAction === "save-static" ? "正在保存..." : "保存静态表" }}
+				</button>
+				<button type="button" :disabled="saving || staticTablePayload?.frozen" @click="freezeStaticTableRows">
+					{{ savingAction === "freeze-static" ? "正在冻结..." : "冻结静态表" }}
+				</button>
+				<button type="button" :disabled="saving || !staticTablePayload?.frozen" @click="unfreezeStaticTableRows">
+					{{ savingAction === "unfreeze-static" ? "正在解冻..." : "解冻静态表" }}
+				</button>
+			</div>
+			<pre v-if="staticTablePayload?.rows?.length">{{ JSON.stringify(staticTablePayload.rows, null, 2) }}</pre>
 		</section>
 	</section>
 </template>
@@ -71,9 +94,13 @@
 	import { computed, ref, watch } from "vue";
 	import {
 		adminFreezeQuestions,
+		adminFreezeStaticTable,
 		adminGenerateQuestions,
 		adminQuestions,
-		adminUnfreezeQuestions
+		adminSaveStaticTable,
+		adminStaticTable,
+		adminUnfreezeQuestions,
+		adminUnfreezeStaticTable
 	} from "@/experiment/experimentApi";
 
 	const props = defineProps({
@@ -90,7 +117,9 @@
 
 	const selectedMaterial = ref("M1");
 	const questionPayload = ref(null);
+	const staticTablePayload = ref(null);
 	const rawQuestions = ref("");
+	const staticTableRowsJson = ref("");
 	const loading = ref(false);
 	const savingAction = ref("");
 	const message = ref("");
@@ -98,9 +127,14 @@
 
 	const saving = computed(() => Boolean(savingAction.value));
 	const questions = computed(() => questionPayload.value?.questions || []);
+	const questionsFrozen = computed(() => questionPayload.value?.frozen === true);
 
 	const showError = error => {
 		errorMessage.value = error.response?.data?.error || error.message || "操作失败，请稍后重试。";
+	};
+
+	const syncStaticTableEditor = () => {
+		staticTableRowsJson.value = JSON.stringify(staticTablePayload.value?.rows || [], null, 2);
 	};
 
 	const loadQuestions = async () => {
@@ -108,9 +142,16 @@
 		message.value = "";
 		errorMessage.value = "";
 		try {
-			questionPayload.value = await adminQuestions(props.token, selectedMaterial.value);
+			const [questionsResponse, staticResponse] = await Promise.all([
+				adminQuestions(props.token, selectedMaterial.value),
+				adminStaticTable(props.token, selectedMaterial.value)
+			]);
+			questionPayload.value = questionsResponse;
+			staticTablePayload.value = staticResponse;
+			syncStaticTableEditor();
 		} catch (error) {
 			questionPayload.value = null;
+			staticTablePayload.value = null;
 			showError(error);
 		} finally {
 			loading.value = false;
@@ -120,7 +161,7 @@
 	watch(selectedMaterial, loadQuestions, { immediate: true });
 
 	const saveGeneratedQuestions = async () => {
-		if (!rawQuestions.value.trim()) return;
+		if (!rawQuestions.value.trim() || questionsFrozen.value) return;
 		savingAction.value = "generate";
 		message.value = "";
 		errorMessage.value = "";
@@ -163,6 +204,53 @@
 		}
 	};
 
+	const saveStaticTableRows = async () => {
+		if (!staticTableRowsJson.value.trim() || staticTablePayload.value?.frozen) return;
+		savingAction.value = "save-static";
+		message.value = "";
+		errorMessage.value = "";
+		try {
+			const rows = JSON.parse(staticTableRowsJson.value);
+			staticTablePayload.value = await adminSaveStaticTable(props.token, selectedMaterial.value, rows);
+			syncStaticTableEditor();
+			message.value = "静态表已保存。";
+		} catch (error) {
+			showError(error);
+		} finally {
+			savingAction.value = "";
+		}
+	};
+
+	const freezeStaticTableRows = async () => {
+		savingAction.value = "freeze-static";
+		message.value = "";
+		errorMessage.value = "";
+		try {
+			staticTablePayload.value = await adminFreezeStaticTable(props.token, selectedMaterial.value);
+			syncStaticTableEditor();
+			message.value = "静态表已冻结。";
+		} catch (error) {
+			showError(error);
+		} finally {
+			savingAction.value = "";
+		}
+	};
+
+	const unfreezeStaticTableRows = async () => {
+		savingAction.value = "unfreeze-static";
+		message.value = "";
+		errorMessage.value = "";
+		try {
+			staticTablePayload.value = await adminUnfreezeStaticTable(props.token, selectedMaterial.value);
+			syncStaticTableEditor();
+			message.value = "静态表已解冻。";
+		} catch (error) {
+			showError(error);
+		} finally {
+			savingAction.value = "";
+		}
+	};
+
 	const hiddenAnswerJson = question => {
 		const hiddenPayload = {
 			gold_atoms: question.gold_atoms || [],
@@ -176,222 +264,36 @@
 </script>
 
 <style scoped>
-	.admin-panel {
-		display: grid;
-		gap: 20px;
-	}
-
-	.panel-header {
-		display: flex;
-		justify-content: space-between;
-		gap: 20px;
-		align-items: flex-start;
-	}
-
-	h2 {
-		margin: 0 0 8px;
-		font-size: 28px;
-		color: #172033;
-	}
-
-	p {
-		margin: 0;
-		color: #64748b;
-	}
-
-	.material-select {
-		display: grid;
-		gap: 8px;
-		min-width: 280px;
-		font-weight: 800;
-		color: #334155;
-	}
-
-	select,
-	textarea {
-		border: 1px solid #cbd5e1;
-		border-radius: 12px;
-		padding: 10px 12px;
-		font: inherit;
-		background: #ffffff;
-	}
-
-	textarea {
-		width: 100%;
-		box-sizing: border-box;
-		font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-		font-size: 13px;
-		resize: vertical;
-	}
-
-	.status-card {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-		gap: 12px;
-		border: 1px solid #dbe4ee;
-		border-radius: 16px;
-		padding: 16px;
-		background: #f8fafc;
-	}
-
-	.status-card div {
-		display: grid;
-		gap: 4px;
-	}
-
-	.status-card strong {
-		font-size: 12px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: #64748b;
-	}
-
-	.status-card span {
-		font-weight: 800;
-		color: #172033;
-		word-break: break-word;
-	}
-
-	.frozen {
-		color: #b45309 !important;
-	}
-
-	.unfrozen {
-		color: #047857 !important;
-	}
-
-	.questions-list {
-		display: grid;
-		gap: 14px;
-	}
-
-	.question-card,
-	.raw-json-card,
-	.empty-state,
-	.loading-state,
-	.notice {
-		border: 1px solid #dbe4ee;
-		border-radius: 16px;
-		padding: 16px;
-		background: #ffffff;
-	}
-
-	.question-card header {
-		display: flex;
-		gap: 10px;
-		align-items: center;
-		margin-bottom: 8px;
-	}
-
-	.question-id,
-	.question-type {
-		border-radius: 999px;
-		padding: 4px 10px;
-		font-size: 12px;
-		font-weight: 900;
-	}
-
-	.question-id {
-		background: #dbeafe;
-		color: #1d4ed8;
-	}
-
-	.question-type {
-		background: #f1f5f9;
-		color: #334155;
-	}
-
-	h3 {
-		margin: 0 0 10px;
-		font-size: 18px;
-		line-height: 1.45;
-		color: #172033;
-	}
-
-	.target {
-		margin-bottom: 12px;
-	}
-
-	.gold-block {
-		display: grid;
-		gap: 8px;
-	}
-
-	.gold-block strong,
-	.raw-json-card label {
-		font-weight: 900;
-		color: #334155;
-	}
-
-	pre {
-		max-height: 260px;
-		overflow: auto;
-		margin: 0;
-		border-radius: 12px;
-		padding: 12px;
-		background: #0f172a;
-		color: #e2e8f0;
-		font-size: 12px;
-		white-space: pre-wrap;
-	}
-
-	.raw-json-card {
-		display: grid;
-		gap: 12px;
-	}
-
-	.action-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 10px;
-	}
-
-	button {
-		border: 1px solid #cbd5e1;
-		border-radius: 12px;
-		padding: 10px 14px;
-		background: #ffffff;
-		color: #172033;
-		font-weight: 900;
-		cursor: pointer;
-	}
-
-	button.primary {
-		border-color: #2563eb;
-		background: #2563eb;
-		color: #ffffff;
-	}
-
-	button:disabled {
-		cursor: not-allowed;
-		opacity: 0.55;
-	}
-
-	.notice.success {
-		border-color: #bbf7d0;
-		background: #f0fdf4;
-		color: #166534;
-	}
-
-	.notice.error {
-		border-color: #fecaca;
-		background: #fff7f7;
-		color: #991b1b;
-	}
-
-	.empty-state,
-	.loading-state {
-		color: #64748b;
-		text-align: center;
-	}
-
-	@media (max-width: 760px) {
-		.panel-header {
-			display: grid;
-		}
-
-		.material-select {
-			min-width: 0;
-		}
-	}
+	.admin-panel { display: grid; gap: 20px; }
+	.panel-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+	h2 { margin: 0 0 8px; font-size: 28px; color: #172033; }
+	p { margin: 0; color: #64748b; }
+	.material-select { display: grid; gap: 8px; min-width: 280px; font-weight: 800; color: #334155; }
+	select, textarea { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 12px; font: inherit; background: #ffffff; }
+	textarea { width: 100%; box-sizing: border-box; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; resize: vertical; }
+	.status-card { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #f8fafc; }
+	.status-card div { display: grid; gap: 4px; }
+	.status-card strong { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; }
+	.status-card span { font-weight: 800; color: #172033; word-break: break-word; }
+	.frozen { color: #b45309 !important; }
+	.unfrozen { color: #047857 !important; }
+	.questions-list { display: grid; gap: 14px; }
+	.question-card, .raw-json-card, .empty-state, .loading-state, .notice { border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #ffffff; }
+	.question-card header { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+	.question-id, .question-type { border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 900; }
+	.question-id { background: #dbeafe; color: #1d4ed8; }
+	.question-type { background: #f1f5f9; color: #334155; }
+	h3 { margin: 0 0 10px; font-size: 18px; line-height: 1.45; color: #172033; }
+	.target { margin-bottom: 12px; }
+	.gold-block, .raw-json-card { display: grid; gap: 12px; }
+	.gold-block strong, .raw-json-card label { font-weight: 900; color: #334155; }
+	pre { max-height: 260px; overflow: auto; margin: 0; border-radius: 12px; padding: 12px; background: #0f172a; color: #e2e8f0; font-size: 12px; white-space: pre-wrap; }
+	.action-row { display: flex; flex-wrap: wrap; gap: 10px; }
+	button { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 14px; background: #ffffff; color: #172033; font-weight: 900; cursor: pointer; }
+	button.primary { border-color: #2563eb; background: #2563eb; color: #ffffff; }
+	button:disabled { cursor: not-allowed; opacity: 0.55; }
+	.notice.success { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
+	.notice.error { border-color: #fecaca; background: #fff7f7; color: #991b1b; }
+	.empty-state, .loading-state { color: #64748b; text-align: center; }
+	@media (max-width: 760px) { .panel-header { display: grid; } .material-select { min-width: 0; } }
 </style>

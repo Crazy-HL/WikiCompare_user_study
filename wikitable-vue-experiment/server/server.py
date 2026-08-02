@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import tornado.ioloop
 import tornado.web
 import json
+import os
 import uuid
 import hashlib
 import html
@@ -1185,6 +1186,13 @@ class AskInfoboxHandler(tornado.web.RequestHandler):
             
         except Exception as e:
             self.write(json.dumps({"error": str(e)}))
+def env_flag(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def make_app():
     routes = [
         (r"/", MainHandler),
@@ -1201,7 +1209,7 @@ def make_app():
         (r"/outline_match", OutlineMatchHandler),
     ]
     routes.extend(experiment_routes())
-    return tornado.web.Application(routes, debug=True)
+    return tornado.web.Application(routes, debug=env_flag("TORNADO_DEBUG", False))
 
 if __name__ == "__main__":
     app = make_app()

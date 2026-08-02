@@ -1,6 +1,12 @@
 import axios from "axios";
 
-var address = "http://localhost:8888/";
+const configuredBase = (process.env.VUE_APP_API_BASE || process.env.VUE_APP_EXPERIMENT_API_BASE || "").trim();
+const address = configuredBase ? configuredBase.replace(/\/?$/, "/") : "/";
+const apiUrl = url => `${address}${url.replace(/^\/+/, "")}`;
+
+function toType(value) {
+    return Object.prototype.toString.call(value).slice(8, -1).toLowerCase();
+}
 
 function filterNull(o) {
     for (var key in o) {
@@ -20,7 +26,7 @@ function filterNull(o) {
 
 function apiAxios(type, url, params, callback) {
     if (type === 'GET') {
-        axios.get(address + url, { 'params': params })
+        axios.get(apiUrl(url), { 'params': params })
             .then(response => {
                 callback(response.data); // 获取数据
             })
@@ -30,7 +36,7 @@ function apiAxios(type, url, params, callback) {
     }
 
     if (type === 'POST') {
-        axios.post(address + url, params, { headers: { 'Content-Type': 'application/json' } })
+        axios.post(apiUrl(url), params, { headers: { 'Content-Type': 'application/json' } })
             .then(response => {
                 callback(response.data); // 获取数据
             })
@@ -42,7 +48,7 @@ function apiAxios(type, url, params, callback) {
 
 export function postJson(url, params) {
     return axios
-        .post(address + url, params, { headers: { "Content-Type": "application/json" } })
+        .post(apiUrl(url), params, { headers: { "Content-Type": "application/json" } })
         .then(response => response.data);
 }
 

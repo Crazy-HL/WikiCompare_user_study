@@ -27,7 +27,7 @@
 					正在加载当前材料与问题...
 				</div>
 				<General v-if="currentStage?.condition === 'wikicompare'" :key="`wiki-${currentStageKey}`" class="participant-general" />
-				<ChatGptCondition v-else-if="currentStage?.condition === 'chatgpt'" :key="`chatgpt-${currentStageKey}`" />
+				<ChatGptCondition v-else-if="currentStage?.condition === 'chatgpt'" :key="`chatgpt-${currentStageKey}`" :frozen-rows="staticTableRows" />
 			</div>
 
 			<AnswerPanel
@@ -51,7 +51,7 @@
 	import ChatGptCondition from "./ChatGptCondition.vue";
 	import CompleteScreen from "./CompleteScreen.vue";
 	import StageHeader from "./StageHeader.vue";
-	import { getQuestions, completeExperiment } from "@/experiment/experimentApi";
+	import { getQuestions, getStaticTable, completeExperiment } from "@/experiment/experimentApi";
 	import { sessionStore } from "@/js/sessionStore";
 	const { MATERIAL_PRESETS, materialUrl } = require("@/js/materialPresets");
 	const { buildCompletionPayload, validateStageAnswerRecords } = require("@/experiment/experimentStore");
@@ -73,6 +73,7 @@
 	const screen = ref("stage");
 	const currentStageIndex = ref(0);
 	const questionsPayload = ref(null);
+	const staticTablePayload = ref(null);
 	const loadedStageKey = ref("");
 	const isStageLoading = ref(false);
 	const loadError = ref("");
@@ -92,13 +93,16 @@
 	const currentStageDisplayIndex = computed(() => currentStage.value?.stageIndex || currentStageIndex.value + 1);
 	const currentStageKey = computed(() => `${currentStage.value?.stageIndex || currentStageIndex.value + 1}-${currentStage.value?.condition || ""}-${currentStage.value?.materialId || ""}`);
 	const questions = computed(() => questionsPayload.value?.questions || []);
-	const hasRequiredQuestions = computed(() => questions.value.length >= 5);
+	const staticTableRows = computed(() => staticTablePayload.value?.rows || []);
+	const hasRequiredQuestions = computed(() => questionsPayload.value?.frozen === true && questions.value.length >= 5);
+	const hasRequiredStaticTable = computed(() => currentStage.value?.condition !== 'chatgpt' || staticTableRows.value.length > 0);
 	const isStageReady = computed(() => (
 		!assignmentValidationError.value &&
 		!isStageLoading.value &&
 		!loadError.value &&
 		loadedStageKey.value === currentStageKey.value &&
-		hasRequiredQuestions.value
+		hasRequiredQuestions.value &&
+		hasRequiredStaticTable.value
 	));
 	const q6Text = computed(() => props.config?.q6Text || Q6_TEXT);
 	const materials = computed(() => props.config?.materials || []);
@@ -139,17 +143,24 @@
 		isStageLoading.value = true;
 		loadError.value = "";
 		questionsPayload.value = null;
+		staticTablePayload.value = null;
 		loadedStageKey.value = "";
 		stageStartedAtMs.value = Date.now();
 		try {
-			const [payload] = await Promise.all([
+			const staticTablePromise = stage.condition === 'chatgpt' ? getStaticTable(stage.materialId) : Promise.resolve(null);
+			const [payload, tablePayload] = await Promise.all([
 				getQuestions(stage.materialId),
+				staticTablePromise,
 				loadCurrentMaterialSession(stage)
 			]);
-			if (!Array.isArray(payload?.questions) || payload.questions.length < 5) {
-				throw new Error("当前材料的问题尚未加载完整，请联系研究人员。");
+			if (payload.frozen !== true || !Array.isArray(payload?.questions) || payload.questions.length < 5) {
+				throw new Error("当前材料的问题尚未冻结或加载完整，请联系研究人员。");
+			}
+			if (stage.condition === 'chatgpt' && (!Array.isArray(tablePayload?.rows) || !tablePayload.rows.length)) {
+				throw new Error("Static table for the current ChatGPT material is not frozen or is incomplete.");
 			}
 			questionsPayload.value = payload;
+			staticTablePayload.value = tablePayload;
 			loadedStageKey.value = currentStageKey.value;
 		} catch (error) {
 			loadError.value = error.response?.data?.error || error.message || "加载阶段材料或问题时出错。";

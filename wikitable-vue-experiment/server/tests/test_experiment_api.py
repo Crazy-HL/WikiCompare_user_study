@@ -5,6 +5,63 @@ import tempfile
 from tornado.testing import AsyncHTTPTestCase
 
 import server
+from experiment.assignment import assignment_for_code
+
+
+def raw_questions_payload(material_id="M1"):
+    return {
+        "material_id": material_id,
+        "questions": [
+            {
+                "question_id": f"Q{index}",
+                "question_type": "test",
+                "question_text": f"Question {index}",
+                "answer_format": "free text",
+                "understanding_target": "target",
+                "gold_atoms": [],
+            }
+            for index in range(1, 6)
+        ],
+    }
+
+
+def valid_completion_payload(participant_code="P01", experiment_id=None):
+    assignment = assignment_for_code(participant_code)
+    payload = {
+        "participantCode": assignment["participantCode"],
+        "assignmentGroup": assignment["group"],
+        "startedAt": "2026-07-31T00:00:00.000Z",
+        "completedAt": "2026-07-31T00:20:00.000Z",
+        "startedAtMs": 1000,
+        "completedAtMs": 1201000,
+        "totalDurationMs": 1200000,
+        "stages": [],
+    }
+    if experiment_id is not None:
+        payload["experimentId"] = experiment_id
+    for stage_index, stage in enumerate(assignment["stages"]):
+        payload["stages"].append({
+            **stage,
+            "questionVersion": 1,
+            "stageStartedAtMs": 1000 + stage_index * 600000,
+            "stageSubmittedAtMs": 601000 + stage_index * 600000,
+            "stageDurationMs": 600000,
+            "answers": [
+                {
+                    "questionId": f"Q{answer_index}",
+                    "questionText": f"Question {answer_index}" if answer_index < 6 else "Q6",
+                    "answer": f"Answer {answer_index}",
+                    "primarySource": "left",
+                    "leftEvidence": "L-P001",
+                    "rightEvidence": "R-P001",
+                    "answerStartedAtMs": 1000 + answer_index,
+                    "submittedAtMs": 2000 + answer_index,
+                    "durationMs": 1000,
+                }
+                for answer_index in range(1, 7)
+            ],
+        })
+    return payload
 
 
 class ExperimentApiTest(AsyncHTTPTestCase):
@@ -54,11 +111,7 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert payload["stages"][0]["condition"] == "chatgpt"
 
     def test_complete_submission_and_admin_list(self):
-        complete_response = self.post_json("/api/experiment/complete", {
-            "participantCode": "P01",
-            "assignmentGroup": "S1",
-            "stages": [],
-        })
+        complete_response = self.post_json("/api/experiment/complete", valid_completion_payload("P01"))
         assert complete_response.code == 200
         saved = json.loads(complete_response.body)
         assert saved["experimentId"].startswith("exp-")
@@ -74,6 +127,40 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         records = json.loads(listing.body)["submissions"]
         assert records[0]["participantCode"] == "P01"
 
+    def test_complete_submission_rejects_zero_stages(self):
+        response = self.post_json("/api/experiment/complete", {
+            "participantCode": "P01",
+            "assignmentGroup": "S1",
+            "stages": [],
+        })
+        assert response.code == 400
+        assert "two stages" in json.loads(response.body)["error"]
+
+    def test_complete_submission_rejects_path_traversal_experiment_ids(self):
+        for bad_id in ("../owned", "/tmp/owned", "exp.bad", "exp/owned", ""):
+            response = self.post_json("/api/experiment/complete", valid_completion_payload("P01", bad_id))
+            assert response.code == 400
+            assert "experimentId" in json.loads(response.body)["error"]
+
+    def test_complete_submission_rejects_fabricated_assignment_and_bad_answers(self):
+        fabricated = valid_completion_payload("P01")
+        fabricated["assignmentGroup"] = "S2"
+        response = self.post_json("/api/experiment/complete", fabricated)
+        assert response.code == 400
+        assert "assignmentGroup" in json.loads(response.body)["error"]
+
+        wrong_stage = valid_completion_payload("P01")
+        wrong_stage["stages"][0]["condition"] = "chatgpt"
+        response = self.post_json("/api/experiment/complete", wrong_stage)
+        assert response.code == 400
+        assert "stage 1" in json.loads(response.body)["error"]
+
+        missing_answer = valid_completion_payload("P01")
+        missing_answer["stages"][0]["answers"] = missing_answer["stages"][0]["answers"][:5]
+        response = self.post_json("/api/experiment/complete", missing_answer)
+        assert response.code == 400
+        assert "Q1-Q6" in json.loads(response.body)["error"]
+
     def test_admin_export_answers_csv(self):
         login = self.post_json("/api/admin/login", {"password": "secret"})
         token = json.loads(login.body)["token"]
@@ -84,14 +171,19 @@ class ExperimentApiTest(AsyncHTTPTestCase):
 
     def test_questions_and_admin_freeze_unfreeze(self):
         questions_response = self.fetch("/api/experiment/questions?materialId=M1")
-        assert questions_response.code == 200
-        questions = json.loads(questions_response.body)
-        assert questions["material_id"] == "M1"
-        assert questions["frozen"] is False
+        assert questions_response.code == 400
+        assert "frozen" in json.loads(questions_response.body)["error"]
 
         login = self.post_json("/api/admin/login", {"password": "secret"})
         assert login.code == 200
         token = json.loads(login.body)["token"]
+
+        generated = self.post_json(
+            "/api/admin/questions/generate",
+            {"materialId": "M1", "rawQuestions": raw_questions_payload("M1")},
+            headers={"X-Admin-Token": token},
+        )
+        assert generated.code == 200
 
         freeze = self.post_json(
             "/api/admin/questions/freeze",
@@ -100,6 +192,10 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         )
         assert freeze.code == 200
         assert json.loads(freeze.body)["frozen"] is True
+
+        participant_questions = self.fetch("/api/experiment/questions?materialId=M1")
+        assert participant_questions.code == 200
+        assert "gold_atoms" not in participant_questions.body.decode("utf-8")
 
         unfreeze = self.post_json(
             "/api/admin/questions/unfreeze",
@@ -132,6 +228,13 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert generated["version"] == 1
         assert generated["frozen"] is False
         assert [item["question_id"] for item in generated["questions"]] == ["Q1", "Q2", "Q3", "Q4", "Q5"]
+
+        freeze_response = self.post_json(
+            "/api/admin/questions/freeze",
+            {"materialId": "M1"},
+            headers={"X-Admin-Token": token},
+        )
+        assert freeze_response.code == 200
 
         questions_response = self.fetch("/api/experiment/questions?materialId=M1")
         assert questions_response.code == 200
@@ -178,6 +281,13 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert generate_response.code == 200
         admin_payload = json.loads(generate_response.body)
         assert "gold_atoms" in admin_payload["questions"][0]
+
+        freeze_response = self.post_json(
+            "/api/admin/questions/freeze",
+            {"materialId": "M1"},
+            headers={"X-Admin-Token": token},
+        )
+        assert freeze_response.code == 200
 
         questions_response = self.fetch("/api/experiment/questions?materialId=M1")
         assert questions_response.code == 200
@@ -252,3 +362,62 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert response.code == 401
         assert json.loads(response.body)["error"] == "Admin authentication required"
 
+    def test_admin_generate_questions_rejects_when_questions_are_frozen(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        assert self.post_json("/api/admin/questions/generate", {"materialId": "M1", "rawQuestions": raw_questions_payload("M1")}, headers={"X-Admin-Token": token}).code == 200
+        assert self.post_json("/api/admin/questions/freeze", {"materialId": "M1"}, headers={"X-Admin-Token": token}).code == 200
+
+        response = self.post_json("/api/admin/questions/generate", {"materialId": "M1", "rawQuestions": raw_questions_payload("M1")}, headers={"X-Admin-Token": token})
+        assert response.code == 400
+        assert "frozen" in json.loads(response.body)["error"]
+
+    def test_admin_login_requires_configured_password(self):
+        os.environ.pop("EXPERIMENT_ADMIN_PASSWORD", None)
+        response = self.post_json("/api/admin/login", {"password": "admin"})
+        assert response.code == 503
+        assert "EXPERIMENT_ADMIN_PASSWORD" in json.loads(response.body)["error"]
+
+    def test_experiment_cors_uses_configured_origin_and_avoids_wildcard_by_default(self):
+        response = self.fetch("/api/experiment/config", headers={"Origin": "https://example.test"})
+        assert response.code == 200
+        assert response.headers.get("Access-Control-Allow-Origin") is None
+
+        os.environ["EXPERIMENT_CORS_ORIGIN"] = "https://admin.example"
+        try:
+            response = self.fetch("/api/experiment/config", headers={"Origin": "https://admin.example"})
+            assert response.headers.get("Access-Control-Allow-Origin") == "https://admin.example"
+        finally:
+            os.environ.pop("EXPERIMENT_CORS_ORIGIN", None)
+
+    def test_static_tables_admin_and_participant_freeze_flow(self):
+        unfrozen_public = self.fetch("/api/experiment/static-table?materialId=M1")
+        assert unfrozen_public.code == 400
+
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        rows = [{"id": "r1", "label": "GDP", "left": {"value": "1"}, "right": {"value": "2"}}]
+
+        saved = self.post_json("/api/admin/static-table", {"materialId": "M1", "rows": rows}, headers={"X-Admin-Token": token})
+        assert saved.code == 200
+        assert json.loads(saved.body)["rows"] == rows
+
+        still_unfrozen_public = self.fetch("/api/experiment/static-table?materialId=M1")
+        assert still_unfrozen_public.code == 400
+
+        frozen = self.post_json("/api/admin/static-table/freeze", {"materialId": "M1"}, headers={"X-Admin-Token": token})
+        assert frozen.code == 200
+        assert json.loads(frozen.body)["frozen"] is True
+
+        public = self.fetch("/api/experiment/static-table?materialId=M1")
+        assert public.code == 200
+        payload = json.loads(public.body)
+        assert payload == {"material_id": "M1", "version": 1, "rows": rows}
+
+        rejected_save = self.post_json("/api/admin/static-table", {"materialId": "M1", "rows": rows}, headers={"X-Admin-Token": token})
+        assert rejected_save.code == 400
+        assert "frozen" in json.loads(rejected_save.body)["error"]
+
+        unfrozen = self.post_json("/api/admin/static-table/unfreeze", {"materialId": "M1"}, headers={"X-Admin-Token": token})
+        assert unfrozen.code == 200
+        assert json.loads(unfrozen.body)["frozen"] is False
