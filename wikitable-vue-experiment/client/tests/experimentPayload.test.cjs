@@ -29,7 +29,21 @@ const payload = buildCompletionPayload({
 	completedAtMs: 1010,
 	stages: [{ stageIndex: 1, condition: "wikicompare", materialId: "M1", answers: [answer] }],
 });
+assert.strictEqual(payload.startedAtMs, 10);
+assert.strictEqual(payload.completedAtMs, 1010);
+assert.strictEqual(payload.startedAt, "1970-01-01T00:00:00.010Z");
+assert.strictEqual(payload.completedAt, "1970-01-01T00:00:01.010Z");
 assert.strictEqual(payload.totalDurationMs, 1000);
 assert.strictEqual(payload.stages[0].answers[0].primarySource, "A");
+
+const falsyAnswer = createAnswerRecord(
+	{ questionId: "Q2", questionText: "Falsy values" },
+	{ startedAtMs: 2000, submittedAtMs: 2500, durationMs: 500 },
+	{ answer: 0, primarySource: false, leftEvidence: null, rightEvidence: undefined }
+);
+assert.strictEqual(falsyAnswer.answer, "0");
+assert.strictEqual(falsyAnswer.primarySource, "false");
+assert.strictEqual(falsyAnswer.leftEvidence, "");
+assert.strictEqual(falsyAnswer.rightEvidence, "");
 
 console.log("experiment payload tests passed");
