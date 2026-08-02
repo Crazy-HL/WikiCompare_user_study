@@ -139,3 +139,101 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert persisted["version"] == 1
         assert persisted["questions"][0]["question_text"] == "Question 1"
 
+    def test_participant_questions_redact_generated_answer_keys(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        raw_questions = {
+            "material_id": "M1",
+            "questions": [
+                {
+                    "question_id": f"Q{index}",
+                    "question_type": "单维事实比较",
+                    "question_text": f"Question {index}",
+                    "answer_format": "free text",
+                    "understanding_target": "visible learning target",
+                    "answer_options": ["A", "B"],
+                    "gold_atoms": [
+                        {
+                            "atom_id": f"Q{index}-A1",
+                            "requirement": "hidden scoring requirement",
+                            "canonical_answer": "hidden canonical answer",
+                            "accepted_variants": ["hidden accepted variant"],
+                            "source_ids": ["L-P001", "R-P001"],
+                            "source_evidence": "hidden evidence excerpt",
+                        }
+                    ],
+                    "canonical_answer": "hidden top-level answer",
+                    "accepted_variants": ["hidden top-level variant"],
+                    "source_evidence": "hidden top-level evidence",
+                }
+                for index in range(1, 6)
+            ],
+        }
+
+        generate_response = self.post_json(
+            "/api/admin/questions/generate",
+            {"materialId": "M1", "rawQuestions": raw_questions},
+            headers={"X-Admin-Token": token},
+        )
+        assert generate_response.code == 200
+        admin_payload = json.loads(generate_response.body)
+        assert "gold_atoms" in admin_payload["questions"][0]
+
+        questions_response = self.fetch("/api/experiment/questions?materialId=M1")
+        assert questions_response.code == 200
+        participant_payload = json.loads(questions_response.body)
+        assert participant_payload["material_id"] == "M1"
+        assert participant_payload["version"] == 1
+        first_question = participant_payload["questions"][0]
+        assert first_question == {
+            "question_id": "Q1",
+            "question_type": "单维事实比较",
+            "question_text": "Question 1",
+            "answer_format": "free text",
+            "understanding_target": "visible learning target",
+            "answer_options": ["A", "B"],
+        }
+
+        forbidden_keys = {
+            "gold_atoms",
+            "canonical_answer",
+            "accepted_variants",
+            "source_ids",
+            "source_evidence",
+            "sourceEvidence",
+        }
+
+        def assert_no_forbidden_keys(value):
+            if isinstance(value, dict):
+                assert forbidden_keys.isdisjoint(value.keys())
+                for child in value.values():
+                    assert_no_forbidden_keys(child)
+            elif isinstance(value, list):
+                for child in value:
+                    assert_no_forbidden_keys(child)
+
+        assert_no_forbidden_keys(participant_payload)
+
+    def test_admin_generate_questions_rejects_invalid_raw_questions_as_json_error(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+
+        response = self.post_json(
+            "/api/admin/questions/generate",
+            {"materialId": "M1", "rawQuestions": "not valid json"},
+            headers={"X-Admin-Token": token},
+        )
+
+        assert response.code == 400
+        payload = json.loads(response.body)
+        assert "rawQuestions" in payload["error"]
+
+    def test_admin_generate_questions_requires_authentication(self):
+        response = self.post_json(
+            "/api/admin/questions/generate",
+            {"materialId": "M1", "rawQuestions": {"questions": []}},
+        )
+
+        assert response.code == 401
+        assert json.loads(response.body)["error"] == "Admin authentication required"
+

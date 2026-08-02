@@ -7,7 +7,7 @@ import tornado.web
 
 from .assignment import assignment_for_code
 from .defaults import DEFAULT_MATERIALS
-from .question_generation import build_question_prompt, normalize_generated_questions
+from .question_generation import normalize_generated_questions
 from .storage import ExperimentStorage
 
 ADMIN_TOKENS = set()
@@ -76,11 +76,46 @@ class ExperimentStartHandler(JsonHandler):
             self.write_error_json(str(error), status=400)
 
 
+PARTICIPANT_QUESTION_FIELDS = {
+    "question_id",
+    "question_type",
+    "question_text",
+    "answer_format",
+    "understanding_target",
+    "answer_options",
+}
+
+PARTICIPANT_QUESTION_PAYLOAD_FIELDS = {
+    "material_id",
+    "version",
+    "frozen",
+    "generated_at",
+    "prompt_version",
+}
+
+
+def participant_questions_payload(payload):
+    redacted = {
+        key: payload[key]
+        for key in PARTICIPANT_QUESTION_PAYLOAD_FIELDS
+        if key in payload
+    }
+    redacted["questions"] = [
+        {
+            key: question[key]
+            for key in PARTICIPANT_QUESTION_FIELDS
+            if key in question
+        }
+        for question in payload.get("questions") or []
+    ]
+    return redacted
+
+
 class ExperimentQuestionsHandler(JsonHandler):
     def get(self):
         material_id = self.get_argument("materialId", "")
         try:
-            self.write_json(storage().load_questions(material_id))
+            self.write_json(participant_questions_payload(storage().load_questions(material_id)))
         except ValueError as error:
             self.write_error_json(str(error), status=404)
 
@@ -150,7 +185,11 @@ class AdminQuestionGenerateHandler(JsonHandler, AdminMixin):
             self.write_error_json("rawQuestions is required until material session extraction is connected", status=400)
             return
         existing = storage().load_questions(material_id)
-        normalized = normalize_generated_questions(raw_questions, material_id, int(existing.get("version") or 0) + 1)
+        try:
+            normalized = normalize_generated_questions(raw_questions, material_id, int(existing.get("version") or 0) + 1)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            self.write_error_json(f"Invalid rawQuestions: {error}", status=400)
+            return
         saved = storage().save_questions(material_id, normalized)
         self.write_json(saved)
 
