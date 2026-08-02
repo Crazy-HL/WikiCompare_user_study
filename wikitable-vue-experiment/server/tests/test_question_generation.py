@@ -38,3 +38,21 @@ def test_normalize_generated_questions_rejects_incomplete_question_set():
         assert "Q1-Q5" in str(error)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_normalize_generated_questions_rejects_non_list_questions():
+    try:
+        normalize_generated_questions({"questions": "abc"}, "M1", 1)
+    except ValueError as error:
+        assert "questions must be a list" in str(error)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_normalize_generated_questions_rejects_non_object_question_items():
+    try:
+        normalize_generated_questions({"questions": [None]}, "M1", 1)
+    except ValueError as error:
+        assert "question item" in str(error)
+    else:
+        raise AssertionError("Expected ValueError")

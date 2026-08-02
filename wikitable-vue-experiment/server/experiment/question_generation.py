@@ -117,7 +117,12 @@ def parse_raw_json(raw):
 
 def normalize_generated_questions(raw, material_id, version):
     parsed = parse_raw_json(raw)
-    questions = parsed.get("questions") or []
+    questions = parsed.get("questions", [])
+    if not isinstance(questions, list):
+        raise ValueError("Generated questions must be a list")
+    for index, item in enumerate(questions, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Generated question item {index} must be an object")
     ids = [item.get("question_id") for item in questions]
     if ids != ["Q1", "Q2", "Q3", "Q4", "Q5"]:
         raise ValueError("Generated questions must contain Q1-Q5 in order")

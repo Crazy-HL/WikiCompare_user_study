@@ -228,6 +228,21 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         payload = json.loads(response.body)
         assert "rawQuestions" in payload["error"]
 
+    def test_admin_generate_questions_rejects_malformed_question_shapes_as_json_error(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+
+        for raw_questions in ({"questions": "abc"}, {"questions": [None]}):
+            response = self.post_json(
+                "/api/admin/questions/generate",
+                {"materialId": "M1", "rawQuestions": raw_questions},
+                headers={"X-Admin-Token": token},
+            )
+
+            assert response.code == 400
+            payload = json.loads(response.body)
+            assert "rawQuestions" in payload["error"]
+
     def test_admin_generate_questions_requires_authentication(self):
         response = self.post_json(
             "/api/admin/questions/generate",
