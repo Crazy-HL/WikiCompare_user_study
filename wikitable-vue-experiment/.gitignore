@@ -9,3 +9,5 @@ server/experiment_data/*.lock
 .env
 server/.env
 .DS_Store
+server/experiment_data/config/
+server/experiment_data/sessions/

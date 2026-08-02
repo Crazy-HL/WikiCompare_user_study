@@ -56,3 +56,24 @@ def test_normalize_generated_questions_rejects_non_object_question_items():
         assert "question item" in str(error)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_build_question_prompt_caps_long_article_contexts_to_avoid_provider_gateway_timeout():
+    long_left = [
+        {"id": f"L-P{index:03d}", "text": "Left comparison evidence " + ("x" * 500)}
+        for index in range(1, 90)
+    ]
+    long_right = [
+        {"id": f"R-P{index:03d}", "text": "Right comparison evidence " + ("y" * 500)}
+        for index in range(1, 90)
+    ]
+    prompt = build_question_prompt(
+        {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
+        {"title": "Left", "paragraphs": long_left},
+        {"title": "Right", "paragraphs": long_right},
+    )
+
+    assert len(prompt) <= 15000
+    assert "L-P001" in prompt
+    assert "R-P001" in prompt
+    assert "内容已截断" in prompt

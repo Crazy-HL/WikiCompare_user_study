@@ -13,20 +13,52 @@ from .defaults import QUESTION_PROMPT_VERSION
 from .storage import utc_now_iso
 
 
-def article_text(article):
+MAX_ARTICLE_PROMPT_CHARS = 4500
+
+
+def article_text(article, max_chars=MAX_ARTICLE_PROMPT_CHARS):
     lines = []
-    for paragraph in article.get("paragraphs") or []:
-        source_id = paragraph.get("id", "")
-        text = paragraph.get("text", "")
-        if text:
-            lines.append(f"[{source_id}] {text}" if source_id else text)
     for field in article.get("infobox") or []:
         source_id = field.get("id", "")
         label = field.get("label", "")
         value = field.get("value", "")
         if label or value:
             lines.append(f"[{source_id}] {label}: {value}" if source_id else f"{label}: {value}")
-    return "\n".join(lines)
+    for paragraph in article.get("paragraphs") or []:
+        source_id = paragraph.get("id", "")
+        text = paragraph.get("text", "")
+        if text:
+            lines.append(f"[{source_id}] {text}" if source_id else text)
+    return _cap_article_lines(lines, max_chars)
+
+
+def _cap_article_lines(lines, max_chars):
+    if not max_chars or max_chars <= 0:
+        return "\n".join(lines)
+
+    kept = []
+    used = 0
+    truncated = False
+    notice = "[系统提示] 内容已截断：请只根据已显示的带来源编号片段生成题目。"
+    notice_budget = len(notice) + 1
+
+    for line in lines:
+        separator = 1 if kept else 0
+        projected = used + separator + len(line)
+        if projected + notice_budget <= max_chars:
+            kept.append(line)
+            used = projected
+            continue
+
+        remaining = max_chars - used - separator - notice_budget
+        if remaining > 120:
+            kept.append(line[:remaining].rstrip() + "…")
+        truncated = True
+        break
+
+    if truncated or len(kept) < len(lines):
+        kept.append(notice)
+    return "\n".join(kept)
 
 
 def build_question_prompt(material, left_article, right_article):
