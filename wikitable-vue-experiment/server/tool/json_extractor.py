@@ -7,4 +7,3 @@ def extract_json(text):
         return json.loads(match.group())  # 解析 JSON
     else:
         return None
-
