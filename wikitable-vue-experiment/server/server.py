@@ -70,17 +70,17 @@ def make_messages(input: str, n: int = 20) -> list:
     # 先将用户的最新问题添加到历史记录
     messages = [{
         "role": "user",
-        "content": input,  
+        "content": input,
     }]
-    
+
     # 构建新的消息列表
     new_messages = []
     new_messages.extend(system_messages)  # 添加系统消息
-    
+
     # 保证不超过 n 条历史记录
     if len(messages) > n:
         messages = messages[-n:]
-    
+
     new_messages.extend(messages)  # 添加历史消息
     return new_messages
 
@@ -825,7 +825,7 @@ class GPTAskHandler(tornado.web.RequestHandler):
             question = data.get("question")
             global comparison_result  # 获取对比结果
             #print(f"用户问题: {question}, 上下文: {comparison_result}")
-            
+
             # 使用对比结果和用户问题进行对话
             conversation_input = f"以下是文章对比结果：\n{comparison_result}\n用户提问：\n{question}"
             answer = chat(conversation_input)  # 获取 GPT 的回答
@@ -855,7 +855,7 @@ class MergedJsonsHandler(tornado.web.RequestHandler):
             # yes_no = chat(f"""
             #                      帮我分别判断{text1}和{text2}的内容是否适合将数据提取出来进行可视化，如果有一个不适合则返回“no”，否则返回“yes”。
             #                      **预期输出**: 您的响应应该是列表["yes","no"]中的单个单词，不带任何额外的解释或理由。""")
-            
+
             # if yes_no == 'no':
             #     # 直接返回结果，不执行后续代码
             #     self.write(json.dumps({
@@ -1110,7 +1110,7 @@ class OutlineMatchHandler(tornado.web.RequestHandler):
             const outline1 = [
                 {{id: "heading-0", text: "Introduction to AI" }},
                 {{id: "heading-1", text: "Machine Learning Basics" }}];
-            
+
             const outline2 = [
                 {{id: "heading-0", text: "AI Introduction" }},
                 {{id: "heading-1", text: "Basics of Machine Learning"}}];
@@ -1167,23 +1167,23 @@ class AskInfoboxHandler(tornado.web.RequestHandler):
             # 处理普通问题
             prompt = f"""
             用户问题: {question}
-            
+
             回答要求:
             1、自行判断是否需要用到infobox数据，如果用到infobox数据，要严格基于以下提供的信息框数据回答
             2. 如果数据不足或无法回答，请明确说明
             3. 除了解释名词外，不要参考任何其他知识或信息
             4. 使用简洁明了的语言
-            
+
             左侧infobox数据:
             {json.dumps(left_infobox, indent=2, ensure_ascii=False)}
-            
+
             右侧infobox数据:
             {json.dumps(right_infobox, indent=2, ensure_ascii=False)}
             """
-            
+
             analysis_result = chat(prompt)
             self.write(json.dumps({"answer": analysis_result}))
-            
+
         except Exception as e:
             self.write(json.dumps({"error": str(e)}))
 def env_flag(name, default=False):

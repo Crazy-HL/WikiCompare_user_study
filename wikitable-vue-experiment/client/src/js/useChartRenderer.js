@@ -3,10 +3,10 @@ import { renderLineChart, renderBarChart } from '@/js/chartUtils'
 export function useChartRenderer() {
   const renderChart = (container, data) => {
     if (!container || !data) return
-    
+
     try {
       container.innerHTML = ''
-      
+
       switch (data.chartType) {
         case 'line':
           renderLineChart(container, data)

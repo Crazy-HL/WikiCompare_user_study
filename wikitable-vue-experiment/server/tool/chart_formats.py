@@ -151,11 +151,11 @@ def get_scatter_plot_format():
     return [{
     "xAxis": {
         "label": "X轴标签",
-        "data": [1, 2, 3, 4, 5] 
+        "data": [1, 2, 3, 4, 5]
     },
     "yAxis": {
         "label": "Y轴标签",
-        "data": [10, 20, 30, 40, 50] 
+        "data": [10, 20, 30, 40, 50]
     },
     "datasets": [
         {
@@ -214,7 +214,7 @@ def get_radar_chart_format():
 def get_table_format():
     return[{
   "title": "表格标题",
-  "rows": ["属性1", "属性2"], 
+  "rows": ["属性1", "属性2"],
   "columns": [
     { "name": "记录1", "data": {"属性1": "值1", "属性2": "值1"} },
     { "name": "记录2", "data": {"属性1": "值2", "属性2": "值2"} },
