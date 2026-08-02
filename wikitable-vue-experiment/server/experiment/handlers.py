@@ -170,6 +170,17 @@ class AdminAnswersCsvHandler(AdminExportHandler):
     export_name = "answersCsv"
 
 
+class AdminQuestionsHandler(JsonHandler, AdminMixin):
+    def get(self):
+        if not self.require_admin():
+            return
+        material_id = self.get_argument("materialId", "")
+        try:
+            self.write_json(storage().load_questions(material_id))
+        except ValueError as error:
+            self.write_error_json(str(error), status=404)
+
+
 class AdminQuestionGenerateHandler(JsonHandler, AdminMixin):
     def post(self):
         if not self.require_admin():
@@ -225,4 +236,5 @@ def experiment_routes():
         (r"/api/admin/questions/generate", AdminQuestionGenerateHandler),
         (r"/api/admin/questions/freeze", AdminQuestionFreezeHandler),
         (r"/api/admin/questions/unfreeze", AdminQuestionUnfreezeHandler),
+        (r"/api/admin/questions", AdminQuestionsHandler),
     ]

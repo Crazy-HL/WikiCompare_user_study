@@ -1,11 +1,6 @@
 <template>
 	<General v-if="routeMode === 'compare'" />
-	<section v-else-if="routeMode === 'admin'" class="admin-placeholder">
-		<div>
-			<h1>管理后台</h1>
-			<p>管理后台界面将在 Task 8 中实现。</p>
-		</div>
-	</section>
+	<AdminDashboard v-else-if="routeMode === 'admin'" />
 	<section v-else class="participant-app">
 		<ParticipantEntry v-if="participantState === 'entry'" @start="beginExperiment" />
 		<div v-else-if="participantState === 'starting'" class="app-message">正在加载实验配置...</div>
@@ -26,6 +21,7 @@
 	import General from "./components/general.vue";
 	import ParticipantEntry from "./components/experiment/ParticipantEntry.vue";
 	import ExperimentShell from "./components/experiment/ExperimentShell.vue";
+	import AdminDashboard from "./components/experiment/AdminDashboard.vue";
 	import { getExperimentConfig, startExperiment } from "@/experiment/experimentApi";
 	const { assignmentForCode, validateAssignmentStages } = require("@/experiment/assignment");
 
@@ -100,13 +96,11 @@
 
 <style scoped>
 	.participant-app,
-	.admin-placeholder,
 	.app-message {
 		min-height: 100vh;
 		font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 	}
 
-	.admin-placeholder,
 	.app-message {
 		display: flex;
 		align-items: center;
@@ -118,7 +112,6 @@
 		text-align: center;
 	}
 
-	.admin-placeholder > div,
 	.app-message {
 		max-width: 560px;
 		border: 1px solid #dbe4ee;
@@ -128,12 +121,6 @@
 		box-shadow: 0 18px 50px rgba(15, 23, 42, 0.1);
 	}
 
-	.admin-placeholder h1 {
-		margin: 0 0 10px;
-		font-size: 28px;
-	}
-
-	.admin-placeholder p,
 	.app-message p {
 		margin: 8px 0 0;
 		color: #475569;
