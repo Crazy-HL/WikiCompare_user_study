@@ -1,4 +1,6 @@
 import json
+import re
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -14,6 +16,8 @@ from .storage import utc_now_iso
 
 
 MAX_ARTICLE_PROMPT_CHARS = 4500
+COMPACT_ARTICLE_PROMPT_CHARS = 1800
+MATERIAL_SNAPSHOT_DIR = Path(__file__).resolve().parent / "material_snapshots"
 
 
 def article_text(article, max_chars=MAX_ARTICLE_PROMPT_CHARS):
@@ -61,7 +65,7 @@ def _cap_article_lines(lines, max_chars):
     return "\n".join(kept)
 
 
-def build_question_prompt(material, left_article, right_article):
+def build_question_prompt(material, left_article, right_article, max_article_chars=MAX_ARTICLE_PROMPT_CHARS):
     left_title = material.get("leftTitle") or left_article.get("title") or "左文"
     right_title = material.get("rightTitle") or right_article.get("title") or "右文"
     return f"""你是双文档比较阅读实验的问题设计器。
@@ -75,12 +79,12 @@ def build_question_prompt(material, left_article, right_article):
 【左侧文章】
 标题：{left_title}
 内容：
-{article_text(left_article)}
+{article_text(left_article, max_article_chars)}
 
 【右侧文章】
 标题：{right_title}
 内容：
-{article_text(right_article)}
+{article_text(right_article, max_article_chars)}
 
 ============================================
 
@@ -210,9 +214,36 @@ def parse_material_source(url):
 def fetch_material_html(source):
     if source.source_kind == "wikipedia":
         return fetch_article_html(source.title, source.revision)
-    response = requests.get(source.display_url, headers={"User-Agent": "WikiCompare/0.1"}, timeout=20)
-    response.raise_for_status()
-    return response.text
+    try:
+        response = requests.get(source.display_url, headers={"User-Agent": "WikiCompare/0.1"}, timeout=20)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException:
+        snapshot_html = _load_material_snapshot_html(source.display_url)
+        if snapshot_html is not None:
+            return snapshot_html
+        raise
+
+
+def _load_material_snapshot_html(url):
+    snapshot_path = _material_snapshot_path(url)
+    if snapshot_path is None or not snapshot_path.exists():
+        return None
+    return snapshot_path.read_text(encoding="utf-8")
+
+
+def _material_snapshot_path(url):
+    parsed = urlparse(str(url or ""))
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    parts = [part for part in parsed.path.split("/") if part]
+    if host != "openfactbook.org" or len(parts) < 2 or parts[0] != "countries":
+        return None
+    country_slug = re.sub(r"[^a-z0-9-]+", "-", parts[1].lower()).strip("-")
+    if not country_slug:
+        return None
+    return MATERIAL_SNAPSHOT_DIR / f"openfactbook-countries-{country_slug}.html"
 
 
 def load_material_articles(material):
@@ -241,14 +272,202 @@ def generate_questions_from_material(material, version, llm_client=None):
     if client is None:
         raise RuntimeError("OPENAI_API_KEY is required to auto-generate experiment questions")
     left_article, right_article = load_material_articles(material)
-    raw_questions = client.chat_json([
+    initial_max_chars = (
+        COMPACT_ARTICLE_PROMPT_CHARS
+        if _uses_openfactbook_material(material)
+        else MAX_ARTICLE_PROMPT_CHARS
+    )
+    try:
+        raw_questions = _chat_question_generation(
+            client,
+            build_question_prompt(
+                material,
+                left_article,
+                right_article,
+                max_article_chars=initial_max_chars,
+            ),
+        )
+    except Exception as error:
+        if not _is_transient_llm_generation_error(error):
+            raise
+        if initial_max_chars <= COMPACT_ARTICLE_PROMPT_CHARS:
+            raw_questions = _build_local_draft_questions(material, left_article, right_article)
+        else:
+            try:
+                raw_questions = _chat_question_generation(
+                    client,
+                    build_question_prompt(
+                        material,
+                        left_article,
+                        right_article,
+                        max_article_chars=COMPACT_ARTICLE_PROMPT_CHARS,
+                    ),
+                )
+            except Exception as retry_error:
+                if not _is_transient_llm_generation_error(retry_error):
+                    raise
+                raw_questions = _build_local_draft_questions(material, left_article, right_article)
+    return normalize_generated_questions(raw_questions, material.get("id", ""), version)
+
+
+def _chat_question_generation(client, prompt):
+    return client.chat_json([
         {
             "role": "system",
             "content": "You generate bilingual comparison-reading experiment questions. Return JSON only.",
         },
         {
             "role": "user",
-            "content": build_question_prompt(material, left_article, right_article),
+            "content": prompt,
         },
     ])
-    return normalize_generated_questions(raw_questions, material.get("id", ""), version)
+
+
+def _is_transient_llm_generation_error(error):
+    message = str(error).lower()
+    return any(
+        token in message
+        for token in (
+            "504",
+            "gateway",
+            "timed out",
+            "timeout",
+            "request timed out",
+            "temporarily unavailable",
+        )
+    )
+
+
+
+def _uses_openfactbook_material(material):
+    return any(
+        _material_snapshot_path(material.get(f"{side}Url")) is not None
+        for side in ("left", "right")
+    )
+
+
+
+def _build_local_draft_questions(material, left_article, right_article):
+    left_title = material.get("leftTitle") or left_article.get("title") or "左侧材料"
+    right_title = material.get("rightTitle") or right_article.get("title") or "右侧材料"
+    left_evidence = _article_evidence_items(left_article)
+    right_evidence = _article_evidence_items(right_article)
+
+    first_pair = _pick_evidence_pair(left_evidence, right_evidence, ("area", "population", "gdp"), 0)
+    structure_pair = _pick_evidence_pair(left_evidence, right_evidence, ("age structure", "ethnic", "language", "religion", "sector"), 1)
+    economy_pair = _pick_evidence_pair(left_evidence, right_evidence, ("gdp", "growth", "inflation", "labor", "export", "import"), 2)
+    background_pair = _pick_evidence_pair(left_evidence, right_evidence, ("background", "independence", "government"), 3)
+    conclusion_pair = _pick_evidence_pair(left_evidence, right_evidence, ("population", "area", "gdp"), 4)
+
+    return {
+        "material_id": material.get("id", ""),
+        "questions": [
+            _local_question(
+                "Q1",
+                "单维事实比较",
+                f"根据材料，{left_title} 和 {right_title} 在“{first_pair['key']}”这一项上分别是什么？",
+                "分别填写两侧材料中的对应事实",
+                first_pair,
+            ),
+            _local_question(
+                "Q2",
+                "结构、组成或变化模式比较",
+                f"比较 {left_title} 和 {right_title} 关于“{structure_pair['key']}”的描述，它们呈现出哪些组成或结构差异？",
+                "用简短文字分别概括两侧结构，并指出主要差异",
+                structure_pair,
+            ),
+            _local_question(
+                "Q3",
+                "跨属性综合比较",
+                f"结合“{economy_pair['key']}”以及前面事实，判断两篇材料展示的国家/经济特征有什么重要差别？",
+                "写出综合判断，并分别引用两侧证据",
+                economy_pair,
+            ),
+            _local_question(
+                "Q4",
+                "明确背景、过程或原因理解",
+                f"两篇材料在背景或发展过程上分别给出了什么关键信息？请围绕“{background_pair['key']}”比较。",
+                "分别概括两侧背景/过程信息",
+                background_pair,
+            ),
+            _local_question(
+                "Q5",
+                "综合结论证据验证",
+                f"结论验证：两篇材料都能支持对“{conclusion_pair['key']}”进行直接比较。这个结论是“支持”“不支持”还是“材料不足”？",
+                "只能回答：支持 / 不支持 / 材料不足，并说明证据",
+                conclusion_pair,
+                canonical_prefix="支持；两侧材料都提供了对应信息。",
+            ),
+        ],
+    }
+
+
+def _article_evidence_items(article):
+    records = []
+    for paragraph in article.get("paragraphs") or []:
+        source_id = paragraph.get("id") or ""
+        text = " ".join(str(paragraph.get("text") or "").split())
+        if not text:
+            continue
+        key, value = _split_evidence_text(text)
+        records.append({"source_id": source_id, "key": key, "value": value, "text": text})
+    if not records:
+        records.append({"source_id": "", "key": "核心内容", "value": "材料中未提取到可用段落。", "text": "材料中未提取到可用段落。"})
+    return records
+
+
+def _split_evidence_text(text):
+    if ":" not in text:
+        return _short_text(text, 60), _short_text(text, 320)
+    key, value = text.split(":", 1)
+    return _short_text(key.strip(), 90) or "核心内容", _short_text(value.strip(), 420)
+
+
+def _pick_evidence_pair(left_evidence, right_evidence, keywords, fallback_index):
+    right_by_key = {item["key"].lower(): item for item in right_evidence}
+    for left_item in left_evidence:
+        left_key = left_item["key"].lower()
+        right_item = right_by_key.get(left_key)
+        if right_item is None:
+            continue
+        if not keywords or any(keyword in left_key for keyword in keywords):
+            return {"key": left_item["key"], "left": left_item, "right": right_item}
+
+    left_item = left_evidence[fallback_index % len(left_evidence)]
+    right_item = right_evidence[fallback_index % len(right_evidence)]
+    key = left_item["key"] if left_item["key"].lower() == right_item["key"].lower() else f"{left_item['key']} / {right_item['key']}"
+    return {"key": key, "left": left_item, "right": right_item}
+
+
+def _local_question(question_id, question_type, question_text, answer_format, pair, canonical_prefix=None):
+    left = pair["left"]
+    right = pair["right"]
+    canonical_answer = f"左侧：{left['value']}；右侧：{right['value']}"
+    if canonical_prefix:
+        canonical_answer = f"{canonical_prefix} {canonical_answer}"
+    return {
+        "question_id": question_id,
+        "question_type": question_type,
+        "question_text": question_text,
+        "answer_format": answer_format,
+        "understanding_target": "本地备用生成：请管理员在冻结前检查题目质量和标准答案。",
+        "gold_atoms": [
+            {
+                "atom_id": f"{question_id}-A1",
+                "requirement": "回答必须同时包含两侧材料的对应信息，并与来源片段一致。",
+                "canonical_answer": canonical_answer,
+                "accepted_variants": [],
+                "source_ids": [source_id for source_id in (left.get("source_id"), right.get("source_id")) if source_id],
+                "required_unit": "按材料原文",
+                "required_time_scope": "按材料原文",
+            }
+        ],
+        "evidence_distinct_from_previous": True,
+    }
+
+
+def _short_text(value, max_chars):
+    value = " ".join(str(value or "").split())
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 1].rstrip() + "…"
