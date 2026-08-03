@@ -399,6 +399,44 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert payload["questions"][0]["question_text"] == "Generated question 1"
         assert payload["frozen"] is False
 
+
+    def test_admin_questions_keep_generation_prompts_while_participant_payload_redacts_them(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        raw_questions = raw_questions_payload("M1")
+        raw_questions["generation_prompts"] = {
+            "question_prompt": {"system": "question system", "user": "question user"},
+            "answer_prompt": {"system": "answer system", "user": "answer user", "note": "same request"},
+        }
+
+        generate_response = self.post_json(
+            "/api/admin/questions/generate",
+            {"materialId": "M1", "rawQuestions": raw_questions},
+            headers={"X-Admin-Token": token},
+        )
+
+        assert generate_response.code == 200
+        admin_payload = json.loads(generate_response.body)
+        assert admin_payload["generation_prompts"]["question_prompt"]["system"] == "question system"
+        assert admin_payload["generation_prompts"]["answer_prompt"]["user"] == "answer user"
+
+        admin_get = self.fetch("/api/admin/questions?materialId=M1", headers={"X-Admin-Token": token})
+        assert admin_get.code == 200
+        assert json.loads(admin_get.body)["generation_prompts"]["question_prompt"]["user"] == "question user"
+
+        freeze_response = self.post_json(
+            "/api/admin/questions/freeze",
+            {"materialId": "M1"},
+            headers={"X-Admin-Token": token},
+        )
+        assert freeze_response.code == 200
+
+        participant_response = self.fetch("/api/experiment/questions?materialId=M1")
+        assert participant_response.code == 200
+        participant_payload = json.loads(participant_response.body)
+        assert "generation_prompts" not in participant_payload
+        assert "question system" not in participant_response.body.decode("utf-8")
+
     def test_admin_generate_questions_rejects_invalid_raw_questions_as_json_error(self):
         login = self.post_json("/api/admin/login", {"password": "secret"})
         token = json.loads(login.body)["token"]

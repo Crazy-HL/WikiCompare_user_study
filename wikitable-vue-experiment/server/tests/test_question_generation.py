@@ -244,3 +244,38 @@ def test_openfactbook_generation_uses_compact_prompt_and_local_draft_after_one_g
     assert len(client.prompts) == 1
     assert len(client.prompts[0]) < 7000
     assert result["questions"][0]["understanding_target"].startswith("本地备用生成")
+
+
+def test_generate_questions_records_question_and_answer_prompt_metadata(monkeypatch):
+    import experiment.question_generation as question_generation
+
+    monkeypatch.setattr(
+        question_generation,
+        "load_material_articles",
+        lambda material: (
+            {"title": "Left", "paragraphs": [{"id": "left-p-1", "text": "Left fact."}]},
+            {"title": "Right", "paragraphs": [{"id": "right-p-1", "text": "Right fact."}]},
+        ),
+    )
+
+    class PromptCapturingClient:
+        def chat_json(self, messages):
+            return {
+                "questions": [
+                    {"question_id": f"Q{index}", "question_text": f"Question {index}", "gold_atoms": []}
+                    for index in range(1, 6)
+                ]
+            }
+
+    result = question_generation.generate_questions_from_material(
+        {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
+        10,
+        llm_client=PromptCapturingClient(),
+    )
+
+    prompts = result["generation_prompts"]
+    assert prompts["question_prompt"]["system"] == "You generate bilingual comparison-reading experiment questions. Return JSON only."
+    assert "Left fact." in prompts["question_prompt"]["user"]
+    assert prompts["answer_prompt"]["system"] == prompts["question_prompt"]["system"]
+    assert prompts["answer_prompt"]["user"] == prompts["question_prompt"]["user"]
+    assert "同一次模型请求" in prompts["answer_prompt"]["note"]

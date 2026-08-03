@@ -3,7 +3,7 @@
 		<header class="panel-header">
 			<div>
 				<h2>题目与静态三栏表管理</h2>
-				<p>管理 Q1-Q5 的生成结果、隐藏标准答案、冻结状态，以及 ChatGPT 条件使用的冻结静态三栏表。</p>
+				<p>管理 Q1-Q5 的生成结果、隐藏标准答案、生成提示词、冻结状态，以及 ChatGPT 条件使用的冻结静态三栏表。</p>
 			</div>
 			<label class="material-select">
 				材料
@@ -27,40 +27,16 @@
 			<div><strong>静态表版本</strong><span>{{ staticTablePayload?.version ?? "—" }}</span></div>
 		</div>
 
-		<div v-if="loading" class="loading-state">正在加载配置...</div>
-
-		<div v-else class="questions-list">
-			<article v-for="question in questions" :key="question.question_id" class="question-card">
-				<header>
-					<span class="question-id">{{ question.question_id }}</span>
-					<span class="question-type">{{ question.question_type || "未设置题型" }}</span>
-				</header>
-				<h3>{{ question.question_text || "未设置题干" }}</h3>
-				<p v-if="question.understanding_target" class="target">理解目标：{{ question.understanding_target }}</p>
-				<div class="gold-block">
-					<strong>隐藏 gold atoms / reference answers（仅管理后台显示）</strong>
-					<pre>{{ hiddenAnswerJson(question) }}</pre>
-				</div>
-			</article>
-			<div v-if="!questions.length" class="empty-state">当前材料尚未保存 Q1-Q5。</div>
-		</div>
-
-		<section class="raw-json-card">
-			<label for="raw-questions-json">保存题目 JSON（冻结后需先解冻才能覆盖）</label>
-			<textarea
-				id="raw-questions-json"
-				v-model="rawQuestions"
-				rows="12"
-				placeholder='{"material_id":"M1","questions":[...]}'
-				:disabled="saving || questionsFrozen"></textarea>
+		<section class="question-actions-card">
+			<div>
+				<h3>题目生成与冻结</h3>
+				<p>自动生成会覆盖当前未冻结题目；冻结后参与者才会看到固定题目。若要修改已冻结题目，请先解冻。</p>
+			</div>
 			<div class="action-row">
 				<button type="button" class="primary" :disabled="saving || questionsFrozen" @click="autoGenerateQuestions">
-					{{ savingAction === "auto-generate" ? "正在自动生成..." : "自动生成题目" }}
+					{{ savingAction === "auto-generate" ? "正在自动生成..." : questions.length ? "重新自动生成题目" : "自动生成题目" }}
 				</button>
-				<button type="button" :disabled="saving || questionsFrozen || !rawQuestions.trim()" @click="saveGeneratedQuestions">
-					{{ savingAction === "generate" ? "正在保存..." : "保存本次生成结果" }}
-				</button>
-				<button type="button" :disabled="saving || questionsFrozen" @click="freezeSelectedQuestions">
+				<button type="button" :disabled="saving || questionsFrozen || !questions.length" @click="freezeSelectedQuestions">
 					{{ savingAction === "freeze" ? "正在冻结..." : "冻结题目" }}
 				</button>
 				<button type="button" :disabled="saving || !questionsFrozen" @click="unfreezeSelectedQuestions">
@@ -68,6 +44,103 @@
 				</button>
 			</div>
 		</section>
+
+		<section class="prompt-card">
+			<header>
+				<h3>生成题目与答案的提示词</h3>
+				<p>当前系统在同一次模型请求中生成参与者题目和管理员隐藏标准答案，因此答案 prompt 与题目 prompt 是同一组请求。</p>
+			</header>
+			<div v-if="promptInfo" class="prompt-grid">
+				<details open>
+					<summary>题目/答案共同生成 System Prompt</summary>
+					<pre>{{ promptInfo.question_prompt?.system || promptInfo.answer_prompt?.system || "—" }}</pre>
+				</details>
+				<details>
+					<summary>题目/答案共同生成 User Prompt</summary>
+					<pre>{{ promptInfo.question_prompt?.user || promptInfo.answer_prompt?.user || "—" }}</pre>
+				</details>
+				<div class="prompt-note">
+					<strong>答案生成 prompt 说明</strong>
+					<p>{{ promptInfo.answer_prompt?.note || "隐藏标准答案与题目在同一次模型请求中共同生成，没有单独的第二次答案生成 prompt。" }}</p>
+				</div>
+			</div>
+			<div v-else class="empty-state">当前题目没有保存 prompt 记录。重新自动生成题目后，这里会显示实际使用的题目/答案 prompt。</div>
+		</section>
+
+		<div v-if="loading" class="loading-state">正在加载配置...</div>
+
+		<div v-else class="questions-list">
+			<article v-for="question in questions" :key="question.question_id" class="question-card">
+				<header>
+					<div>
+						<span class="question-id">{{ question.question_id }}</span>
+						<span class="question-type">{{ question.question_type || "未设置题型" }}</span>
+					</div>
+					<div class="card-actions">
+						<button v-if="!editingQuestions[question.question_id]" type="button" :disabled="saving || questionsFrozen" @click="startEditQuestion(question)">编辑</button>
+						<button v-if="editingQuestions[question.question_id]" type="button" :disabled="saving" @click="cancelEditQuestion(question.question_id)">取消</button>
+						<button v-if="editingQuestions[question.question_id]" type="button" class="primary" :disabled="saving || questionsFrozen" @click="saveQuestionEdit(question)">
+							{{ savingAction === `save-question-${question.question_id}` ? "正在保存..." : "保存本题修改" }}
+						</button>
+					</div>
+				</header>
+
+				<div v-if="editingQuestions[question.question_id]" class="question-edit-form">
+					<label>题目类型<input v-model="editingQuestions[question.question_id].question_type" :disabled="saving || questionsFrozen" /></label>
+					<label>题目文本<textarea v-model="editingQuestions[question.question_id].question_text" rows="3" :disabled="saving || questionsFrozen"></textarea></label>
+					<label>答题格式<textarea v-model="editingQuestions[question.question_id].answer_format" rows="2" :disabled="saving || questionsFrozen"></textarea></label>
+					<label>理解目标<textarea v-model="editingQuestions[question.question_id].understanding_target" rows="2" :disabled="saving || questionsFrozen"></textarea></label>
+					<label>固定选项（每行或逗号分隔一个，可留空）<textarea v-model="editingQuestions[question.question_id].answer_options_text" rows="2" :disabled="saving || questionsFrozen"></textarea></label>
+
+					<section class="atom-editor">
+						<header>
+							<strong>隐藏标准答案 / 评分点</strong>
+							<button type="button" :disabled="saving || questionsFrozen" @click="addGoldAtom(question.question_id)">添加评分点</button>
+						</header>
+						<div v-for="(atom, atomIndex) in editingQuestions[question.question_id].gold_atoms" :key="atom.draft_id" class="atom-edit-card">
+							<div class="atom-edit-header">
+								<strong>评分点 {{ atomIndex + 1 }}</strong>
+								<button type="button" :disabled="saving || questionsFrozen || editingQuestions[question.question_id].gold_atoms.length <= 1" @click="removeGoldAtom(question.question_id, atomIndex)">删除</button>
+							</div>
+							<label>评分点 ID<input v-model="atom.atom_id" :disabled="saving || questionsFrozen" /></label>
+							<label>评分要求<textarea v-model="atom.requirement" rows="2" :disabled="saving || questionsFrozen"></textarea></label>
+							<label>标准答案<textarea v-model="atom.canonical_answer" rows="3" :disabled="saving || questionsFrozen"></textarea></label>
+							<label>允许等价表达（每行或逗号分隔一个）<textarea v-model="atom.accepted_variants_text" rows="2" :disabled="saving || questionsFrozen"></textarea></label>
+							<label>来源编号 source_ids（每行或逗号分隔一个）<textarea v-model="atom.source_ids_text" rows="2" :disabled="saving || questionsFrozen"></textarea></label>
+							<label>单位要求<input v-model="atom.required_unit" :disabled="saving || questionsFrozen" /></label>
+							<label>时间范围要求<input v-model="atom.required_time_scope" :disabled="saving || questionsFrozen" /></label>
+						</div>
+					</section>
+				</div>
+
+				<div v-else>
+					<h3>{{ question.question_text || "未设置题干" }}</h3>
+					<dl class="question-meta">
+						<div v-if="question.answer_format"><dt>答题格式</dt><dd>{{ question.answer_format }}</dd></div>
+						<div v-if="question.understanding_target"><dt>理解目标</dt><dd>{{ question.understanding_target }}</dd></div>
+						<div v-if="question.answer_options?.length"><dt>固定选项</dt><dd>{{ question.answer_options.join(" / ") }}</dd></div>
+					</dl>
+					<div class="gold-block">
+						<strong>隐藏标准答案 / 评分点（仅管理后台显示）</strong>
+						<div v-if="goldAtoms(question).length" class="gold-atom-list">
+							<div v-for="atom in goldAtoms(question)" :key="atom.atom_id || atom.canonical_answer" class="gold-atom-card">
+								<div class="atom-title">{{ atom.atom_id || "评分点" }}</div>
+								<p v-if="atom.requirement"><strong>评分要求：</strong>{{ atom.requirement }}</p>
+								<p v-if="atom.canonical_answer"><strong>标准答案：</strong>{{ atom.canonical_answer }}</p>
+								<p v-if="atom.accepted_variants?.length"><strong>等价表达：</strong>{{ atom.accepted_variants.join("；") }}</p>
+								<p v-if="atom.required_unit"><strong>单位：</strong>{{ atom.required_unit }}</p>
+								<p v-if="atom.required_time_scope"><strong>时间范围：</strong>{{ atom.required_time_scope }}</p>
+								<div v-if="atom.source_ids?.length" class="source-chip-row">
+									<span v-for="sourceId in atom.source_ids" :key="sourceId" class="source-chip">{{ sourceId }}</span>
+								</div>
+							</div>
+						</div>
+						<div v-else class="empty-inline">当前题目没有隐藏标准答案。</div>
+					</div>
+				</div>
+			</article>
+			<div v-if="!questions.length" class="empty-state">当前材料尚未保存 Q1-Q5。请先点击“自动生成题目”。</div>
+		</div>
 
 		<section class="raw-json-card">
 			<label for="static-table-json">ChatGPT 静态三栏表 rows JSON（参与者只会看到冻结版本）</label>
@@ -121,8 +194,8 @@
 	const selectedMaterial = ref("M1");
 	const questionPayload = ref(null);
 	const staticTablePayload = ref(null);
-	const rawQuestions = ref("");
 	const staticTableRowsJson = ref("");
+	const editingQuestions = ref({});
 	const loading = ref(false);
 	const savingAction = ref("");
 	const message = ref("");
@@ -131,6 +204,7 @@
 	const saving = computed(() => Boolean(savingAction.value));
 	const questions = computed(() => questionPayload.value?.questions || []);
 	const questionsFrozen = computed(() => questionPayload.value?.frozen === true);
+	const promptInfo = computed(() => questionPayload.value?.generation_prompts || null);
 
 	const showError = error => {
 		errorMessage.value = error.response?.data?.error || error.message || "操作失败，请稍后重试。";
@@ -144,6 +218,7 @@
 		loading.value = true;
 		message.value = "";
 		errorMessage.value = "";
+		editingQuestions.value = {};
 		try {
 			const [questionsResponse, staticResponse] = await Promise.all([
 				adminQuestions(props.token, selectedMaterial.value),
@@ -163,22 +238,6 @@
 
 	watch(selectedMaterial, loadQuestions, { immediate: true });
 
-	const saveGeneratedQuestions = async () => {
-		if (!rawQuestions.value.trim() || questionsFrozen.value) return;
-		savingAction.value = "generate";
-		message.value = "";
-		errorMessage.value = "";
-		try {
-			questionPayload.value = await adminGenerateQuestions(props.token, selectedMaterial.value, rawQuestions.value);
-			rawQuestions.value = "";
-			message.value = "已保存本次生成结果。";
-		} catch (error) {
-			showError(error);
-		} finally {
-			savingAction.value = "";
-		}
-	};
-
 	const autoGenerateQuestions = async () => {
 		if (questionsFrozen.value) return;
 		savingAction.value = "auto-generate";
@@ -186,8 +245,8 @@
 		errorMessage.value = "";
 		try {
 			questionPayload.value = await adminGenerateQuestions(props.token, selectedMaterial.value);
-			rawQuestions.value = "";
-			message.value = "题目已由系统自动生成并保存为未冻结版本，请检查后冻结。";
+			editingQuestions.value = {};
+			message.value = "题目已由系统自动生成并保存为未冻结版本，请检查题目、隐藏标准答案和 prompt 后冻结。";
 		} catch (error) {
 			showError(error);
 		} finally {
@@ -201,6 +260,7 @@
 		errorMessage.value = "";
 		try {
 			questionPayload.value = await adminFreezeQuestions(props.token, selectedMaterial.value);
+			editingQuestions.value = {};
 			message.value = "题目已冻结。";
 		} catch (error) {
 			showError(error);
@@ -216,6 +276,53 @@
 		try {
 			questionPayload.value = await adminUnfreezeQuestions(props.token, selectedMaterial.value);
 			message.value = "题目已解冻。";
+		} catch (error) {
+			showError(error);
+		} finally {
+			savingAction.value = "";
+		}
+	};
+
+	const startEditQuestion = question => {
+		if (questionsFrozen.value) return;
+		editingQuestions.value = {
+			...editingQuestions.value,
+			[question.question_id]: toQuestionDraft(question)
+		};
+	};
+
+	const cancelEditQuestion = questionId => {
+		const next = { ...editingQuestions.value };
+		delete next[questionId];
+		editingQuestions.value = next;
+	};
+
+	const addGoldAtom = questionId => {
+		const draft = editingQuestions.value[questionId];
+		if (!draft) return;
+		draft.gold_atoms.push(emptyGoldAtomDraft(questionId, draft.gold_atoms.length));
+	};
+
+	const removeGoldAtom = (questionId, atomIndex) => {
+		const draft = editingQuestions.value[questionId];
+		if (!draft || draft.gold_atoms.length <= 1) return;
+		draft.gold_atoms.splice(atomIndex, 1);
+	};
+
+	const saveQuestionEdit = async question => {
+		const draft = editingQuestions.value[question.question_id];
+		if (!draft || questionsFrozen.value) return;
+		savingAction.value = `save-question-${question.question_id}`;
+		message.value = "";
+		errorMessage.value = "";
+		try {
+			const nextQuestions = questions.value.map(item => item.question_id === question.question_id ? fromQuestionDraft(item, draft) : item);
+			questionPayload.value = await adminGenerateQuestions(props.token, selectedMaterial.value, {
+				...questionPayload.value,
+				questions: nextQuestions
+			});
+			cancelEditQuestion(question.question_id);
+			message.value = `${question.question_id} 已保存。`;
 		} catch (error) {
 			showError(error);
 		} finally {
@@ -270,16 +377,65 @@
 		}
 	};
 
-	const hiddenAnswerJson = question => {
-		const hiddenPayload = {
-			gold_atoms: question.gold_atoms || [],
-			canonical_answer: question.canonical_answer,
-			accepted_variants: question.accepted_variants,
-			source_evidence: question.source_evidence,
-			source_ids: question.source_ids
+	const goldAtoms = question => question.gold_atoms || [];
+
+	const toQuestionDraft = question => ({
+		question_type: question.question_type || "",
+		question_text: question.question_text || "",
+		answer_format: question.answer_format || "",
+		understanding_target: question.understanding_target || "",
+		answer_options_text: (question.answer_options || []).join("\n"),
+		gold_atoms: (question.gold_atoms?.length ? question.gold_atoms : [emptyGoldAtomDraft(question.question_id, 0)]).map((atom, index) => ({
+			...atom,
+			draft_id: `${question.question_id}-draft-${index}-${Date.now()}`,
+			atom_id: atom.atom_id || `${question.question_id}-A${index + 1}`,
+			requirement: atom.requirement || "",
+			canonical_answer: atom.canonical_answer || "",
+			accepted_variants_text: (atom.accepted_variants || []).join("\n"),
+			source_ids_text: (atom.source_ids || []).join("\n"),
+			required_unit: atom.required_unit || "",
+			required_time_scope: atom.required_time_scope || ""
+		}))
+	});
+
+	const fromQuestionDraft = (original, draft) => ({
+		...original,
+		question_type: draft.question_type,
+		question_text: draft.question_text,
+		answer_format: draft.answer_format,
+		understanding_target: draft.understanding_target,
+		answer_options: splitList(draft.answer_options_text),
+		gold_atoms: draft.gold_atoms.map((atom, index) => {
+			const { draft_id: draftId, accepted_variants_text: acceptedVariantsText, source_ids_text: sourceIdsText, ...rest } = atom;
+			void draftId;
+			return {
+				...rest,
+				atom_id: rest.atom_id || `${original.question_id}-A${index + 1}`,
+				accepted_variants: splitList(acceptedVariantsText),
+				source_ids: splitList(sourceIdsText)
+			};
+		})
+	});
+
+	function emptyGoldAtomDraft(questionId, index) {
+		return {
+			draft_id: `${questionId}-new-${index}-${Date.now()}`,
+			atom_id: `${questionId}-A${index + 1}`,
+			requirement: "",
+			canonical_answer: "",
+			accepted_variants_text: "",
+			source_ids_text: "",
+			required_unit: "",
+			required_time_scope: ""
 		};
-		return JSON.stringify(hiddenPayload, null, 2);
-	};
+	}
+
+	function splitList(value) {
+		return String(value || "")
+			.split(/[\n,，]/)
+			.map(item => item.trim())
+			.filter(Boolean);
+	}
 </script>
 
 <style scoped>
@@ -288,8 +444,9 @@
 	h2 { margin: 0 0 8px; font-size: 28px; color: #172033; }
 	p { margin: 0; color: #64748b; }
 	.material-select { display: grid; gap: 8px; min-width: 280px; font-weight: 800; color: #334155; }
-	select, textarea { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 12px; font: inherit; background: #ffffff; }
-	textarea { width: 100%; box-sizing: border-box; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; resize: vertical; }
+	select, textarea, input { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 12px; font: inherit; background: #ffffff; }
+	textarea, input { width: 100%; box-sizing: border-box; }
+	textarea { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 13px; resize: vertical; }
 	.status-card { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #f8fafc; }
 	.status-card div { display: grid; gap: 4px; }
 	.status-card strong { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; }
@@ -297,16 +454,32 @@
 	.frozen { color: #b45309 !important; }
 	.unfrozen { color: #047857 !important; }
 	.questions-list { display: grid; gap: 14px; }
-	.question-card, .raw-json-card, .empty-state, .loading-state, .notice { border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #ffffff; }
-	.question-card header { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+	.question-card, .question-actions-card, .prompt-card, .raw-json-card, .empty-state, .loading-state, .notice { border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #ffffff; }
+	.question-actions-card, .prompt-card { display: grid; gap: 14px; }
+	.question-card header, .question-actions-card { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+	.question-card header > div:first-child { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+	.card-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 	.question-id, .question-type { border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 900; }
 	.question-id { background: #dbeafe; color: #1d4ed8; }
 	.question-type { background: #f1f5f9; color: #334155; }
 	h3 { margin: 0 0 10px; font-size: 18px; line-height: 1.45; color: #172033; }
-	.target { margin-bottom: 12px; }
-	.gold-block, .raw-json-card { display: grid; gap: 12px; }
-	.gold-block strong, .raw-json-card label { font-weight: 900; color: #334155; }
-	pre { max-height: 260px; overflow: auto; margin: 0; border-radius: 12px; padding: 12px; background: #0f172a; color: #e2e8f0; font-size: 12px; white-space: pre-wrap; }
+	.question-meta { display: grid; gap: 8px; margin: 0 0 14px; }
+	.question-meta div { display: grid; gap: 4px; }
+	dt { font-weight: 900; color: #334155; }
+	dd { margin: 0; color: #475569; line-height: 1.6; }
+	.gold-block, .raw-json-card, .question-edit-form, .atom-editor, .prompt-grid { display: grid; gap: 12px; }
+	.gold-block strong, .raw-json-card label, .question-edit-form label, .atom-editor strong { font-weight: 900; color: #334155; }
+	.question-edit-form label, .atom-edit-card label { display: grid; gap: 6px; }
+	.atom-editor header, .atom-edit-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+	.gold-atom-list { display: grid; gap: 10px; }
+	.gold-atom-card, .atom-edit-card, .prompt-note { border: 1px solid #e2e8f0; border-radius: 14px; padding: 12px; background: #f8fafc; display: grid; gap: 8px; }
+	.gold-atom-card p { color: #334155; }
+	.atom-title { font-weight: 900; color: #1d4ed8; }
+	.source-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+	.source-chip { border-radius: 999px; padding: 3px 8px; background: #e0f2fe; color: #0369a1; font-size: 12px; font-weight: 900; }
+	.empty-inline { color: #64748b; }
+	.prompt-card summary { cursor: pointer; font-weight: 900; color: #334155; margin-bottom: 8px; }
+	pre { max-height: 360px; overflow: auto; margin: 0; border-radius: 12px; padding: 12px; background: #0f172a; color: #e2e8f0; font-size: 12px; white-space: pre-wrap; }
 	.action-row { display: flex; flex-wrap: wrap; gap: 10px; }
 	button { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 14px; background: #ffffff; color: #172033; font-weight: 900; cursor: pointer; }
 	button.primary { border-color: #2563eb; background: #2563eb; color: #ffffff; }
@@ -314,5 +487,9 @@
 	.notice.success { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
 	.notice.error { border-color: #fecaca; background: #fff7f7; color: #991b1b; }
 	.empty-state, .loading-state { color: #64748b; text-align: center; }
-	@media (max-width: 760px) { .panel-header { display: grid; } .material-select { min-width: 0; } }
+	@media (max-width: 760px) {
+		.panel-header, .question-actions-card, .question-card header { display: grid; }
+		.material-select { min-width: 0; }
+		.card-actions { justify-content: flex-start; }
+	}
 </style>

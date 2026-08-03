@@ -17,6 +17,8 @@ from .storage import utc_now_iso
 
 MAX_ARTICLE_PROMPT_CHARS = 4500
 COMPACT_ARTICLE_PROMPT_CHARS = 1800
+QUESTION_GENERATION_SYSTEM_PROMPT = "You generate bilingual comparison-reading experiment questions. Return JSON only."
+ANSWER_PROMPT_NOTE = "当前系统在同一次模型请求中共同生成参与者题目和管理员隐藏标准答案；没有单独的第二次答案生成 prompt。"
 MATERIAL_SNAPSHOT_DIR = Path(__file__).resolve().parent / "material_snapshots"
 
 
@@ -171,7 +173,7 @@ def normalize_generated_questions(raw, material_id, version):
     ids = [item.get("question_id") for item in questions]
     if ids != ["Q1", "Q2", "Q3", "Q4", "Q5"]:
         raise ValueError("Generated questions must contain Q1-Q5 in order")
-    return {
+    normalized = {
         "material_id": material_id,
         "version": int(version),
         "frozen": False,
@@ -179,6 +181,9 @@ def normalize_generated_questions(raw, material_id, version):
         "prompt_version": QUESTION_PROMPT_VERSION,
         "questions": questions,
     }
+    if isinstance(parsed.get("generation_prompts"), dict):
+        normalized["generation_prompts"] = parsed["generation_prompts"]
+    return normalized
 
 
 
@@ -277,16 +282,14 @@ def generate_questions_from_material(material, version, llm_client=None):
         if _uses_openfactbook_material(material)
         else MAX_ARTICLE_PROMPT_CHARS
     )
+    prompt = build_question_prompt(
+        material,
+        left_article,
+        right_article,
+        max_article_chars=initial_max_chars,
+    )
     try:
-        raw_questions = _chat_question_generation(
-            client,
-            build_question_prompt(
-                material,
-                left_article,
-                right_article,
-                max_article_chars=initial_max_chars,
-            ),
-        )
+        raw_questions = _chat_question_generation(client, prompt)
     except Exception as error:
         if not _is_transient_llm_generation_error(error):
             raise
@@ -294,33 +297,48 @@ def generate_questions_from_material(material, version, llm_client=None):
             raw_questions = _build_local_draft_questions(material, left_article, right_article)
         else:
             try:
-                raw_questions = _chat_question_generation(
-                    client,
-                    build_question_prompt(
-                        material,
-                        left_article,
-                        right_article,
-                        max_article_chars=COMPACT_ARTICLE_PROMPT_CHARS,
-                    ),
+                prompt = build_question_prompt(
+                    material,
+                    left_article,
+                    right_article,
+                    max_article_chars=COMPACT_ARTICLE_PROMPT_CHARS,
                 )
+                raw_questions = _chat_question_generation(client, prompt)
             except Exception as retry_error:
                 if not _is_transient_llm_generation_error(retry_error):
                     raise
                 raw_questions = _build_local_draft_questions(material, left_article, right_article)
-    return normalize_generated_questions(raw_questions, material.get("id", ""), version)
+    normalized = normalize_generated_questions(raw_questions, material.get("id", ""), version)
+    normalized.setdefault("generation_prompts", _generation_prompt_metadata(prompt))
+    return normalized
 
 
 def _chat_question_generation(client, prompt):
     return client.chat_json([
         {
             "role": "system",
-            "content": "You generate bilingual comparison-reading experiment questions. Return JSON only.",
+            "content": QUESTION_GENERATION_SYSTEM_PROMPT,
         },
         {
             "role": "user",
             "content": prompt,
         },
     ])
+
+
+
+def _generation_prompt_metadata(user_prompt):
+    prompt_pair = {
+        "system": QUESTION_GENERATION_SYSTEM_PROMPT,
+        "user": user_prompt,
+    }
+    return {
+        "question_prompt": dict(prompt_pair),
+        "answer_prompt": {
+            **prompt_pair,
+            "note": ANSWER_PROMPT_NOTE,
+        },
+    }
 
 
 def _is_transient_llm_generation_error(error):
