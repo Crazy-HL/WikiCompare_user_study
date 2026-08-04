@@ -7,6 +7,7 @@ import tornado.web
 
 from .defaults import DEFAULT_MATERIALS
 from .question_generation import generate_questions_from_material, normalize_generated_questions
+from .static_table_generation import generate_static_table_from_material
 from .storage import ExperimentStorage
 
 ADMIN_TOKENS = set()
@@ -278,6 +279,25 @@ class AdminStaticTableHandler(JsonHandler, AdminMixin):
             self.write_error_json(str(error), status=400)
 
 
+class AdminStaticTableGenerateHandler(JsonHandler, AdminMixin):
+    def post(self):
+        if not self.require_admin():
+            return
+        body = self.read_json()
+        material_id = body.get("materialId", "")
+        material = next((item for item in DEFAULT_MATERIALS if item["id"] == material_id), None)
+        if not material:
+            self.write_error_json(f"Unknown material id: {material_id}", status=404)
+            return
+        try:
+            generated = generate_static_table_from_material(material)
+            self.write_json(storage().save_static_table(material_id, generated.get("rows")))
+        except ValueError as error:
+            self.write_error_json(str(error), status=400)
+        except Exception as error:
+            self.write_error_json(f"Static table generation failed: {error}", status=502)
+
+
 class AdminStaticTableFreezeHandler(JsonHandler, AdminMixin):
     frozen = True
 
@@ -310,6 +330,7 @@ def experiment_routes():
         (r"/api/admin/questions/freeze", AdminQuestionFreezeHandler),
         (r"/api/admin/questions/unfreeze", AdminQuestionUnfreezeHandler),
         (r"/api/admin/questions", AdminQuestionsHandler),
+        (r"/api/admin/static-table/generate", AdminStaticTableGenerateHandler),
         (r"/api/admin/static-table/freeze", AdminStaticTableFreezeHandler),
         (r"/api/admin/static-table/unfreeze", AdminStaticTableUnfreezeHandler),
         (r"/api/admin/static-table", AdminStaticTableHandler),

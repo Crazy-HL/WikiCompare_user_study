@@ -503,6 +503,41 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         finally:
             os.environ.pop("EXPERIMENT_CORS_ORIGIN", None)
 
+    def test_admin_generate_static_table_saves_chatgpt_rows_for_review_and_freeze(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        generated_rows = [
+            {"id": "R1", "label": "GDP", "left": {"value": "1"}, "right": {"value": "2"}},
+            {"id": "R2", "label": "Population", "left": {"value": "3"}, "right": {"value": "4"}},
+        ]
+
+        with mock.patch("experiment.handlers.generate_static_table_from_material", return_value={"rows": generated_rows}):
+            generated = self.post_json(
+                "/api/admin/static-table/generate",
+                {"materialId": "M1"},
+                headers={"X-Admin-Token": token},
+            )
+
+        assert generated.code == 200
+        generated_payload = json.loads(generated.body)
+        assert generated_payload["rows"] == generated_rows
+        assert generated_payload["frozen"] is False
+        assert generated_payload["version"] == 1
+
+        admin_get = self.fetch("/api/admin/static-table?materialId=M1", headers={"X-Admin-Token": token})
+        assert admin_get.code == 200
+        assert json.loads(admin_get.body)["rows"] == generated_rows
+
+        public_before_freeze = self.fetch("/api/experiment/static-table?materialId=M1")
+        assert public_before_freeze.code == 400
+
+        frozen = self.post_json("/api/admin/static-table/freeze", {"materialId": "M1"}, headers={"X-Admin-Token": token})
+        assert frozen.code == 200
+
+        public_after_freeze = self.fetch("/api/experiment/static-table?materialId=M1")
+        assert public_after_freeze.code == 200
+        assert json.loads(public_after_freeze.body)["rows"] == generated_rows
+
     def test_static_tables_admin_and_participant_freeze_flow(self):
         unfrozen_public = self.fetch("/api/experiment/static-table?materialId=M1")
         assert unfrozen_public.code == 400

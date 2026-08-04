@@ -23,6 +23,7 @@ export const adminUnfreezeQuestions = (token, materialId) => postJson("api/admin
 export const adminGenerateQuestions = (token, materialId, rawQuestions) => postJson("api/admin/questions/generate", { materialId, ...(rawQuestions === undefined ? {} : { rawQuestions }) }, adminHeaders(token));
 export const adminStaticTable = (token, materialId) => axios.get(apiUrl("api/admin/static-table"), { ...adminHeaders(token), params: { materialId } }).then(response => response.data);
 export const adminSaveStaticTable = (token, materialId, rows) => postJson("api/admin/static-table", { materialId, rows }, adminHeaders(token));
+export const adminGenerateStaticTable = (token, materialId) => postJson("api/admin/static-table/generate", { materialId }, adminHeaders(token));
 export const adminFreezeStaticTable = (token, materialId) => postJson("api/admin/static-table/freeze", { materialId }, adminHeaders(token));
 export const adminUnfreezeStaticTable = (token, materialId) => postJson("api/admin/static-table/unfreeze", { materialId }, adminHeaders(token));
 export const adminDownloadExport = (token, exportPath) => axios.get(apiUrl(exportPath), { ...adminHeaders(token), responseType: "blob" }).then(response => response.data);

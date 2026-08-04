@@ -142,26 +142,55 @@
 			<div v-if="!questions.length" class="empty-state">当前材料尚未保存 Q1-Q5。请先点击“自动生成题目”。</div>
 		</div>
 
-		<section class="raw-json-card">
-			<label for="static-table-json">ChatGPT 静态三栏表 rows JSON（参与者只会看到冻结版本）</label>
-			<textarea
-				id="static-table-json"
-				v-model="staticTableRowsJson"
-				rows="12"
-				placeholder='[{"id":"r1","label":"比较项","left":{"value":"左侧值"},"right":{"value":"右侧值"}}]'
-				:disabled="saving || staticTablePayload?.frozen"></textarea>
+		<section class="static-table-card">
+			<header>
+				<div>
+					<h3>ChatGPT 静态三栏表真实输出</h3>
+					<p>这里直接展示系统根据当前材料生成给 ChatGPT 条件参与者看的三栏表。保存并冻结后，参与者只会看到这个冻结版本。</p>
+				</div>
+			</header>
 			<div class="action-row">
-				<button type="button" class="primary" :disabled="saving || staticTablePayload?.frozen || !staticTableRowsJson.trim()" @click="saveStaticTableRows">
-					{{ savingAction === "save-static" ? "正在保存..." : "保存静态表" }}
+				<button type="button" class="primary" :disabled="saving || staticTablePayload?.frozen" @click="generateStaticTableRows">
+					{{ savingAction === "generate-static" ? "正在生成..." : staticTableDraftRows.length ? "重新生成 ChatGPT 三栏表" : "生成 ChatGPT 三栏表" }}
 				</button>
-				<button type="button" :disabled="saving || staticTablePayload?.frozen" @click="freezeStaticTableRows">
+				<button type="button" :disabled="saving || staticTablePayload?.frozen" @click="addStaticTableRow">新增一行</button>
+				<button type="button" :disabled="saving || staticTablePayload?.frozen || !staticTableDraftRows.length" @click="saveStaticTableRows">
+					{{ savingAction === "save-static" ? "正在保存..." : "保存表格修改" }}
+				</button>
+				<button type="button" :disabled="saving || staticTablePayload?.frozen || !staticTableDraftRows.length" @click="freezeStaticTableRows">
 					{{ savingAction === "freeze-static" ? "正在冻结..." : "冻结静态表" }}
 				</button>
 				<button type="button" :disabled="saving || !staticTablePayload?.frozen" @click="unfreezeStaticTableRows">
 					{{ savingAction === "unfreeze-static" ? "正在解冻..." : "解冻静态表" }}
 				</button>
 			</div>
-			<pre v-if="staticTablePayload?.rows?.length">{{ JSON.stringify(staticTablePayload.rows, null, 2) }}</pre>
+
+			<div v-if="!staticTableDraftRows.length" class="empty-state">当前材料尚未生成 ChatGPT 静态三栏表。请点击“生成 ChatGPT 三栏表”。</div>
+			<div v-else class="static-table-wrapper">
+				<table class="static-preview-table">
+					<thead>
+						<tr>
+							<th>左侧</th>
+							<th>比较项</th>
+							<th>右侧</th>
+							<th v-if="!staticTablePayload?.frozen">操作</th>
+						</tr>
+					</thead>
+					<tbody>
+						<tr v-for="(row, index) in staticTableDraftRows" :key="row.draft_id || row.id || index">
+							<td v-if="staticTablePayload?.frozen">{{ sideValue(row, "left") }}</td>
+							<td v-else><textarea v-model="row.left.value" rows="3" :disabled="saving"></textarea></td>
+							<td class="label-cell" v-if="staticTablePayload?.frozen">{{ row.label || `比较项 ${index + 1}` }}</td>
+							<td v-else><input v-model="row.label" :disabled="saving" /></td>
+							<td v-if="staticTablePayload?.frozen">{{ sideValue(row, "right") }}</td>
+							<td v-else><textarea v-model="row.right.value" rows="3" :disabled="saving"></textarea></td>
+							<td v-if="!staticTablePayload?.frozen" class="row-actions">
+								<button type="button" :disabled="saving || staticTableDraftRows.length <= 1" @click="removeStaticTableRow(index)">删除</button>
+							</td>
+						</tr>
+					</tbody>
+				</table>
+			</div>
 		</section>
 	</section>
 </template>
@@ -172,6 +201,7 @@
 		adminFreezeQuestions,
 		adminFreezeStaticTable,
 		adminGenerateQuestions,
+		adminGenerateStaticTable,
 		adminQuestions,
 		adminSaveStaticTable,
 		adminStaticTable,
@@ -194,7 +224,7 @@
 	const selectedMaterial = ref("M1");
 	const questionPayload = ref(null);
 	const staticTablePayload = ref(null);
-	const staticTableRowsJson = ref("");
+	const staticTableDraftRows = ref([]);
 	const editingQuestions = ref({});
 	const loading = ref(false);
 	const savingAction = ref("");
@@ -211,7 +241,7 @@
 	};
 
 	const syncStaticTableEditor = () => {
-		staticTableRowsJson.value = JSON.stringify(staticTablePayload.value?.rows || [], null, 2);
+		staticTableDraftRows.value = (staticTablePayload.value?.rows || []).map(toStaticTableRowDraft);
 	};
 
 	const loadQuestions = async () => {
@@ -330,21 +360,46 @@
 		}
 	};
 
-	const saveStaticTableRows = async () => {
-		if (!staticTableRowsJson.value.trim() || staticTablePayload.value?.frozen) return;
-		savingAction.value = "save-static";
+	const generateStaticTableRows = async () => {
+		if (staticTablePayload.value?.frozen) return;
+		savingAction.value = "generate-static";
 		message.value = "";
 		errorMessage.value = "";
 		try {
-			const rows = JSON.parse(staticTableRowsJson.value);
-			staticTablePayload.value = await adminSaveStaticTable(props.token, selectedMaterial.value, rows);
+			staticTablePayload.value = await adminGenerateStaticTable(props.token, selectedMaterial.value);
 			syncStaticTableEditor();
-			message.value = "静态表已保存。";
+			message.value = "ChatGPT 静态三栏表已生成，请检查真实表格内容后冻结。";
 		} catch (error) {
 			showError(error);
 		} finally {
 			savingAction.value = "";
 		}
+	};
+
+	const saveStaticTableRows = async () => {
+		if (!staticTableDraftRows.value.length || staticTablePayload.value?.frozen) return;
+		savingAction.value = "save-static";
+		message.value = "";
+		errorMessage.value = "";
+		try {
+			const rows = staticTableDraftRows.value.map(fromStaticTableRowDraft);
+			staticTablePayload.value = await adminSaveStaticTable(props.token, selectedMaterial.value, rows);
+			syncStaticTableEditor();
+			message.value = "静态三栏表修改已保存。";
+		} catch (error) {
+			showError(error);
+		} finally {
+			savingAction.value = "";
+		}
+	};
+
+	const addStaticTableRow = () => {
+		staticTableDraftRows.value.push(emptyStaticTableRowDraft(staticTableDraftRows.value.length));
+	};
+
+	const removeStaticTableRow = index => {
+		if (staticTableDraftRows.value.length <= 1) return;
+		staticTableDraftRows.value.splice(index, 1);
 	};
 
 	const freezeStaticTableRows = async () => {
@@ -417,6 +472,44 @@
 		})
 	});
 
+	const toStaticTableRowDraft = (row, index) => ({
+		...row,
+		draft_id: `${row.id || "row"}-${index}-${Date.now()}`,
+		id: row.id || `R${index + 1}`,
+		label: row.label || "",
+		left: { value: sideValue(row, "left") === "—" ? "" : sideValue(row, "left") },
+		right: { value: sideValue(row, "right") === "—" ? "" : sideValue(row, "right") }
+	});
+
+	const fromStaticTableRowDraft = (row, index) => ({
+		id: row.id || `R${index + 1}`,
+		label: row.label || `比较项 ${index + 1}`,
+		left: { value: row.left?.value || "材料未明确说明" },
+		right: { value: row.right?.value || "材料未明确说明" }
+	});
+
+	const emptyStaticTableRowDraft = index => ({
+		draft_id: `static-row-${index}-${Date.now()}`,
+		id: `R${index + 1}`,
+		label: "",
+		left: { value: "" },
+		right: { value: "" }
+	});
+
+	const stringifyValue = value => {
+		if (value === null || value === undefined || value === "") return "—";
+		if (["string", "number", "boolean"].includes(typeof value)) return String(value);
+		if (Array.isArray(value)) return value.map(stringifyValue).join("; ");
+		if (value.display || value.rawText || value.raw || value.value) return stringifyValue(value.display || value.rawText || value.raw || value.value);
+		return JSON.stringify(value);
+	};
+
+	const sideValue = (row, side) => {
+		const sideData = row?.visualization?.[side] || row?.[side] || {};
+		if (Array.isArray(sideData.values) && sideData.values.length) return sideData.values.map(value => stringifyValue(value)).join("; ");
+		return stringifyValue(sideData.raw || sideData.value || sideData.text || row?.[`${side}Value`]);
+	};
+
 	function emptyGoldAtomDraft(questionId, index) {
 		return {
 			draft_id: `${questionId}-new-${index}-${Date.now()}`,
@@ -454,7 +547,7 @@
 	.frozen { color: #b45309 !important; }
 	.unfrozen { color: #047857 !important; }
 	.questions-list { display: grid; gap: 14px; }
-	.question-card, .question-actions-card, .prompt-card, .raw-json-card, .empty-state, .loading-state, .notice { border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #ffffff; }
+	.question-card, .question-actions-card, .prompt-card, .static-table-card, .empty-state, .loading-state, .notice { border: 1px solid #dbe4ee; border-radius: 16px; padding: 16px; background: #ffffff; }
 	.question-actions-card, .prompt-card { display: grid; gap: 14px; }
 	.question-card header, .question-actions-card { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 	.question-card header > div:first-child { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -467,8 +560,8 @@
 	.question-meta div { display: grid; gap: 4px; }
 	dt { font-weight: 900; color: #334155; }
 	dd { margin: 0; color: #475569; line-height: 1.6; }
-	.gold-block, .raw-json-card, .question-edit-form, .atom-editor, .prompt-grid { display: grid; gap: 12px; }
-	.gold-block strong, .raw-json-card label, .question-edit-form label, .atom-editor strong { font-weight: 900; color: #334155; }
+	.gold-block, .static-table-card, .question-edit-form, .atom-editor, .prompt-grid { display: grid; gap: 12px; }
+	.gold-block strong, .static-table-card label, .question-edit-form label, .atom-editor strong { font-weight: 900; color: #334155; }
 	.question-edit-form label, .atom-edit-card label { display: grid; gap: 6px; }
 	.atom-editor header, .atom-edit-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 	.gold-atom-list { display: grid; gap: 10px; }
@@ -480,6 +573,16 @@
 	.empty-inline { color: #64748b; }
 	.prompt-card summary { cursor: pointer; font-weight: 900; color: #334155; margin-bottom: 8px; }
 	pre { max-height: 360px; overflow: auto; margin: 0; border-radius: 12px; padding: 12px; background: #0f172a; color: #e2e8f0; font-size: 12px; white-space: pre-wrap; }
+
+	.static-table-card { display: grid; gap: 14px; }
+	.static-table-wrapper { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 14px; }
+	.static-preview-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+	.static-preview-table th, .static-preview-table td { border-bottom: 1px solid #e2e8f0; padding: 10px; text-align: left; vertical-align: top; }
+	.static-preview-table th { background: #f8fafc; color: #334155; font-weight: 900; }
+	.static-preview-table tr:last-child td { border-bottom: 0; }
+	.static-preview-table textarea { min-width: 220px; }
+	.label-cell { font-weight: 900; color: #172033; }
+	.row-actions { width: 90px; }
 	.action-row { display: flex; flex-wrap: wrap; gap: 10px; }
 	button { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 14px; background: #ffffff; color: #172033; font-weight: 900; cursor: pointer; }
 	button.primary { border-color: #2563eb; background: #2563eb; color: #ffffff; }
