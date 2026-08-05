@@ -102,7 +102,8 @@
 		CHART_COLORS,
 		CHART_REMAINDER_COLOR,
 		PAPER_PIE_COLORS,
-		categoryColor
+		categoryColor,
+		colorFromMap
 	} = require("@/js/chartTheme");
 	const {
 		SYMLOG_CONSTANT,
@@ -265,6 +266,8 @@
 			const colors = CHART_COLORS;
 			const paperPieColors = PAPER_PIE_COLORS;
 			const remainderColor = CHART_REMAINDER_COLOR;
+			const pieColorFor = (name, index) =>
+				colorFromMap(props.categoryColors, name) || paperPieColors[index % paperPieColors.length];
 
 			const isYearEntry = value => {
 				if (typeof value !== "string") return false;
@@ -455,7 +458,7 @@
 								...pieData.value[0],
 								value: Math.min(100, Math.max(0, pieData.value[0].value)),
 								displayValue: pieData.value[0].value,
-								color: paperPieColors[0],
+								color: pieColorFor(pieData.value[0].name, 0),
 								isMainValue: true
 							},
 							{
@@ -469,7 +472,7 @@
 					  ]
 					: pieData.value.map((d, i) => ({
 							...d,
-							color: paperPieColors[i % paperPieColors.length],
+							color: pieColorFor(d.name, i),
 							isMainValue: true
 					  }));
 				const pie = d3

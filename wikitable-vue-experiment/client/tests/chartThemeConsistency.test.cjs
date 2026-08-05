@@ -75,11 +75,11 @@ assert(
 );
 const pieOptionSource = fullChartComponentSource.slice(pieOptionStart, pieOptionEnd);
 assert(
-	pieOptionSource.includes("itemStyle: pieSliceStyle(PIE_COLORS[0])") &&
-		pieOptionSource.includes("itemStyle: pieSliceStyle(PIE_COLORS[index % PIE_COLORS.length])") &&
+	pieOptionSource.includes("itemStyle: pieSliceStyle(pieColorFor(pieCategoryLabel(data[0], 0), 0))") &&
+		pieOptionSource.includes("itemStyle: pieSliceStyle(pieColorFor(categoryLabel, index))") &&
 		!pieOptionSource.includes("itemStyle: { color: COLORS[0] }") &&
 		!pieOptionSource.includes("itemStyle: { color: COLORS[index % COLORS.length] }"),
-	"Expanded pie series colors should match thumbnail pie colors instead of the generic chart palette"
+	"Expanded pie series colors should use the shared row category color map before falling back to the paper palette"
 );
 
 const simplePieStart = simpleChartSource.indexOf("const renderPieChart = () => {");
@@ -90,9 +90,10 @@ assert(
 );
 const simplePieSource = simpleChartSource.slice(simplePieStart, simplePieEnd);
 assert(
-	simplePieSource.includes("color: paperPieColors[i % paperPieColors.length]") &&
+	simplePieSource.includes("color: pieColorFor(d.name, i)") &&
+		simpleChartSource.includes("colorFromMap(props.categoryColors, name) || paperPieColors[index % paperPieColors.length]") &&
 		!simplePieSource.includes("d.color || paperPieColors"),
-	"Thumbnail pie slices should use the same fixed paper palette that expanded pie slices use"
+	"Thumbnail pie slices should use the shared row category color map before falling back to the paper palette"
 );
 assert(
 	pieOptionSource.includes('icon: "circle"') &&

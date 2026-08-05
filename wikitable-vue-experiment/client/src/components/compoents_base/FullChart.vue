@@ -36,13 +36,15 @@
 	import * as echarts from "echarts";
 	const {
 		formatChartNumber,
+		pieLegendLabelForPoint,
 		shortValueText
 	} = require("@/js/chartValueDisplay");
 	const {
 		CHART_COLORS,
 		CHART_REMAINDER_COLOR,
 		PAPER_PIE_COLORS,
-		categoryColor
+		categoryColor,
+		colorFromMap
 	} = require("@/js/chartTheme");
 	const {
 		trendChange,
@@ -69,6 +71,10 @@
 		scaleContext: {
 			type: Object,
 			default: null
+		},
+		categoryColors: {
+			type: Object,
+			default: () => ({})
 		}
 	});
 
@@ -82,6 +88,8 @@
 	const COLORS = CHART_COLORS;
 	const PIE_COLORS = PAPER_PIE_COLORS;
 	const REMAINDER_COLOR = CHART_REMAINDER_COLOR;
+	const pieColorFor = (name, index) =>
+		colorFromMap(props.categoryColors, name) || PIE_COLORS[index % PIE_COLORS.length];
 	const pieSliceStyle = (color, opacity = 0.92) => ({
 		color,
 		borderColor: "#ffffff",
@@ -369,14 +377,19 @@
 	const pieOption = () => {
 		const data = usablePieData.value;
 		const isSingle = data.length === 1;
+		const pieCategoryLabel = (item, index) =>
+			pieLegendLabelForPoint(item, index, {
+				fallback: props.fieldKey,
+				total: data.length
+			});
 		const seriesData = isSingle
 			? [
 					{
-						name: data[0].label,
+						name: pieCategoryLabel(data[0], 0),
 						value: Math.max(0, Math.min(100, data[0].value)),
 						display: data[0].display,
 						shortDisplay: shortValueDisplay(data[0]),
-						itemStyle: pieSliceStyle(PIE_COLORS[0])
+						itemStyle: pieSliceStyle(pieColorFor(pieCategoryLabel(data[0], 0), 0))
 					},
 					{
 						name: "剩余",
@@ -387,13 +400,16 @@
 						itemStyle: pieSliceStyle(REMAINDER_COLOR, 0.5)
 					}
 			  ]
-			: data.map((item, index) => ({
-					name: item.label,
-					value: item.value,
-					display: item.display,
-					shortDisplay: shortValueDisplay(item),
-					itemStyle: pieSliceStyle(PIE_COLORS[index % PIE_COLORS.length])
-			  }));
+			: data.map((item, index) => {
+					const categoryLabel = pieCategoryLabel(item, index);
+					return {
+						name: categoryLabel,
+						value: item.value,
+						display: item.display,
+						shortDisplay: shortValueDisplay(item),
+						itemStyle: pieSliceStyle(pieColorFor(categoryLabel, index))
+					};
+			  });
 		return {
 			tooltip: {
 				trigger: "item",
@@ -541,7 +557,7 @@
 							}
 						],
 						itemStyle: {
-							color: categoryColor(item.label, index),
+							color: categoryColor(item.label, index, props.categoryColors),
 							borderRadius:
 								index === 0
 									? [0, 0, 4, 4]

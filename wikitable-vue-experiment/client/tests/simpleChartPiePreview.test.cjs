@@ -31,9 +31,10 @@ assert(
 assert(
 	source.includes("PAPER_PIE_COLORS") &&
 		source.includes("paperPieColors") &&
-		source.includes("color: paperPieColors[i % paperPieColors.length]") &&
+		source.includes("colorFromMap(props.categoryColors, name) || paperPieColors[index % paperPieColors.length]") &&
+		source.includes("color: pieColorFor(d.name, i)") &&
 		!source.includes("d.color || paperPieColors[i % paperPieColors.length]"),
-	"Pie previews should use the paper-aligned muted palette directly instead of category fallback colors"
+	"Pie previews should use shared row colors before falling back to the paper-aligned muted palette"
 );
 assert(
 	source.includes('selectAll(".pie-legend-dot")') &&

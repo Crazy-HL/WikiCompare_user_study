@@ -75,6 +75,7 @@
 						:visualization="chartVisualization(row)"
 						:fieldKey="row.label"
 						:yDomain="chartDomain(row)"
+						:categoryColors="rowCategoryColorMap(row)"
 						:side="'left'"
 						:scaleContext="adaptiveScaleContext(row)" />
 					</div>
@@ -160,6 +161,7 @@
 						:visualization="chartVisualization(row)"
 						:fieldKey="row.label"
 						:yDomain="chartDomain(row)"
+						:categoryColors="rowCategoryColorMap(row)"
 						:side="'right'"
 						:scaleContext="adaptiveScaleContext(row)" />
 				</div>
@@ -191,6 +193,7 @@
 						:type="currentChart.type"
 						:visualization="currentChart.visualization"
 						:fieldKey="currentChart.fieldKey"
+						:categoryColors="currentChart.categoryColors"
 						:side="currentChart.side"
 						:scaleContext="currentChart.scaleContext" />
 				</div>
@@ -210,6 +213,7 @@
 		canonicalBaseChartItems,
 		formatValueDisplay,
 		normalizePreviewChartItems,
+		pieLegendLabelForPoint,
 	} = require("@/js/chartValueDisplay");
 	const {
 		PREVIEW_DRAWABLE_HEIGHT,
@@ -220,6 +224,11 @@
 		isCreditRatingRow,
 	} = require("@/js/creditRatingDisplay");
 	const { buildComparisonDisplayPlan } = require("@/js/comparisonDisplayPlan");
+	const {
+		FALLBACK_CATEGORY_COLORS,
+		PAPER_PIE_COLORS,
+		buildCategoryColorMap,
+	} = require("@/js/chartTheme");
 
 	defineProps({
 		div1RawData: Object,
@@ -242,7 +251,8 @@
 		row: null,
 		titles: {},
 		scaleContext: null,
-		side: ""
+		side: "",
+		categoryColors: {}
 	});
 	let fullChartRenderToken = 0;
 
@@ -257,7 +267,8 @@
 		row: null,
 		titles: {},
 		scaleContext: null,
-		side: ""
+		side: "",
+		categoryColors: {}
 	});
 
 	const deferFullChartRender = callback => {
@@ -310,6 +321,38 @@
 			});
 		});
 		return normalizePreviewChartItems(entries, chartDataType(row));
+	};
+
+	const rowCategoryLabel = (row, value, index, total) => {
+		if (chartVisualization(row) === "pie-chart") {
+			return pieLegendLabelForPoint(value, index, {
+				fallback: row.label,
+				total
+			});
+		}
+		return value.label || value.raw || value.display || `${row.label || "项目"} ${index + 1}`;
+	};
+
+	const rowCategoryColorMap = row => {
+		const visualization = chartVisualization(row);
+		if (!["pie-chart", "stacked-chart"].includes(visualization)) return {};
+		const labels = [];
+		const valuesBySide = normalizedRowPreviewValues(row).reduce((groups, value) => {
+			const side = value.side || "";
+			groups[side] = groups[side] || [];
+			groups[side].push(value);
+			return groups;
+		}, {});
+		["left", "right"].forEach(side => {
+			const sideValues = valuesBySide[side] || [];
+			sideValues.forEach((value, index) => {
+				labels.push(rowCategoryLabel(row, value, index, sideValues.length));
+			});
+		});
+		const palette = visualization === "pie-chart"
+			? PAPER_PIE_COLORS
+			: FALLBACK_CATEGORY_COLORS;
+		return buildCategoryColorMap(labels, palette);
 	};
 
 	const canonicalFullChartField = (row, side) => {
@@ -646,7 +689,8 @@
 				row: null,
 				titles: {},
 				scaleContext,
-				side
+				side,
+				categoryColors: rowCategoryColorMap(row)
 			};
 			isFullChartPending.value = false;
 		});

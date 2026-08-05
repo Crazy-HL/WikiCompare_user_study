@@ -85,6 +85,21 @@ const colorFromMap = (map, name) => {
 
 const chartColor = index => CHART_COLORS[index % CHART_COLORS.length];
 
+const buildCategoryColorMap = (names, palette = FALLBACK_CATEGORY_COLORS) => {
+	const colors = Array.isArray(palette) && palette.length ? palette : FALLBACK_CATEGORY_COLORS;
+	const result = {};
+	const seen = new Set();
+	(names || []).forEach(name => {
+		const label = String(name || "").trim();
+		if (!label) return;
+		const key = normalizeCategoryKey(label);
+		if (!key || seen.has(key)) return;
+		result[label] = colors[seen.size % colors.length];
+		seen.add(key);
+	});
+	return result;
+};
+
 const categoryColor = (name, index = 0, overrides = {}) =>
 	colorFromMap(overrides, name) ||
 	colorFromMap(CATEGORY_COLORS, name) ||
@@ -97,6 +112,8 @@ module.exports = {
 	CHART_LINE_WIDTH,
 	CATEGORY_COLORS,
 	FALLBACK_CATEGORY_COLORS,
+	colorFromMap,
+	buildCategoryColorMap,
 	chartColor,
 	categoryColor,
 };
