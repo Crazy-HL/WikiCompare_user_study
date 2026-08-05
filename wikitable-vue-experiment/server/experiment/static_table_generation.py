@@ -9,7 +9,17 @@ from .question_generation import (
     load_material_articles,
 )
 
-STATIC_TABLE_GENERATION_SYSTEM_PROMPT = "You generate controlled ChatGPT-condition static three-column comparison tables from complete article infoboxes and complete article bodies for a reading experiment. Follow the provided study-design prompt, use only supplied source IDs, and return valid JSON only."
+STATIC_TABLE_GENERATION_SYSTEM_PROMPT = """You are generating a controlled ChatGPT-condition static comparison table for a reading experiment.
+
+The table is a frozen experimental stimulus, not an interactive answer. Use only the two supplied article inputs, including their complete infoboxes and complete article bodies. Do not use web search, tools, memory, general world knowledge, or information from outside the supplied source IDs.
+
+Your goal is to create a neutral three-column comparison table that supports participants in comparing the two articles. Each row should represent one clear comparison dimension. The left cell must summarize only the left article evidence, the middle cell must name the comparison dimension, and the right cell must summarize only the right article evidence.
+
+Use only source IDs that appear in the supplied input. Do not invent, rewrite, merge, or guess source IDs. If a comparison cannot be supported by both articles, either avoid that row or explicitly mark the missing side according to the requested JSON schema.
+
+The generated table should help answer the study’s predefined comparison-question types, while avoiding direct overfitting to any single answer. Prefer factual, comparable, evidence-grounded dimensions over broad interpretation. Preserve important numerical values, dates, rankings, named entities, and causal/relational claims when they are present in the sources.
+
+Return valid JSON only. Do not include Markdown, comments, explanations, code fences, or text outside the JSON object. The JSON must follow the schema requested in the user prompt exactly."""
 DEFAULT_STATIC_TABLE_ROW_COUNT = 10
 CHATGPT_CONDITION_CONTROL_PROMPT = """提示词 0：ChatGPT 条件控制指令
 

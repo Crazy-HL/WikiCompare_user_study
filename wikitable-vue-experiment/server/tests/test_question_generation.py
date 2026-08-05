@@ -146,6 +146,11 @@ def test_static_table_generation_metadata_includes_chatgpt_control_prompt(monkey
     assert "chatgpt_condition_control_prompt" in prompts
     assert "提示词 0：ChatGPT 条件控制指令" in prompts["chatgpt_condition_control_prompt"]["title"]
     assert "不得使用网页搜索" in prompts["chatgpt_condition_control_prompt"]["text"]
+    system_prompt = prompts["static_table_prompt"]["system"]
+    assert "frozen experimental stimulus" in system_prompt
+    assert "Do not use web search, tools, memory, general world knowledge" in system_prompt
+    assert "Do not invent, rewrite, merge, or guess source IDs" in system_prompt
+    assert "The JSON must follow the schema requested in the user prompt exactly" in system_prompt
     assert prompts["static_table_prompt"]["row_count"] == 10
     assert result["markdown_table"].startswith("| Left | 可比属性 | Right |")
 
