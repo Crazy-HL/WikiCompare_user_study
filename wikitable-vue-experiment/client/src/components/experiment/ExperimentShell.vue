@@ -57,6 +57,7 @@
 	const { buildCompletionPayload, validateStageAnswerRecords } = require("@/experiment/experimentStore");
 	const { validateAssignmentStages } = require("@/experiment/assignment");
 	const { Q6_TEXT } = require("@/experiment/q6");
+	const { participantStageLoadErrorMessage } = require("@/experiment/loadErrors");
 
 	const props = defineProps({
 		assignment: {
@@ -157,13 +158,13 @@
 				throw new Error("当前材料的问题尚未冻结或加载完整，请联系研究人员。");
 			}
 			if (stage.condition === 'chatgpt' && (!Array.isArray(tablePayload?.rows) || !tablePayload.rows.length)) {
-				throw new Error("Static table for the current ChatGPT material is not frozen or is incomplete.");
+				throw new Error("当前 ChatGPT 阅读表格尚未冻结，请联系研究人员。");
 			}
 			questionsPayload.value = payload;
 			staticTablePayload.value = tablePayload;
 			loadedStageKey.value = currentStageKey.value;
 		} catch (error) {
-			loadError.value = error.response?.data?.error || error.message || "加载阶段材料或问题时出错。";
+			loadError.value = participantStageLoadErrorMessage(error);
 		} finally {
 			isStageLoading.value = false;
 		}

@@ -12,7 +12,7 @@ assert(apiSource.includes("...(rawQuestions === undefined ? {} : { rawQuestions 
 const shellSource = fs.readFileSync(path.join(__dirname, "../src/components/experiment/ExperimentShell.vue"), "utf8");
 assert(shellSource.includes("getStaticTable"), "ExperimentShell should fetch frozen static table data");
 assert(shellSource.includes(":frozen-rows=\"staticTableRows\""), "ExperimentShell should pass frozen rows to ChatGptCondition");
-assert(shellSource.includes("stage.condition === 'chatgpt'") && /Static table/.test(shellSource), "ChatGPT stages should be blocked when the static table is unavailable");
+assert(shellSource.includes("stage.condition === 'chatgpt'") && shellSource.includes("当前 ChatGPT 阅读表格尚未冻结"), "ChatGPT stages should be blocked when the static table is unavailable");
 assert(shellSource.includes("payload.frozen"), "ExperimentShell should guard against unfrozen public question payloads");
 
 const chatSource = fs.readFileSync(path.join(__dirname, "../src/components/experiment/ChatGptCondition.vue"), "utf8");
