@@ -2120,3 +2120,18 @@ def test_single_metric_main_text_debt_values_remain_chartable():
     assert row["chartType"] == "bar"
     assert row["visualization"]["left"]["values"] == [{"value": 620900000000.0, "year": 2023}]
     assert row["visualization"]["right"]["values"] == [{"value": 420800000000.0, "year": 2023}]
+
+
+def test_extract_numeric_values_keeps_currency_with_month_year_and_secondary_gdp_share():
+    assert extract_numeric_values("$4.54 trillion (March 2023) (103.2% of GDP)") == [
+        {"value": 4540000000000.0, "year": 2023}
+    ]
+
+    row = normalize_attribute_pair(
+        {"id": "left-debt", "key": "Gross external debt", "valueText": "$542.4 billion (2020)", "source": "infobox", "sourceIds": ["left-info-31"]},
+        {"id": "right-debt", "key": "Gross external debt", "valueText": "$4.54 trillion (March 2023) (103.2% of GDP)", "source": "infobox", "sourceIds": ["right-info-32"]},
+        "Gross external debt",
+    )
+
+    assert row["chartType"] == "bar"
+    assert row["visualization"]["right"]["values"] == [{"value": 4540000000000.0, "year": 2023}]

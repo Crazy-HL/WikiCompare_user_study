@@ -38,7 +38,7 @@
 		<template v-else-if="visualization === 'pie-chart'">
 			<div
 				v-if="hasData && isValidPieData"
-				class="d3-chart-container"
+				class="d3-chart-container pie-chart-container"
 				ref="pieContainer"></div>
 			<div v-else class="no-data">-</div>
 		</template>
@@ -433,10 +433,10 @@
 				const containerWidth = pieContainer.value.clientWidth;
 				const containerHeight = pieContainer.value.clientHeight;
 				const radius = Math.max(
-					18,
-					Math.min(containerWidth * 0.34, containerHeight * 0.28, 42)
+					24,
+					Math.min(containerWidth * 0.42, containerHeight * 0.38, 62)
 				);
-				const centerY = containerHeight * 0.42;
+				const centerY = Math.max(radius + 4, containerHeight * 0.34);
 				const svg = container
 					.append("svg")
 					.attr("width", "100%")
@@ -548,7 +548,13 @@
 						});
 					});
 				if (!isSingleValue && pieData.value.length > 1) {
-					const labelData = pie(processedData).filter(d => !d.data.isRemainder);
+					const shouldShowPieSliceLabel = d => {
+						const displayValue = Number(d.data.displayValue ?? d.data.value);
+						return Number.isFinite(displayValue) && displayValue >= 6;
+					};
+					const labelData = pie(processedData).filter(
+						d => !d.data.isRemainder && shouldShowPieSliceLabel(d)
+					);
 					const pieValueLabelText = d => compactSvgText(
 						d.data.display || formatChartNumber(d.data.displayValue ?? d.data.value, props.type),
 						9
@@ -596,17 +602,26 @@
 				if (!isSingleValue && pieData.value.length > 1) {
 					const legend = svg.append("g").attr("class", "legend");
 					const legendItemSize = 7;
-					const legendSpacing = 3;
+					const legendSpacing = 4;
+					const maxPieLegendItems = pieData.value.length;
+					const legendColumns = maxPieLegendItems > 5 ? 2 : 1;
+					const legendRows = Math.ceil(maxPieLegendItems / legendColumns);
+					const legendColumnWidth = Math.max(72, (containerWidth - 12) / legendColumns);
 					const legendStartX = 6;
-					const legendStartY = Math.min(containerHeight - 30, centerY + radius + 8);
-					pieData.value.slice(0, 4).forEach((d, i) => {
-						const label = compactMiddleText(d.name, 16);
+					const legendStartY = Math.max(
+						centerY + radius + 8,
+						containerHeight - legendRows * (legendItemSize + legendSpacing) - 3
+					);
+					pieData.value.slice(0, maxPieLegendItems).forEach((d, i) => {
+						const column = i % legendColumns;
+						const row = Math.floor(i / legendColumns);
+						const label = compactMiddleText(d.name, legendColumns > 1 ? 13 : 20);
 						const legendItem = legend
 							.append("g")
 							.attr(
 								"transform",
-								`translate(${legendStartX}, ${
-									legendStartY + i * (legendItemSize + legendSpacing)
+								`translate(${legendStartX + column * legendColumnWidth}, ${
+									legendStartY + row * (legendItemSize + legendSpacing)
 								})`
 							);
 						legendItem
@@ -669,24 +684,36 @@
 						barCount * barWidth -
 						(barCount > 1 ? (barCount - 1) * barGap : 0)) /
 					2;
-				const renderCompressedPoints = () => {
+				const renderCompressedBars = () => {
+					const minCompressedBarHeight = 4;
 					svg
-						.selectAll(".compressed-point")
+						.selectAll(".compressed-bar")
 						.data(simpleBarData.value)
 						.enter()
-						.append("circle")
-						.attr("class", "compressed-point")
-						.attr("cx", (d, i) => startX + i * (barWidth + barGap) + barWidth / 2)
-						.attr("cy", d => y(d.value))
-						.attr("r", 4)
+						.append("rect")
+						.attr("class", "compressed-bar")
+						.attr("x", (d, i) => startX + i * (barWidth + barGap))
+						.attr("y", d => {
+							const zeroY = y(0);
+							const valueY = y(d.value);
+							return d.value >= 0
+								? Math.min(valueY, zeroY - minCompressedBarHeight)
+								: zeroY;
+						})
+						.attr("width", barWidth)
+						.attr("height", d => {
+							const barHeight = Math.abs(y(d.value) - y(0));
+							return Math.max(minCompressedBarHeight, barHeight);
+						})
 						.attr("fill", (d, i) => colors[i % colors.length])
+						.style("opacity", 0.8)
 						.append("title")
 						.text(d => originalDisplayText(d));
 				};
 				const compactBarLabelText = d => compactSvgText(d.display, 10);
 
 				if (isCompressedScale.value) {
-					renderCompressedPoints();
+					renderCompressedBars();
 				} else {
 					svg
 						.selectAll(".bar")
@@ -1296,6 +1323,11 @@
 		justify-content: center;
 		position: relative;
 	}
+	.pie-chart-container {
+		height: 160px;
+		min-height: 148px;
+		align-items: stretch;
+	}
 	.d3-tooltip {
 		z-index: 10;
 		white-space: nowrap;
@@ -1324,6 +1356,9 @@
 		}
 		.d3-chart-container {
 			min-height: 76px;
+		}
+		.pie-chart-container {
+			min-height: 148px;
 		}
 	}
 	.bar-value-label,

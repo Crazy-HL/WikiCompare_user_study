@@ -65,7 +65,8 @@ assert(simpleChartSource.includes("d3.scaleLog()"));
 assert(simpleChartSource.includes("d3.scaleSymlog()"));
 assert(simpleChartSource.includes('class="compressed-scale-badge"'));
 assert(simpleChartSource.includes("由于共享线性坐标会使一侧图形不可见"));
-assert(simpleChartSource.includes('.attr("class", "compressed-point")'));
+assert(!simpleChartSource.includes('.attr("class", "compressed-point")'));
+assert(simpleChartSource.includes("renderCompressedBars"));
 assert(simpleChartSource.includes("trendChange(lineData.value"));
 assert(simpleChartSource.includes("value: point.originalValue"));
 assert(simpleChartSource.includes("originalDisplay: item.originalDisplay"));
@@ -96,7 +97,7 @@ const barStart = simpleChartSource.indexOf("const renderBarChart = () => {");
 const barEnd = simpleChartSource.indexOf("const renderLineChart = () => {", barStart);
 const barBody = simpleChartSource.slice(barStart, barEnd);
 assert(barBody.includes("if (isCompressedScale.value)"));
-assert(barBody.includes("renderCompressedPoints"));
+assert(barBody.includes("renderCompressedBars"));
 assert(barBody.includes('.append("rect")'));
 assert.match(
 	barBody,

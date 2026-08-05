@@ -2112,7 +2112,21 @@ def _has_absolute_amount(text: str) -> bool:
 
 
 def _match_has_currency(text: str, match: re.Match) -> bool:
-    return bool(re.search(r"[$€£¥]", text[match.start(): match.start(1)]))
+    number_start = match.start()
+    for group_index in range(1, (match.lastindex or 0) + 1):
+        raw_group = match.group(group_index)
+        if raw_group is None:
+            continue
+        if not re.fullmatch(
+            r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?",
+            raw_group.strip(),
+        ):
+            continue
+        group_start = match.start(group_index)
+        if group_start >= 0:
+            number_start = group_start
+            break
+    return bool(re.search(r"[$€£¥]", text[match.start():number_start]))
 
 
 def _is_year_token(raw_number: str) -> bool:
