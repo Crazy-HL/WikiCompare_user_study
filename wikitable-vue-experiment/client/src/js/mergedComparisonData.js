@@ -4,9 +4,15 @@ const {
 	formatChartNumber,
 	formatValueDisplay,
 	normalizePreviewChartItems,
+	pieLegendLabelForPoint,
 	shortValueText,
 	xLabelForPoint,
 } = require("./chartValueDisplay");
+const {
+	FALLBACK_CATEGORY_COLORS,
+	PAPER_PIE_COLORS,
+	buildCategoryColorMap,
+} = require("./chartTheme");
 
 const SIDE_KEYS = ["left", "right"];
 
@@ -15,6 +21,7 @@ function buildMergedComparison(row, articleTitles = {}) {
 	const allPoints = sides.flatMap(side => side.points);
 	const categories = mergedCategories(sides, row);
 	const mode = chooseMode(row, sides, categories);
+	const categoryColors = mergedCategoryColors(sides, row);
 	const series = sides.map(side => ({
 		name: side.title,
 		side: side.key,
@@ -57,6 +64,7 @@ function buildMergedComparison(row, articleTitles = {}) {
 		mode,
 		...inferMeasurement(row, allPoints),
 		categories,
+		categoryColors,
 		series,
 		yDomain,
 		scaleContext: {
@@ -73,6 +81,7 @@ function buildMergedComparison(row, articleTitles = {}) {
 
 function normalizeSide(row, side, title) {
 	const sideData = row?.visualization?.[side] || {};
+	const mergeVisualization = String(row?.mergeVisualization || "").toLowerCase();
 	const raw = sideData.raw === null || sideData.raw === undefined
 		? ""
 		: String(sideData.raw);
@@ -80,7 +89,8 @@ function normalizeSide(row, side, title) {
 	const fallbackPoints = raw
 		? [{ value: null, label: row?.label || side, raw, display: raw }]
 		: [];
-	const displayPoints = filterAggregateComponentPoints((values.length ? values : fallbackPoints).map((value, index) => {
+	const sourceValues = values.length ? values : fallbackPoints;
+	const displayPoints = filterAggregateComponentPoints(sourceValues.map((value, index) => {
 		const point = typeof value === "object" && value !== null
 			? value
 			: { value, raw: String(value) };
@@ -91,13 +101,20 @@ function normalizeSide(row, side, title) {
 			value: numericValue,
 			label: String(label),
 		};
+		const category = categoryForMergedPoint({
+			point: normalizedPoint,
+			index,
+			total: sourceValues.length,
+			fallback: row?.label || side,
+			mergeVisualization,
+		});
 		return {
 			...normalizedPoint,
 			value: numericValue,
 			label: String(label),
-			category: point.label ? String(point.label) : String(point.year || label),
+			category,
 			year: point.year,
-			raw: point.raw || raw,
+			raw: point.raw || point.rawText || raw,
 			display: displayForPoint(normalizedPoint, raw, row?.dataType),
 		};
 	}));
@@ -127,6 +144,41 @@ function canonicalizeNumericPoints(points, dataType) {
 		numericIndexes.map((sourceIndex, index) => [sourceIndex, canonical[index]])
 	);
 	return source.map((point, index) => byIndex.get(index) || point);
+}
+
+function categoryForMergedPoint({ point, index, total, fallback, mergeVisualization }) {
+	if (mergeVisualization === "pie-chart") {
+		return pieLegendLabelForPoint(point, index, { fallback, total });
+	}
+	return String(point?.label || point?.year || fallback || `Item ${index + 1}`);
+}
+
+function normalizeCategoryKey(value) {
+	return String(value || "")
+		.replace(/[.:\s]*$/, "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.toLowerCase();
+}
+
+function uniqueLabelsByKey(labels = []) {
+	const seen = new Set();
+	return (Array.isArray(labels) ? labels : []).filter(label => {
+		const key = normalizeCategoryKey(label);
+		if (!key || seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
+}
+
+function mergedCategoryColors(sides, row) {
+	const mergeVisualization = String(row?.mergeVisualization || "").toLowerCase();
+	if (!["pie-chart", "stacked-chart"].includes(mergeVisualization)) return {};
+	const labels = sides.flatMap(side => side.points.map(point => point.category).filter(Boolean));
+	const palette = mergeVisualization === "pie-chart"
+		? PAPER_PIE_COLORS
+		: FALLBACK_CATEGORY_COLORS;
+	return buildCategoryColorMap(labels, palette);
 }
 
 function displayForPoint(point, raw, dataType) {
@@ -166,27 +218,27 @@ function displayType(dataType, point, raw) {
 }
 
 function mergedCategories(sides, row) {
-	const leftLabels = sides[0]?.points.map(point => point.category).filter(Boolean) || [];
-	const rightLabels = sides[1]?.points.map(point => point.category).filter(Boolean) || [];
+	const leftLabels = uniqueLabelsByKey(sides[0]?.points.map(point => point.category).filter(Boolean) || []);
+	const rightLabels = uniqueLabelsByKey(sides[1]?.points.map(point => point.category).filter(Boolean) || []);
 	const labels = [...leftLabels, ...rightLabels];
-	const unique = [...new Set(labels.filter(Boolean))];
+	const unique = uniqueLabelsByKey(labels);
 	if (!unique.length) return [row?.label || "Value"];
 	const allYears = unique.every(category => /^\d{4}$/.test(String(category)));
 	if (allYears) return unique.sort((a, b) => Number(a) - Number(b));
 	if (unique.length === 1) return [row?.label || unique[0]];
-	const rightSet = new Set(rightLabels);
-	const leftSet = new Set(leftLabels);
-	const shared = leftLabels.filter(label => rightSet.has(label));
-	const leftOnly = leftLabels.filter(label => !rightSet.has(label));
-	const rightOnly = rightLabels.filter(label => !leftSet.has(label));
-	return [...new Set([...shared, ...leftOnly, ...rightOnly])];
+	const rightSet = new Set(rightLabels.map(normalizeCategoryKey));
+	const leftSet = new Set(leftLabels.map(normalizeCategoryKey));
+	const shared = leftLabels.filter(label => rightSet.has(normalizeCategoryKey(label)));
+	const leftOnly = leftLabels.filter(label => !rightSet.has(normalizeCategoryKey(label)));
+	const rightOnly = rightLabels.filter(label => !leftSet.has(normalizeCategoryKey(label)));
+	return uniqueLabelsByKey([...shared, ...leftOnly, ...rightOnly]);
 }
 
 function chooseMode(row, sides, categories) {
 	const mergeVisualization = String(row?.mergeVisualization || "").toLowerCase();
 	if (mergeVisualization === "bar-chart") return "bar";
 	if (mergeVisualization === "stacked-chart") return "stacked";
-	if (mergeVisualization === "pie-chart") return "bar";
+	if (mergeVisualization === "pie-chart") return "stacked";
 	if (mergeVisualization === "text-only") return "text";
 
 	const hasYearSeries = sides.every(side =>
@@ -203,8 +255,11 @@ function bestPointForCategory(points, category, mode, categoryCount = 0) {
 	if (mode === "single") {
 		return points.find(point => Number.isFinite(point.value)) || points[0];
 	}
+	const categoryKey = normalizeCategoryKey(category);
 	const matched = points.find(
-		point => point.category === category || point.label === category
+		point =>
+			normalizeCategoryKey(point.category) === categoryKey ||
+			normalizeCategoryKey(point.label) === categoryKey
 	);
 	if (matched) return matched;
 	if (categoryCount === 1) {

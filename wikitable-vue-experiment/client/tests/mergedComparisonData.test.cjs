@@ -1,5 +1,6 @@
 const assert = require("assert");
 const { buildMergedComparison } = require("../src/js/mergedComparisonData.js");
+const { PAPER_PIE_COLORS, FALLBACK_CATEGORY_COLORS } = require("../src/js/chartTheme.js");
 
 function test(name, fn) {
 	try {
@@ -402,20 +403,69 @@ test("keeps empty aligned values out of the shared scale context", () => {
 	assert.deepStrictEqual(merged.scaleContext.rightValues, [10]);
 });
 
-test("marks pie-origin merged bars as ineligible for adaptive scaling", () => {
+test("uses stacked composition for pie-origin merged comparison", () => {
 	const row = {
-		label: "Share",
+		label: "Main import partners",
 		dataType: "Proportional",
 		mergeVisualization: "pie-chart",
 		visualization: {
-			left: { raw: "1%", values: [{ value: 1, label: "Share" }] },
-			right: { raw: "99%", values: [{ value: 99, label: "Share" }] },
+			left: {
+				raw: "China: 24%, United States: 12%, Other: 64%",
+				values: [
+					{ value: 24, label: "China", rawText: "China: 24%" },
+					{ value: 12, label: "United States", rawText: "United States: 12%" },
+					{ value: 64, label: "Other", rawText: "Other: 64%" },
+				],
+			},
+			right: {
+				raw: "China: 18%, Germany: 10%, Other: 72%",
+				values: [
+					{ value: 18, label: "China", rawText: "China: 18%" },
+					{ value: 10, label: "Germany", rawText: "Germany: 10%" },
+					{ value: 72, label: "Other", rawText: "Other: 72%" },
+				],
+			},
 		},
 	};
 
 	const merged = buildMergedComparison(row, titles);
 
-	assert.strictEqual(merged.mode, "bar");
-	assert.strictEqual(merged.scaleContext.visualization, "bar-chart");
+	assert.strictEqual(merged.mode, "stacked");
+	assert.deepStrictEqual(merged.categories, ["China", "Other", "United States", "Germany"]);
+	assert.strictEqual(merged.scaleContext.visualization, "stacked-chart");
 	assert.strictEqual(merged.scaleContext.adaptiveEligible, false);
+	assert.strictEqual(merged.categoryColors.China, PAPER_PIE_COLORS[0]);
+	assert.strictEqual(merged.categoryColors.Other, PAPER_PIE_COLORS[2]);
+});
+
+test("keeps stacked-origin merged composition category colors frozen across both sides", () => {
+	const row = {
+		label: "Exports",
+		dataType: "Proportional",
+		mergeVisualization: "stacked-chart",
+		visualization: {
+			left: {
+				raw: "Machinery: 40%, Vehicles: 20%",
+				values: [
+					{ value: 40, label: "Machinery" },
+					{ value: 20, label: "Vehicles" },
+				],
+			},
+			right: {
+				raw: "Machinery: 35%, Chemicals: 15%",
+				values: [
+					{ value: 35, label: "machinery" },
+					{ value: 15, label: "Chemicals" },
+				],
+			},
+		},
+	};
+
+	const merged = buildMergedComparison(row, titles);
+
+	assert.strictEqual(merged.mode, "stacked");
+	assert.deepStrictEqual(merged.categories, ["Machinery", "Vehicles", "Chemicals"]);
+	assert.strictEqual(merged.categoryColors.Machinery, FALLBACK_CATEGORY_COLORS[0]);
+	assert.strictEqual(merged.categoryColors.Vehicles, FALLBACK_CATEGORY_COLORS[1]);
+	assert.strictEqual(merged.categoryColors.Chemicals, FALLBACK_CATEGORY_COLORS[2]);
 });

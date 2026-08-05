@@ -5,6 +5,7 @@ const echarts = require("echarts");
 
 const { detectAdaptiveScale, scaleValue } = require("../src/js/adaptiveChartScale");
 const { barChartDomain } = require("../src/js/chartValueDisplay");
+const { PAPER_PIE_COLORS } = require("../src/js/chartTheme");
 const { buildMergedComparison } = require("../src/js/mergedComparisonData");
 const {
   buildMergedAdaptiveState,
@@ -481,15 +482,26 @@ assert(categoricalOption.series.every(series => series.data.length === categoric
 assert.strictEqual(categoricalOption.tooltip.axisPointer.type, "line");
 
 const stackedOption = buildMergedComparisonOption({
-  data: { ...singlePositive, mode: "stacked", categories: ["A"], series: [
-    { name: "Left", data: [{ value: 25, display: "25", raw: "25" }] },
-    { name: "Right", data: [{ value: 75, display: "75", raw: "75" }] },
-  ] },
+  data: {
+    ...singlePositive,
+    mode: "stacked",
+    categories: ["China", "Other"],
+    categoryColors: { China: PAPER_PIE_COLORS[0], Other: PAPER_PIE_COLORS[1] },
+    series: [
+      { name: "Left", data: [{ value: 25, display: "25", raw: "25" }, { value: 75, display: "75", raw: "75" }] },
+      { name: "Right", data: [{ value: 30, display: "30", raw: "30" }, { value: 70, display: "70", raw: "70" }] },
+    ],
+  },
   state: stackedState,
   grid,
 });
 assert.deepStrictEqual([stackedOption.yAxis.min, stackedOption.yAxis.max], [0, 100]);
 assert(stackedOption.series.every(series => series.type === "bar"));
+assert.deepStrictEqual(stackedOption.xAxis.data, ["Left", "Right"]);
+assert.strictEqual(stackedOption.series[0].name, "China");
+assert.strictEqual(stackedOption.series[0].itemStyle.color, PAPER_PIE_COLORS[0]);
+assert.strictEqual(stackedOption.series[1].itemStyle.color, PAPER_PIE_COLORS[1]);
+assert.strictEqual(stackedOption.series[0].data[0].display, "25");
 
 for (const option of [autoOption, spendingOption, symlogOption, indexOption, singleOption, categoricalOption, stackedOption]) {
   const chart = echarts.init(null, null, {

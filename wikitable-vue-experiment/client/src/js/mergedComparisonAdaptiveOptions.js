@@ -9,6 +9,7 @@ const {
   CHART_COLORS,
   CHART_LINE_WIDTH,
   categoryColor,
+  colorFromMap,
 } = require("./chartTheme");
 
 function optionalFiniteNumber(value) {
@@ -341,6 +342,9 @@ function buildStackedSeries(data) {
     type: "bar",
     stack: "total",
     barMaxWidth: 72,
+    itemStyle: {
+      color: colorFromMap(data?.categoryColors, category) || categoryColor(category, categoryIndex),
+    },
     data: sourceSeries.map(side => {
       const points = Array.isArray(side?.data) ? side.data : [];
       const point = points[categoryIndex] || {};
@@ -355,11 +359,15 @@ function buildStackedSeries(data) {
         : null;
       return {
         value: percent,
+        originalValue: value,
         display: point.display,
         raw: point.raw,
       };
     }),
-    label: { show: false },
+    label: {
+      show: false,
+      formatter: params => params.data?.display || "-",
+    },
     emphasis: { focus: "series" },
   }));
 }
@@ -376,7 +384,9 @@ function buildMergedComparisonOption({ data = {}, state = {}, grid = {} } = {}) 
 
   return {
     color: isStacked
-      ? categories.map((category, index) => categoryColor(category, index))
+      ? categories.map((category, index) =>
+          colorFromMap(data?.categoryColors, category) || categoryColor(category, index)
+        )
       : colors,
     tooltip: {
       trigger: "axis",
@@ -392,12 +402,18 @@ function buildMergedComparisonOption({ data = {}, state = {}, grid = {} } = {}) 
         .join("<br/>"),
     },
     legend: {
+      type: "scroll",
       top: 0,
       left: "center",
+      data: isStacked ? categories : undefined,
       icon: "roundRect",
       itemWidth: 14,
       itemHeight: 8,
+      selectedMode: false,
       textStyle: { color: "#334155", fontSize: 12 },
+      pageIconColor: "#64748b",
+      pageIconInactiveColor: "#cbd5e1",
+      pageTextStyle: { color: "#64748b" },
     },
     grid,
     xAxis: {
