@@ -1,5 +1,7 @@
 const HISTORY_STORAGE_KEY = "wikicompare_compare_history";
 const ACTIVE_SESSION_STORAGE_KEY = "wikicompare_active_compare_session";
+const CACHE_VERSION_STORAGE_KEY = "wikicompare_compare_cache_version";
+const SESSION_HISTORY_VERSION = "compare-chart-selection-v2";
 const DEFAULT_HISTORY_LIMIT = 8;
 
 function normalizeUrl(value) {
@@ -60,6 +62,7 @@ function removeHistoryByKey(history, key) {
 
 function loadHistory(storage = browserStorage()) {
 	if (!storage) return [];
+	if (!ensureCacheVersion(storage)) return [];
 	let records = [];
 	try {
 		const parsed = JSON.parse(storage.getItem(HISTORY_STORAGE_KEY) || "[]");
@@ -85,6 +88,7 @@ function loadHistory(storage = browserStorage()) {
 
 function saveHistory(storage = browserStorage(), history = []) {
 	if (!storage) return;
+	markCacheVersion(storage);
 	const sourceHistory = Array.isArray(history) ? history : [];
 	const activeSession = sourceHistory.find(record => record?.session)?.session || null;
 	if (activeSession) {
@@ -139,6 +143,28 @@ function compactRecord(record) {
 	};
 }
 
+function markCacheVersion(storage) {
+	try {
+		storage.setItem(CACHE_VERSION_STORAGE_KEY, SESSION_HISTORY_VERSION);
+	} catch (_error) {
+		// Ignore storage failures; cache reads will still be defensive.
+	}
+}
+
+function ensureCacheVersion(storage) {
+	try {
+		if (storage.getItem(CACHE_VERSION_STORAGE_KEY) === SESSION_HISTORY_VERSION) {
+			return true;
+		}
+		storage.removeItem(HISTORY_STORAGE_KEY);
+		storage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+		storage.setItem(CACHE_VERSION_STORAGE_KEY, SESSION_HISTORY_VERSION);
+		return false;
+	} catch (_error) {
+		return true;
+	}
+}
+
 function browserStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -146,7 +172,9 @@ function browserStorage() {
 
 module.exports = {
 	ACTIVE_SESSION_STORAGE_KEY,
+	CACHE_VERSION_STORAGE_KEY,
 	HISTORY_STORAGE_KEY,
+	SESSION_HISTORY_VERSION,
 	DEFAULT_HISTORY_LIMIT,
 	addSessionToHistory,
 	findHistoryByKey,

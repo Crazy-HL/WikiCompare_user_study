@@ -2,6 +2,8 @@ const assert = require("assert");
 
 const {
 	ACTIVE_SESSION_STORAGE_KEY,
+	CACHE_VERSION_STORAGE_KEY,
+	SESSION_HISTORY_VERSION,
 	addSessionToHistory,
 	findHistoryByUrls,
 	HISTORY_STORAGE_KEY,
@@ -69,6 +71,9 @@ const fakeStorage = {
 	setItem(key, value) {
 		storage[key] = value;
 	},
+	removeItem(key) {
+		delete storage[key];
+	},
 };
 saveHistory(fakeStorage, history);
 const loaded = loadHistory(fakeStorage);
@@ -88,6 +93,14 @@ storage.wikicompare_compare_history = "{bad json";
 assert.strictEqual(loadHistory(fakeStorage)[0].session.sessionId, "s3");
 storage[ACTIVE_SESSION_STORAGE_KEY] = "{bad json";
 assert.deepStrictEqual(loadHistory(fakeStorage), []);
+
+storage[HISTORY_STORAGE_KEY] = JSON.stringify([history[0]]);
+storage[ACTIVE_SESSION_STORAGE_KEY] = JSON.stringify(history[0].session);
+storage[CACHE_VERSION_STORAGE_KEY] = "old-version";
+assert.deepStrictEqual(loadHistory(fakeStorage), []);
+assert.strictEqual(storage[HISTORY_STORAGE_KEY], undefined);
+assert.strictEqual(storage[ACTIVE_SESSION_STORAGE_KEY], undefined);
+assert.strictEqual(storage[CACHE_VERSION_STORAGE_KEY], SESSION_HISTORY_VERSION);
 
 let quotaHistory = [];
 quotaHistory = addSessionToHistory(
