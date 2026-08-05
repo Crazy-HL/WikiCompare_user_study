@@ -410,7 +410,7 @@ function buildFullChartBarOption({
     series: [{
       type: compressed ? "scatter" : "bar",
       symbolSize: compressed ? 12 : undefined,
-      barMaxWidth: compressed ? undefined : 54,
+      barMaxWidth: compressed ? undefined : (rendered.length === 1 ? 28 : 54),
       data: rendered.map((item, index) => ({
         value: item.value,
         originalValue: item.originalValue ?? item.value,

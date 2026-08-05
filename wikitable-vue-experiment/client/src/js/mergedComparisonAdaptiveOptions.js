@@ -309,7 +309,7 @@ function buildStandardSeries(data, state, colors) {
       smooth: false,
       symbol: ["line", "scatter"].includes(state.seriesType) ? "circle" : "none",
       symbolSize: state.seriesType === "scatter" ? 12 : 8,
-      barMaxWidth: data?.mode === "single" ? 42 : 28,
+      barMaxWidth: 28,
       barGap: "14%",
       data: (Array.isArray(item.data) ? item.data : []).map(point => ({
         value: point.value,

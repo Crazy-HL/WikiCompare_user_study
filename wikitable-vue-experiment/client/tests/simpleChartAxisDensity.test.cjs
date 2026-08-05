@@ -64,10 +64,10 @@ assert(
 );
 
 assert(
-	simpleChartSource.includes("const previewSingleBarFill = 0.72") &&
-		simpleChartSource.includes("const previewSingleBarMaxWidth = 112") &&
-		!simpleChartSource.includes("availableWidth * 0.62"),
-	"Single-value bar previews should not collapse into a narrow centered column with wide side gutters"
+	simpleChartSource.includes("const previewSingleBarFill = 0.42") &&
+		simpleChartSource.includes("const previewSingleBarMaxWidth = 54") &&
+		!simpleChartSource.includes("const previewSingleBarFill = 0.72"),
+	"Single-value bar previews should stay narrow enough to match the paper-like compact bar style"
 );
 
 assert(

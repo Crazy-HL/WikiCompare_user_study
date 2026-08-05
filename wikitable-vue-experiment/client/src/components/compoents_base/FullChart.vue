@@ -410,6 +410,14 @@
 						itemStyle: pieSliceStyle(pieColorFor(categoryLabel, index))
 					};
 			  });
+		const pieLegendNames = seriesData.filter(item => !item.silent).map(item => item.name);
+		const splitIndex = Math.ceil(pieLegendNames.length / 2);
+		const chartWidth = chartEl.value?.clientWidth || 760;
+		const sideInset = chartWidth < 640 ? 112 : 148;
+		const legendFormatter = name =>
+			name.length > (chartWidth < 640 ? 12 : 18)
+				? `${name.slice(0, chartWidth < 640 ? 11 : 17)}…`
+				: name;
 		return {
 			tooltip: {
 				trigger: "item",
@@ -418,21 +426,49 @@
 						? ""
 						: `${params.marker}${params.name}: ${params.data?.display || params.value}`
 			},
-			legend: {
-				type: "scroll",
-				orient: "horizontal",
-				left: "center",
-				bottom: 0,
-				icon: "circle",
-				itemWidth: 10,
-				itemHeight: 10,
-				textStyle: { color: "#334155", fontSize: 12 }
-			},
+			legend: isSingle
+				? []
+				: [
+					{
+						type: "scroll",
+						orient: "vertical",
+						left: 8,
+						top: "middle",
+						data: pieLegendNames.slice(0, splitIndex),
+						icon: "circle",
+						itemWidth: 10,
+						itemHeight: 10,
+						itemGap: 10,
+						selectedMode: false,
+						formatter: legendFormatter,
+						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						pageIconColor: "#64748b",
+						pageIconInactiveColor: "#cbd5e1",
+						pageTextStyle: { color: "#64748b" }
+					},
+					{
+						type: "scroll",
+						orient: "vertical",
+						right: 8,
+						top: "middle",
+						data: pieLegendNames.slice(splitIndex),
+						icon: "circle",
+						itemWidth: 10,
+						itemHeight: 10,
+						itemGap: 10,
+						selectedMode: false,
+						formatter: legendFormatter,
+						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						pageIconColor: "#64748b",
+						pageIconInactiveColor: "#cbd5e1",
+						pageTextStyle: { color: "#64748b" }
+					}
+				],
 			series: [
 				{
 					type: "pie",
-					radius: isSingle ? ["44%", "68%"] : ["0%", "68%"],
-					center: ["50%", "44%"],
+					radius: isSingle ? ["44%", "68%"] : ["0%", chartWidth < 640 ? "56%" : "62%"],
+					center: ["50%", "50%"],
 					data: seriesData,
 					minAngle: 2,
 					avoidLabelOverlap: true,

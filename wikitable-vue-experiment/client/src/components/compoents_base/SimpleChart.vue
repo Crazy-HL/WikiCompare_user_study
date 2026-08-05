@@ -330,8 +330,8 @@
 				const safeCount = Math.max(1, count);
 				const availableWidth = Math.max(12, width - margin.left - margin.right);
 				const gap = previewHorizontalGap(width, safeCount);
-				const previewSingleBarFill = 0.72;
-				const previewSingleBarMaxWidth = 112;
+				const previewSingleBarFill = 0.42;
+				const previewSingleBarMaxWidth = 54;
 				const maxBySpace =
 					safeCount === 1
 						? availableWidth * previewSingleBarFill
@@ -437,11 +437,18 @@
 				const container = d3.select(pieContainer.value);
 				const containerWidth = pieContainer.value.clientWidth;
 				const containerHeight = pieContainer.value.clientHeight;
+				const hasSidePieLegend = pieData.value.length > 1;
 				const radius = Math.max(
 					24,
-					Math.min(containerWidth * 0.42, containerHeight * 0.38, 62)
+					Math.min(
+						containerWidth * (hasSidePieLegend ? 0.31 : 0.42),
+						containerHeight * (hasSidePieLegend ? 0.43 : 0.38),
+						hasSidePieLegend ? 58 : 62
+					)
 				);
-				const centerY = Math.max(radius + 4, containerHeight * 0.34);
+				const centerY = hasSidePieLegend
+					? containerHeight / 2
+					: Math.max(radius + 4, containerHeight * 0.34);
 				const svg = container
 					.append("svg")
 					.attr("width", "100%")
@@ -597,50 +604,64 @@
 						.text(pieData.value[0].name || "value");
 				}
 				if (!isSingleValue && pieData.value.length > 1) {
-					const legend = svg.append("g").attr("class", "legend");
+					const legend = svg.append("g").attr("class", "legend side-pie-legend");
 					const legendItemSize = 7;
-					const legendSpacing = 4;
-					const maxPieLegendItems = pieData.value.length;
-					const legendColumns = maxPieLegendItems > 5 ? 2 : 1;
-					const legendRows = Math.ceil(maxPieLegendItems / legendColumns);
-					const legendColumnWidth = Math.max(72, (containerWidth - 12) / legendColumns);
-					const legendStartX = 6;
-					const legendStartY = Math.max(
-						centerY + radius + 8,
-						containerHeight - legendRows * (legendItemSize + legendSpacing) - 3
-					);
-					const legendData = processedData.filter(d => !d.isRemainder).slice(0, maxPieLegendItems);
-					const legendItems = legend
-						.selectAll(".pie-legend-dot")
-						.data(legendData)
-						.enter()
-						.append("g")
-						.attr("class", "pie-legend-item")
-						.attr("transform", (d, i) => {
-							const column = i % legendColumns;
-							const row = Math.floor(i / legendColumns);
-							return `translate(${legendStartX + column * legendColumnWidth}, ${
-								legendStartY + row * (legendItemSize + legendSpacing)
-							})`;
-						});
-					legendItems
-						.append("circle")
-						.attr("class", "pie-legend-dot")
-						.attr("cx", legendItemSize / 2)
-						.attr("cy", legendItemSize / 2)
-						.attr("r", legendItemSize / 2)
-						.attr("fill", d => d.color);
-					legendItems
-						.append("text")
-						.attr("x", legendItemSize + 3)
-						.attr("y", legendItemSize)
-						.text(d => {
-							const label = d.name || "";
-							return compactMiddleText(label, legendColumns > 1 ? 15 : 22);
-						})
-						.style("font-size", "7.5px")
-						.style("font-weight", "500")
-						.style("fill", "#2d3e50");
+					const legendData = processedData.filter(d => !d.isRemainder);
+					const splitIndex = Math.ceil(legendData.length / 2);
+					const sidePieLegendGroups = [
+						{ side: "left", items: legendData.slice(0, splitIndex) },
+						{ side: "right", items: legendData.slice(splitIndex) }
+					];
+					const sidePieLegendX = side => (side === "left" ? 8 : containerWidth - 8);
+					const sideLabelWidth = Math.max(22, containerWidth / 2 - radius - 16);
+					const maxLegendChars = Math.max(5, Math.min(16, Math.floor(sideLabelWidth / 4.5)));
+					const legendStep = items =>
+						items.length > 1
+							? Math.min(15, Math.max(10, (containerHeight - 18) / (items.length - 0.25)))
+							: 0;
+
+					sidePieLegendGroups.forEach(group => {
+						const step = legendStep(group.items);
+						const startY =
+							group.items.length > 1
+								? Math.max(10, centerY - step * (group.items.length - 1) / 2)
+								: centerY;
+						const isLeft = group.side === "left";
+						const x = sidePieLegendX(group.side);
+						const tickEndX = isLeft ? containerWidth / 2 - radius - 3 : containerWidth / 2 + radius + 3;
+						const legendItems = legend
+							.selectAll(`.pie-legend-${group.side}`)
+							.data(group.items)
+							.enter()
+							.append("g")
+							.attr("class", `pie-legend-item pie-legend-${group.side}`)
+							.attr("transform", (d, i) => `translate(${x}, ${startY + i * step})`);
+						legendItems
+							.append("line")
+							.attr("class", "pie-legend-line")
+							.attr("x1", isLeft ? legendItemSize + 4 : -legendItemSize - 4)
+							.attr("x2", tickEndX - x)
+							.attr("y1", 3.5)
+							.attr("y2", 3.5)
+							.attr("stroke", "#cbd5e1")
+							.attr("stroke-width", 0.8);
+						legendItems
+							.append("circle")
+							.attr("class", "pie-legend-dot")
+							.attr("cx", isLeft ? legendItemSize / 2 : -legendItemSize / 2)
+							.attr("cy", legendItemSize / 2)
+							.attr("r", legendItemSize / 2)
+							.attr("fill", d => d.color);
+						legendItems
+							.append("text")
+							.attr("x", isLeft ? legendItemSize + 10 : -legendItemSize - 10)
+							.attr("y", legendItemSize)
+							.attr("text-anchor", isLeft ? "start" : "end")
+							.text(d => compactMiddleText(d.name || "", maxLegendChars))
+							.style("font-size", "7.5px")
+							.style("font-weight", "500")
+							.style("fill", "#2d3e50");
+					});
 				}
 			};
 
