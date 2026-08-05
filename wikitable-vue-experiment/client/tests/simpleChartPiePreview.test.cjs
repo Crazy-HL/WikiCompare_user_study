@@ -30,8 +30,9 @@ assert(
 assert(
 	source.includes("PAPER_PIE_COLORS") &&
 		source.includes("paperPieColors") &&
-		source.includes("d.color || paperPieColors[i % paperPieColors.length]"),
-	"Pie previews should use the paper-aligned muted palette instead of the generic chart palette"
+		source.includes("color: paperPieColors[i % paperPieColors.length]") &&
+		!source.includes("d.color || paperPieColors[i % paperPieColors.length]"),
+	"Pie previews should use the paper-aligned muted palette directly instead of category fallback colors"
 );
 assert(
 	source.includes('selectAll(".pie-legend-dot")') &&

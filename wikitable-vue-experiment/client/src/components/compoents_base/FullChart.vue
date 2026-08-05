@@ -82,6 +82,12 @@
 	const COLORS = CHART_COLORS;
 	const PIE_COLORS = PAPER_PIE_COLORS;
 	const REMAINDER_COLOR = CHART_REMAINDER_COLOR;
+	const pieSliceStyle = (color, opacity = 0.92) => ({
+		color,
+		borderColor: "#ffffff",
+		borderWidth: 2,
+		opacity
+	});
 	const selectedScaleMode = ref("auto");
 	const scaleModeOptions = [
 		{ value: "auto", label: "自动优化" },
@@ -370,7 +376,7 @@
 						value: Math.max(0, Math.min(100, data[0].value)),
 						display: data[0].display,
 						shortDisplay: shortValueDisplay(data[0]),
-						itemStyle: { color: PIE_COLORS[0] }
+						itemStyle: pieSliceStyle(PIE_COLORS[0])
 					},
 					{
 						name: "剩余",
@@ -378,7 +384,7 @@
 						display: "剩余",
 						silent: true,
 						label: { show: false },
-						itemStyle: { color: REMAINDER_COLOR }
+						itemStyle: pieSliceStyle(REMAINDER_COLOR, 0.5)
 					}
 			  ]
 			: data.map((item, index) => ({
@@ -386,7 +392,7 @@
 					value: item.value,
 					display: item.display,
 					shortDisplay: shortValueDisplay(item),
-					itemStyle: { color: PIE_COLORS[index % PIE_COLORS.length] }
+					itemStyle: pieSliceStyle(PIE_COLORS[index % PIE_COLORS.length])
 			  }));
 		return {
 			tooltip: {
@@ -401,9 +407,9 @@
 				orient: "horizontal",
 				left: "center",
 				bottom: 0,
-				icon: "roundRect",
-				itemWidth: 14,
-				itemHeight: 8,
+				icon: "circle",
+				itemWidth: 10,
+				itemHeight: 10,
 				textStyle: { color: "#334155", fontSize: 12 }
 			},
 			series: [

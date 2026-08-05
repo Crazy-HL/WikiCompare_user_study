@@ -469,7 +469,7 @@
 					  ]
 					: pieData.value.map((d, i) => ({
 							...d,
-							color: d.color || paperPieColors[i % paperPieColors.length],
+							color: paperPieColors[i % paperPieColors.length],
 							isMainValue: true
 					  }));
 				const pie = d3
@@ -581,7 +581,7 @@
 						centerY + radius + 8,
 						containerHeight - legendRows * (legendItemSize + legendSpacing) - 3
 					);
-					const legendData = pieData.value.slice(0, maxPieLegendItems);
+					const legendData = processedData.filter(d => !d.isRemainder).slice(0, maxPieLegendItems);
 					const legendItems = legend
 						.selectAll(".pie-legend-dot")
 						.data(legendData)
@@ -601,7 +601,7 @@
 						.attr("cx", legendItemSize / 2)
 						.attr("cy", legendItemSize / 2)
 						.attr("r", legendItemSize / 2)
-						.attr("fill", (d, i) => d.color || paperPieColors[i % paperPieColors.length]);
+						.attr("fill", d => d.color);
 					legendItems
 						.append("text")
 						.attr("x", legendItemSize + 3)

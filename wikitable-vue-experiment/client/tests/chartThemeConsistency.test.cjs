@@ -75,11 +75,30 @@ assert(
 );
 const pieOptionSource = fullChartComponentSource.slice(pieOptionStart, pieOptionEnd);
 assert(
-	pieOptionSource.includes("itemStyle: { color: PIE_COLORS[0] }") &&
-		pieOptionSource.includes("itemStyle: { color: PIE_COLORS[index % PIE_COLORS.length] }") &&
+	pieOptionSource.includes("itemStyle: pieSliceStyle(PIE_COLORS[0])") &&
+		pieOptionSource.includes("itemStyle: pieSliceStyle(PIE_COLORS[index % PIE_COLORS.length])") &&
 		!pieOptionSource.includes("itemStyle: { color: COLORS[0] }") &&
 		!pieOptionSource.includes("itemStyle: { color: COLORS[index % COLORS.length] }"),
 	"Expanded pie series colors should match thumbnail pie colors instead of the generic chart palette"
+);
+
+const simplePieStart = simpleChartSource.indexOf("const renderPieChart = () => {");
+const simplePieEnd = simpleChartSource.indexOf("const renderBarChart = () => {", simplePieStart);
+assert(
+	simplePieStart >= 0 && simplePieEnd > simplePieStart,
+	"SimpleChart should define renderPieChart before renderBarChart"
+);
+const simplePieSource = simpleChartSource.slice(simplePieStart, simplePieEnd);
+assert(
+	simplePieSource.includes("color: paperPieColors[i % paperPieColors.length]") &&
+		!simplePieSource.includes("d.color || paperPieColors"),
+	"Thumbnail pie slices should use the same fixed paper palette that expanded pie slices use"
+);
+assert(
+	pieOptionSource.includes('icon: "circle"') &&
+		fullChartComponentSource.includes('borderColor: "#ffffff"') &&
+		fullChartComponentSource.includes("opacity = 0.92"),
+	"Expanded pie charts should keep the same circular legend and white-separated slice style as thumbnail pies"
 );
 
 assert(
