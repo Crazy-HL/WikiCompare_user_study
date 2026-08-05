@@ -11,6 +11,10 @@ from .static_table_generation import generate_static_table_from_material
 from .storage import ExperimentStorage
 
 ADMIN_TOKENS = set()
+DEFAULT_DEV_CORS_ORIGINS = {
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+}
 
 
 def data_dir():
@@ -23,6 +27,8 @@ def storage():
 
 def configured_cors_origins():
     raw = os.environ.get("EXPERIMENT_CORS_ORIGIN", "").strip()
+    if not raw:
+        return set(DEFAULT_DEV_CORS_ORIGINS)
     return {origin.strip() for origin in raw.split(",") if origin.strip()}
 
 

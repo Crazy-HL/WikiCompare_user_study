@@ -78,8 +78,10 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.previous_data_dir = os.environ.get("EXPERIMENT_DATA_DIR")
         self.previous_password = os.environ.get("EXPERIMENT_ADMIN_PASSWORD")
+        self.previous_cors_origin = os.environ.get("EXPERIMENT_CORS_ORIGIN")
         os.environ["EXPERIMENT_DATA_DIR"] = self.tmpdir.name
         os.environ["EXPERIMENT_ADMIN_PASSWORD"] = "secret"
+        os.environ.pop("EXPERIMENT_CORS_ORIGIN", None)
         super().setUp()
 
     def tearDown(self):
@@ -92,6 +94,10 @@ class ExperimentApiTest(AsyncHTTPTestCase):
             os.environ.pop("EXPERIMENT_ADMIN_PASSWORD", None)
         else:
             os.environ["EXPERIMENT_ADMIN_PASSWORD"] = self.previous_password
+        if self.previous_cors_origin is None:
+            os.environ.pop("EXPERIMENT_CORS_ORIGIN", None)
+        else:
+            os.environ["EXPERIMENT_CORS_ORIGIN"] = self.previous_cors_origin
         self.tmpdir.cleanup()
 
     def get_app(self):
@@ -491,7 +497,11 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert response.code == 503
         assert "EXPERIMENT_ADMIN_PASSWORD" in json.loads(response.body)["error"]
 
-    def test_experiment_cors_uses_configured_origin_and_avoids_wildcard_by_default(self):
+    def test_experiment_cors_allows_local_dev_origin_without_wildcard(self):
+        local_response = self.fetch("/api/experiment/config", headers={"Origin": "http://127.0.0.1:8080"})
+        assert local_response.code == 200
+        assert local_response.headers.get("Access-Control-Allow-Origin") == "http://127.0.0.1:8080"
+
         response = self.fetch("/api/experiment/config", headers={"Origin": "https://example.test"})
         assert response.code == 200
         assert response.headers.get("Access-Control-Allow-Origin") is None
