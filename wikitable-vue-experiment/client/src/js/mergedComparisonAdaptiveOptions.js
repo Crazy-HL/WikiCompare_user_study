@@ -334,42 +334,88 @@ function buildStandardSeries(data, state, colors) {
   );
 }
 
-function buildStackedSeries(data) {
+function stackedSideStacks(data, sourceSeries) {
+  const provided = Array.isArray(data?.sideStacks) ? data.sideStacks : [];
+  if (provided.length) {
+    return provided.map((side, sideIndex) => ({
+      name: side?.name || sourceSeries[sideIndex]?.name || `Series ${sideIndex + 1}`,
+      data: (Array.isArray(side?.data) ? side.data : [])
+        .map(point => ({
+          ...point,
+          category: point?.category || point?.label,
+        }))
+        .filter(point => {
+          const value = optionalFiniteNumber(point?.value);
+          return value !== null && value > 0 && point?.category;
+        }),
+    }));
+  }
   const categories = Array.isArray(data?.categories) ? data.categories : [];
-  const sourceSeries = Array.isArray(data?.series) ? data.series : [];
-  return categories.map((category, categoryIndex) => ({
-    name: category,
-    type: "bar",
-    stack: "total",
-    barMaxWidth: 72,
-    itemStyle: {
-      color: colorFromMap(data?.categoryColors, category) || categoryColor(category, categoryIndex),
-    },
-    data: sourceSeries.map(side => {
-      const points = Array.isArray(side?.data) ? side.data : [];
-      const point = points[categoryIndex] || {};
-      const total = points.reduce((sum, item) => {
-        const value = optionalFiniteNumber(item?.value);
-        return value !== null && value > 0 ? sum + value : sum;
-      }, 0);
-      const renderTotal = total > 101 ? total : 100;
-      const value = optionalFiniteNumber(point?.value);
-      const percent = renderTotal && value !== null && value > 0
-        ? (value / renderTotal) * 100
-        : null;
-      return {
-        value: percent,
-        originalValue: value,
-        display: point.display,
-        raw: point.raw,
-      };
-    }),
-    label: {
-      show: false,
-      formatter: params => params.data?.display || "-",
-    },
-    emphasis: { focus: "series" },
+  return sourceSeries.map(side => ({
+    name: side?.name || "Series",
+    data: (Array.isArray(side?.data) ? side.data : [])
+      .map((point, index) => ({
+        ...point,
+        category: point?.category || point?.label || categories[index],
+      }))
+      .filter(point => {
+        const value = optionalFiniteNumber(point?.value);
+        return value !== null && value > 0 && point?.category;
+      }),
   }));
+}
+
+function stackedDatumForPoint(point, sidePoints) {
+  const total = sidePoints.reduce((sum, item) => {
+    const value = optionalFiniteNumber(item?.value);
+    return value !== null && value > 0 ? sum + value : sum;
+  }, 0);
+  const renderTotal = total > 101 ? total : 100;
+  const value = optionalFiniteNumber(point?.value);
+  const percent = renderTotal && value !== null && value > 0
+    ? (value / renderTotal) * 100
+    : null;
+  return {
+    value: percent,
+    originalValue: value,
+    display: point.display,
+    raw: point.raw,
+    label: point.label,
+    category: point.category,
+  };
+}
+
+function buildStackedSeries(data) {
+  const sourceSeries = Array.isArray(data?.series) ? data.series : [];
+  const sideStacks = stackedSideStacks(data, sourceSeries);
+  const sideCount = Math.max(sideStacks.length, sourceSeries.length);
+  const maxSegments = Math.max(0, ...sideStacks.map(side => side.data.length));
+  const series = [];
+  for (let segmentIndex = 0; segmentIndex < maxSegments; segmentIndex += 1) {
+    sideStacks.forEach((side, sideIndex) => {
+      const point = side.data[segmentIndex];
+      if (!point) return;
+      const category = point.category || point.label;
+      const seriesData = Array.from({ length: sideCount }, () => null);
+      seriesData[sideIndex] = stackedDatumForPoint(point, side.data);
+      series.push({
+        name: category,
+        type: "bar",
+        stack: "total",
+        barMaxWidth: 72,
+        itemStyle: {
+          color: colorFromMap(data?.categoryColors, category) || categoryColor(category, segmentIndex),
+        },
+        data: seriesData,
+        label: {
+          show: false,
+          formatter: params => params.data?.display || "-",
+        },
+        emphasis: { focus: "series" },
+      });
+    });
+  }
+  return series;
 }
 
 function buildMergedComparisonOption({ data = {}, state = {}, grid = {} } = {}) {

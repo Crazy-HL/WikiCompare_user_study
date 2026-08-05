@@ -52,4 +52,60 @@ assert.deepStrictEqual(
 	"Merged chart rendered series colors should exactly match the thumbnail/full-chart row palette"
 );
 
+const orderRow = {
+	label: "Stack order comparison",
+	dataType: "Proportional",
+	mergeVisualization: "stacked-chart",
+	categoryColors: {
+		Alpha: "#aa0000",
+		Beta: "#00aa00",
+		Gamma: "#8b4513",
+	},
+	visualization: {
+		left: {
+			raw: "Alpha 20% Beta 30% Gamma 50%",
+			values: [
+				{ value: 20, label: "Alpha", raw: "Alpha 20%" },
+				{ value: 30, label: "Beta", raw: "Beta 30%" },
+				{ value: 50, label: "Gamma", raw: "Gamma 50%" },
+			],
+		},
+		right: {
+			raw: "Gamma 15% Beta 25% Alpha 60%",
+			values: [
+				{ value: 15, label: "Gamma", raw: "Gamma 15%" },
+				{ value: 25, label: "Beta", raw: "Beta 25%" },
+				{ value: 60, label: "Alpha", raw: "Alpha 60%" },
+			],
+		},
+	},
+};
+
+const orderMerged = buildMergedComparison(orderRow, { left: "Left", right: "Right" });
+const orderState = buildMergedAdaptiveState({ data: orderMerged });
+const orderOption = buildMergedComparisonOption({ data: orderMerged, state: orderState, grid: {} });
+const stackOrderForAxisIndex = axisIndex => orderOption.series
+	.filter(series => series.data?.[axisIndex] && Number.isFinite(Number(series.data[axisIndex].value)))
+	.map(series => series.name);
+assert.deepStrictEqual(
+	stackOrderForAxisIndex(0),
+	["Alpha", "Beta", "Gamma"],
+	"The left merged stacked bar should keep the same bottom-to-top category order as the left thumbnail/full chart"
+);
+assert.deepStrictEqual(
+	stackOrderForAxisIndex(1),
+	["Gamma", "Beta", "Alpha"],
+	"The right merged stacked bar should keep the same bottom-to-top category order as the right thumbnail/full chart"
+);
+assert.strictEqual(
+	orderOption.series.find(series => series.name === "Gamma" && series.data?.[0])?.itemStyle?.color,
+	"#8b4513",
+	"The top left merged segment should keep the thumbnail/full-chart color for Gamma"
+);
+assert.strictEqual(
+	orderOption.series.find(series => series.name === "Alpha" && series.data?.[1])?.itemStyle?.color,
+	"#aa0000",
+	"The top right merged segment should keep the thumbnail/full-chart color for Alpha"
+);
+
 console.log("mergedChartColorConsistency tests passed");

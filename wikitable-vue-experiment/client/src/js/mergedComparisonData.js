@@ -35,10 +35,23 @@ function buildMergedComparison(row, articleTitles = {}) {
 						display: point.display,
 						raw: point.raw,
 						label: point.label,
+						category: point.category,
 						year: point.year,
 				  }
-				: { value: null, display: "-", raw: "", label: category };
+				: { value: null, display: "-", raw: "", label: category, category };
 		}),
+	}));
+	const sideStacks = sides.map(side => ({
+		name: side.title,
+		side: side.key,
+		data: side.points.map(point => ({
+			value: point.value,
+			display: point.display,
+			raw: point.raw,
+			label: point.label,
+			category: point.category,
+			year: point.year,
+		})),
 	}));
 	const numericValues = series
 		.flatMap(item => item.data.map(point => point.value))
@@ -67,6 +80,7 @@ function buildMergedComparison(row, articleTitles = {}) {
 		categories,
 		categoryColors,
 		series,
+		sideStacks,
 		yDomain,
 		scaleContext: {
 			leftValues,

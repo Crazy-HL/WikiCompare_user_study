@@ -500,7 +500,28 @@ assert(stackedOption.series.every(series => series.type === "bar"));
 assert.deepStrictEqual(stackedOption.xAxis.data, ["Left", "Right"]);
 assert.strictEqual(stackedOption.series[0].name, "China");
 assert.strictEqual(stackedOption.series[0].itemStyle.color, PAPER_PIE_COLORS[0]);
-assert.strictEqual(stackedOption.series[1].itemStyle.color, PAPER_PIE_COLORS[1]);
+assert(
+  stackedOption.series
+    .filter(series => series.name === "China")
+    .every(series => series.itemStyle.color === PAPER_PIE_COLORS[0])
+);
+assert(
+  stackedOption.series
+    .filter(series => series.name === "Other")
+    .every(series => series.itemStyle.color === PAPER_PIE_COLORS[1])
+);
+assert.deepStrictEqual(
+  stackedOption.series
+    .filter(series => series.data?.[0] && Number.isFinite(Number(series.data[0].value)))
+    .map(series => series.name),
+  ["China", "Other"]
+);
+assert.deepStrictEqual(
+  stackedOption.series
+    .filter(series => series.data?.[1] && Number.isFinite(Number(series.data[1].value)))
+    .map(series => series.name),
+  ["China", "Other"]
+);
 assert.strictEqual(stackedOption.series[0].data[0].display, "25");
 
 for (const option of [autoOption, spendingOption, symlogOption, indexOption, singleOption, categoricalOption, stackedOption]) {
