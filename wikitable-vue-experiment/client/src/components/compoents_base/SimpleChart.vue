@@ -438,14 +438,22 @@
 				const containerWidth = pieContainer.value.clientWidth;
 				const containerHeight = pieContainer.value.clientHeight;
 				const hasSidePieLegend = pieData.value.length > 1;
+				const sideLegendColumnWidth = hasSidePieLegend
+					? Math.max(34, Math.min(58, containerWidth * 0.25))
+					: 0;
+				const pieSideGap = hasSidePieLegend ? 8 : 0;
+				const maxPieRadiusByWidth = hasSidePieLegend
+					? (containerWidth - sideLegendColumnWidth * 2 - pieSideGap * 2) / 2
+					: containerWidth * 0.42;
 				const radius = Math.max(
-					24,
+					hasSidePieLegend ? 18 : 24,
 					Math.min(
-						containerWidth * (hasSidePieLegend ? 0.31 : 0.42),
-						containerHeight * (hasSidePieLegend ? 0.43 : 0.38),
-						hasSidePieLegend ? 58 : 62
+						maxPieRadiusByWidth,
+						containerHeight * (hasSidePieLegend ? 0.36 : 0.38),
+						hasSidePieLegend ? 44 : 62
 					)
 				);
+				const centerX = containerWidth / 2;
 				const centerY = hasSidePieLegend
 					? containerHeight / 2
 					: Math.max(radius + 4, containerHeight * 0.34);
@@ -456,7 +464,7 @@
 					.attr("viewBox", `0 0 ${containerWidth} ${containerHeight}`);
 				const chart = svg
 					.append("g")
-					.attr("transform", `translate(${containerWidth / 2}, ${centerY})`);
+					.attr("transform", `translate(${centerX}, ${centerY})`);
 				const isSingleValue =
 					pieData.value.length === 1 && props.type === "percentage";
 				const processedData = isSingleValue
@@ -612,9 +620,9 @@
 						{ side: "left", items: legendData.slice(0, splitIndex) },
 						{ side: "right", items: legendData.slice(splitIndex) }
 					];
-					const sidePieLegendX = side => (side === "left" ? 8 : containerWidth - 8);
-					const sideLabelWidth = Math.max(22, containerWidth / 2 - radius - 16);
-					const maxLegendChars = Math.max(5, Math.min(16, Math.floor(sideLabelWidth / 4.5)));
+					const sidePieLegendX = side => (side === "left" ? 5 : containerWidth - 5);
+					const sideLabelWidth = Math.max(18, sideLegendColumnWidth - legendItemSize - 9);
+					const maxLegendChars = Math.max(4, Math.min(13, Math.floor(sideLabelWidth / 4.8)));
 					const legendStep = items =>
 						items.length > 1
 							? Math.min(15, Math.max(10, (containerHeight - 18) / (items.length - 0.25)))
@@ -628,7 +636,9 @@
 								: centerY;
 						const isLeft = group.side === "left";
 						const x = sidePieLegendX(group.side);
-						const tickEndX = isLeft ? containerWidth / 2 - radius - 3 : containerWidth / 2 + radius + 3;
+						const tickEndX = isLeft
+							? centerX - radius - pieSideGap / 2
+							: centerX + radius + pieSideGap / 2;
 						const legendItems = legend
 							.selectAll(`.pie-legend-${group.side}`)
 							.data(group.items)

@@ -67,4 +67,21 @@ assert(
   "Pie thumbnails should use side legends with leader lines, not bottom legends that can be cut off"
 );
 
+assert(
+  simpleChartSource.includes("const sideLegendColumnWidth = hasSidePieLegend") &&
+    simpleChartSource.includes("const pieSideGap = hasSidePieLegend") &&
+    simpleChartSource.includes("(containerWidth - sideLegendColumnWidth * 2 - pieSideGap * 2) / 2") &&
+    simpleChartSource.includes("const centerX = containerWidth / 2") &&
+    simpleChartSource.includes("centerX - radius - pieSideGap / 2") &&
+    simpleChartSource.includes("centerX + radius + pieSideGap / 2"),
+  "Pie thumbnails should reserve left/right legend columns before sizing the pie so legends and leader lines stay outside the pie"
+);
+
+assert(
+  fullChartSource.includes("const pieOuterRadius = isSingle") &&
+    fullChartSource.includes("(chartWidth - 2 * sideInset - 40) / 2") &&
+    fullChartSource.includes("radius: isSingle ? [\"44%\", \"68%\"] : [0, pieOuterRadius]"),
+  "Expanded pie charts should shrink the pie radius using the side legend inset instead of letting side legends float over the pie"
+);
+
 console.log("chartLayoutPolish tests passed");

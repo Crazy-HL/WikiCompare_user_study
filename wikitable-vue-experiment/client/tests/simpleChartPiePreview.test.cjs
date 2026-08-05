@@ -18,10 +18,11 @@ assert(
 );
 assert(
 	source.includes("const hasSidePieLegend = pieData.value.length > 1") &&
-		source.includes("containerWidth * (hasSidePieLegend ? 0.31 : 0.42)") &&
-		source.includes("containerHeight * (hasSidePieLegend ? 0.43 : 0.38)") &&
-		source.includes("hasSidePieLegend ? 58 : 62"),
-	"Pie previews should keep the pie large while reserving side space for paper-like legends"
+		source.includes("const sideLegendColumnWidth = hasSidePieLegend") &&
+		source.includes("const maxPieRadiusByWidth = hasSidePieLegend") &&
+		source.includes("(containerWidth - sideLegendColumnWidth * 2 - pieSideGap * 2) / 2") &&
+		source.includes("hasSidePieLegend ? 44 : 62"),
+	"Pie previews should keep the pie readable while reserving enough side space so legends do not cover it"
 );
 assert(
 	source.includes('attr("class", "pie-value-label")') &&

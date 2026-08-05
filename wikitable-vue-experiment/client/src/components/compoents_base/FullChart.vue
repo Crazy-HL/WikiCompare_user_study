@@ -414,6 +414,9 @@
 		const splitIndex = Math.ceil(pieLegendNames.length / 2);
 		const chartWidth = chartEl.value?.clientWidth || 760;
 		const sideInset = chartWidth < 640 ? 112 : 148;
+		const pieOuterRadius = isSingle
+			? null
+			: Math.max(82, Math.min(150, (chartWidth - 2 * sideInset - 40) / 2));
 		const legendFormatter = name =>
 			name.length > (chartWidth < 640 ? 12 : 18)
 				? `${name.slice(0, chartWidth < 640 ? 11 : 17)}…`
@@ -467,7 +470,7 @@
 			series: [
 				{
 					type: "pie",
-					radius: isSingle ? ["44%", "68%"] : ["0%", chartWidth < 640 ? "56%" : "62%"],
+					radius: isSingle ? ["44%", "68%"] : [0, pieOuterRadius],
 					center: ["50%", "50%"],
 					data: seriesData,
 					minAngle: 2,
