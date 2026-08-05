@@ -1,21 +1,13 @@
 const { defineConfig } = require('@vue/cli-service')
+
 module.exports = defineConfig({
   transpileDependencies: true,
-  //配置代理服务器
-  // devServer:{
-  //   proxy:{
-  //     '/baidu':{
-  //       target:'https://baike.baidu.com',
-  //       pathRewrite:{'^/baidu':''},
-  //       ws:true,
-  //       changeOrigin:true
-  //     },
-  //     '/wk':{
-  //       target:'https://zh.wikipedia.org',
-  //       pathRewrite:{'^/wk':''},
-  //       ws:true,
-  //       changeOrigin:true
-  //     },
-  //   }
-  // }
+  devServer: {
+    proxy: {
+      '/api': {
+        target: process.env.VUE_APP_DEV_API_TARGET || 'http://127.0.0.1:8888',
+        changeOrigin: true,
+      },
+    },
+  },
 })
