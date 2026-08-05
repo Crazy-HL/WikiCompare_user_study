@@ -9,6 +9,7 @@ from .defaults import DEFAULT_MATERIALS
 from .question_generation import generate_questions_from_material, normalize_generated_questions
 from .static_table_generation import generate_static_table_from_material
 from .storage import ExperimentStorage
+from services.config import get_config_value
 
 ADMIN_TOKENS = set()
 DEFAULT_DEV_CORS_ORIGINS = {
@@ -33,11 +34,11 @@ def configured_cors_origins():
 
 
 def insecure_admin_default_enabled():
-    return os.environ.get("EXPERIMENT_ALLOW_INSECURE_ADMIN_DEFAULT", "").lower() in {"1", "true", "yes"}
+    return (get_config_value("EXPERIMENT_ALLOW_INSECURE_ADMIN_DEFAULT") or "").lower() in {"1", "true", "yes"}
 
 
 def expected_admin_password():
-    password = os.environ.get("EXPERIMENT_ADMIN_PASSWORD")
+    password = get_config_value("EXPERIMENT_ADMIN_PASSWORD")
     if password:
         return password
     if insecure_admin_default_enabled():

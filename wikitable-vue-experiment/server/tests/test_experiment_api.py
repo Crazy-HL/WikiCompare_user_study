@@ -2,6 +2,7 @@ import json
 from unittest import mock
 import os
 import tempfile
+from pathlib import Path
 
 from tornado.testing import AsyncHTTPTestCase
 
@@ -491,9 +492,21 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert response.code == 400
         assert "frozen" in json.loads(response.body)["error"]
 
+    def test_admin_login_loads_password_from_env_file_when_process_env_missing(self):
+        os.environ.pop("EXPERIMENT_ADMIN_PASSWORD", None)
+        env_file = Path(self.tmpdir.name) / ".env"
+        env_file.write_text('EXPERIMENT_ADMIN_PASSWORD="from-file"\n', encoding="utf-8")
+
+        with mock.patch("services.config.DEFAULT_ENV_FILES", (env_file,)):
+            response = self.post_json("/api/admin/login", {"password": "from-file"})
+
+        assert response.code == 200
+        assert "token" in json.loads(response.body)
+
     def test_admin_login_requires_configured_password(self):
         os.environ.pop("EXPERIMENT_ADMIN_PASSWORD", None)
-        response = self.post_json("/api/admin/login", {"password": "admin"})
+        with mock.patch("services.config.DEFAULT_ENV_FILES", tuple()):
+            response = self.post_json("/api/admin/login", {"password": "admin"})
         assert response.code == 503
         assert "EXPERIMENT_ADMIN_PASSWORD" in json.loads(response.body)["error"]
 

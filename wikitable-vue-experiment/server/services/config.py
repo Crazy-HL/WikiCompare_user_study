@@ -27,7 +27,7 @@ class LLMConfig:
 
 
 def get_llm_config(env_file: str | Path | None = None) -> LLMConfig:
-    file_values = _read_env_values(env_file) if env_file else _read_first_existing_env(DEFAULT_ENV_FILES)
+    file_values = read_env_config(env_file)
     return LLMConfig(
         model=_config_value("OPENAI_MODEL", file_values) or DEFAULT_MODEL,
         base_url=_config_value("OPENAI_BASE_URL", file_values) or DEFAULT_BASE_URL,
@@ -37,6 +37,16 @@ def get_llm_config(env_file: str | Path | None = None) -> LLMConfig:
             DEFAULT_TIMEOUT_SECONDS,
         ),
     )
+
+
+def read_env_config(env_file: str | Path | None = None) -> dict[str, str]:
+    if env_file:
+        return _read_env_values(env_file)
+    return _read_first_existing_env(DEFAULT_ENV_FILES)
+
+
+def get_config_value(name: str, env_file: str | Path | None = None) -> str | None:
+    return _config_value(name, read_env_config(env_file))
 
 
 def _read_first_existing_env(paths: tuple[Path, ...]) -> dict[str, str]:
