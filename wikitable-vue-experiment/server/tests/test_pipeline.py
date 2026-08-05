@@ -2075,7 +2075,7 @@ def test_import_partner_percentages_are_completed_for_pie_charts():
         {
             "id": "left-import-partners",
             "key": "Main import partners",
-            "valueText": "Main import partners: China 24.6% Hong Kong 5.1% United States 18.7% ASEAN 16.7% European Union 10.0% Taiwan 5.0% Japan 4.3% (2024)",
+            "valueText": "Main import partners: China 24.6% Hong Kong 5.1% United States 18.7% ASEAN 16.7% European Union 10.0% Taiwan 5.0% Japan 4.3% Australia 1.2% (2024)",
             "source": "infobox",
             "sourceIds": ["left-info-27"],
         },

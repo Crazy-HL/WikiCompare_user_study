@@ -2174,7 +2174,7 @@ def _chart_type_for_values(
             and not _is_non_exhaustive_share_context(row_label, left_text, right_text, left_values, right_values)
         ):
             side_count = max(len(left_values), len(right_values))
-            max_pie_slices = 8 if _is_partner_share_context(row_label, left_text, right_text) else 4
+            max_pie_slices = 10 if _is_partner_share_context(row_label, left_text, right_text) else 4
             return "pie" if side_count <= max_pie_slices else "stacked"
         return "line" if _is_year_series(left_values) or _is_year_series(right_values) else "bar"
     return choose_chart_type(data_type, point_count)
