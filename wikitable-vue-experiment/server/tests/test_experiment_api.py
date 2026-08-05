@@ -553,7 +553,11 @@ class ExperimentApiTest(AsyncHTTPTestCase):
 
         with mock.patch(
             "experiment.handlers.generate_static_table_from_material",
-            return_value={"rows": generated_rows, "generation_prompts": prompts},
+            return_value={
+                "rows": generated_rows,
+                "markdown_table": "| Left | 可比属性 | Right |\n| --- | --- | --- |\n| 1 | GDP | 2 |",
+                "generation_prompts": prompts,
+            },
         ):
             generated = self.post_json(
                 "/api/admin/static-table/generate",
@@ -564,10 +568,13 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert generated.code == 200
         generated_payload = json.loads(generated.body)
         assert generated_payload["generation_prompts"]["static_table_prompt"]["system"] == "static table system"
+        assert generated_payload["markdown_table"].startswith("| Left | 可比属性 | Right |")
 
         admin_get = self.fetch("/api/admin/static-table?materialId=M1", headers={"X-Admin-Token": token})
         assert admin_get.code == 200
-        assert json.loads(admin_get.body)["generation_prompts"]["static_table_prompt"]["user"] == "static table user"
+        admin_payload = json.loads(admin_get.body)
+        assert admin_payload["generation_prompts"]["static_table_prompt"]["user"] == "static table user"
+        assert admin_payload["markdown_table"].startswith("| Left | 可比属性 | Right |")
 
         frozen = self.post_json("/api/admin/static-table/freeze", {"materialId": "M1"}, headers={"X-Admin-Token": token})
         assert frozen.code == 200
@@ -576,6 +583,7 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert participant.code == 200
         participant_payload = json.loads(participant.body)
         assert "generation_prompts" not in participant_payload
+        assert "markdown_table" not in participant_payload
         assert "static table user" not in participant.body.decode("utf-8")
 
     def test_static_tables_admin_and_participant_freeze_flow(self):

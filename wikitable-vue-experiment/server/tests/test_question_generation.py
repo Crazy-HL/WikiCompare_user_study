@@ -33,6 +33,123 @@ def test_build_question_prompt_includes_complete_infobox_and_body_sections():
     assert "Q5【综合结论证据验证】" in prompt
 
 
+def test_build_question_prompt_defines_all_five_docx_question_types_rigorously():
+    prompt = build_question_prompt(
+        {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
+        {"title": "Left", "paragraphs": [{"id": "L-P001", "text": "Left body."}]},
+        {"title": "Right", "paragraphs": [{"id": "R-P001", "text": "Right body."}]},
+    )
+
+    assert "实验设计文档中的 Q1-Q5 固定题型" in prompt
+    assert "Q1【单维事实比较】" in prompt
+    assert "Q1 是要求参与者比较两篇文章中同一个明确属性、事实、类别或数值" in prompt
+    assert "只围绕一个比较维度" in prompt
+    assert "Q2【结构、组成或变化模式比较】" in prompt
+    assert "不是比较一个单独事实，而是比较一个由多个元素组成的模式" in prompt
+    assert "没有时间序列却强行问“趋势”" in prompt
+    assert "Q3【跨属性综合比较】" in prompt
+    assert "至少两个相关属性或事实条件" in prompt
+    assert "不得只是把两个独立事实题简单拼接" in prompt
+    assert "Q4【明确背景、过程或原因理解】" in prompt
+    assert "主要证据应来自正文" in prompt
+    assert "禁止开放式问“为什么”但材料没有明确原因" in prompt
+    assert "Q5【综合结论证据验证】" in prompt
+    assert "参与者只能在以下三种答案中选择：支持、不支持、材料不足" in prompt
+    assert "材料不足不是“不支持”" in prompt
+    assert "每种类型先在内部生成至少2个候选问题" in prompt
+
+
+def test_question_generation_prompt_metadata_includes_validation_prompt(monkeypatch):
+    import experiment.question_generation as question_generation
+
+    monkeypatch.setattr(
+        question_generation,
+        "load_material_articles",
+        lambda material: (
+            {"title": "Left", "paragraphs": [{"id": "L-P001", "text": "Left fact."}]},
+            {"title": "Right", "paragraphs": [{"id": "R-P001", "text": "Right fact."}]},
+        ),
+    )
+
+    class PromptCapturingClient:
+        def chat_json(self, messages):
+            return {
+                "questions": [
+                    {"question_id": f"Q{index}", "question_text": f"Question {index}", "gold_atoms": []}
+                    for index in range(1, 6)
+                ]
+            }
+
+    result = question_generation.generate_questions_from_material(
+        {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
+        11,
+        llm_client=PromptCapturingClient(),
+    )
+
+    prompts = result["generation_prompts"]
+    assert "validation_prompt" in prompts
+    assert "独立题目审查员" in prompts["validation_prompt"]["user"]
+    assert "Q1至Q5的理解操作是否真正不同" in prompts["validation_prompt"]["user"]
+    assert "overall" in prompts["validation_prompt"]["user"]
+    assert "Question 5" in prompts["validation_prompt"]["user"]
+
+
+def test_static_table_prompt_matches_docx_chatgpt_condition_markdown_table_rules():
+    prompt = build_static_table_prompt(
+        {"id": "M1", "leftTitle": "Left Article", "rightTitle": "Right Article", "staticTableRowCount": 10},
+        {"title": "Left Article", "paragraphs": [{"id": "L-P001", "text": "Left fact."}]},
+        {"title": "Right Article", "paragraphs": [{"id": "R-P001", "text": "Right fact."}]},
+    )
+
+    assert "提示词 1：ChatGPT 静态三栏表生成" in prompt
+    assert "生成一个用于比较阅读的静态三栏表" in prompt
+    assert "三列顺序固定为：Left Article｜可比属性｜Right Article" in prompt
+    assert "有效数据行必须恰好为 10 行" in prompt
+    assert "只输出一个 Markdown 三栏表" in prompt
+    assert "每个事实是否有真实来源编号" in prompt
+    assert "JSON" in prompt
+    assert "markdown_table" in prompt
+
+
+def test_static_table_generation_metadata_includes_chatgpt_control_prompt(monkeypatch):
+    import experiment.static_table_generation as static_table_generation
+
+    monkeypatch.setattr(
+        static_table_generation,
+        "load_material_articles",
+        lambda material: (
+            {"title": "Left", "paragraphs": [{"id": "L-P001", "text": "Left fact."}]},
+            {"title": "Right", "paragraphs": [{"id": "R-P001", "text": "Right fact."}]},
+        ),
+    )
+
+    class CapturingClient:
+        def chat_json(self, messages):
+            return {
+                "markdown_table": "| Left | 可比属性 | Right |\n| --- | --- | --- |\n| Left fact [L-P001] | Fact | Right fact [R-P001] |",
+                "rows": [
+                    {
+                        "id": "R1",
+                        "label": "Fact",
+                        "left": {"value": "Left fact [L-P001]"},
+                        "right": {"value": "Right fact [R-P001]"},
+                    }
+                ],
+            }
+
+    result = static_table_generation.generate_static_table_from_material(
+        {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
+        llm_client=CapturingClient(),
+    )
+
+    prompts = result["generation_prompts"]
+    assert "chatgpt_condition_control_prompt" in prompts
+    assert "提示词 0：ChatGPT 条件控制指令" in prompts["chatgpt_condition_control_prompt"]["title"]
+    assert "不得使用网页搜索" in prompts["chatgpt_condition_control_prompt"]["text"]
+    assert prompts["static_table_prompt"]["row_count"] == 10
+    assert result["markdown_table"].startswith("| Left | 可比属性 | Right |")
+
+
 def test_normalize_generated_questions_accepts_json_string_and_sets_version():
     raw = json.dumps({
         "material_id": "M1",

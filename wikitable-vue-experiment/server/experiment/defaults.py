@@ -40,4 +40,4 @@ DEFAULT_MATERIALS = [
     },
 ]
 
-QUESTION_PROMPT_VERSION = "wikicompare-experiment-prompt-2-2026-07-31"
+QUESTION_PROMPT_VERSION = "wikicompare-experiment-prompt-3-2026-08-05"

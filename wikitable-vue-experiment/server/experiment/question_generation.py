@@ -17,8 +17,9 @@ from .storage import utc_now_iso
 
 MAX_ARTICLE_PROMPT_CHARS = None
 COMPACT_ARTICLE_PROMPT_CHARS = 1800
-QUESTION_GENERATION_SYSTEM_PROMPT = "You generate bilingual comparison-reading experiment questions from complete article infoboxes and complete article bodies. Return JSON only; do not invent information."
-ANSWER_PROMPT_NOTE = "当前系统在同一次模型请求中共同生成参与者题目和管理员隐藏标准答案；没有单独的第二次答案生成 prompt。"
+QUESTION_GENERATION_SYSTEM_PROMPT = "You generate bilingual dual-document comparison-reading experiment questions from complete article infoboxes and complete article bodies. Follow the provided study-design prompt exactly, use only supplied source IDs, and return valid JSON only."
+QUESTION_VALIDATION_SYSTEM_PROMPT = "You are an independent reviewer for dual-document comparison-reading experiment questions. Use only the supplied materials, questions, and gold answers; return valid JSON only."
+ANSWER_PROMPT_NOTE = "当前系统按照《WikiCompare实验设计.docx》的提示词 2，在同一次模型请求中共同生成参与者 Q1-Q5 和管理员隐藏标准答案；没有单独的第二次答案生成 prompt。"
 MATERIAL_SNAPSHOT_DIR = Path(__file__).resolve().parent / "material_snapshots"
 
 
@@ -80,13 +81,16 @@ def _cap_article_lines(lines, max_chars):
 def build_question_prompt(material, left_article, right_article, max_article_chars=MAX_ARTICLE_PROMPT_CHARS):
     left_title = material.get("leftTitle") or left_article.get("title") or "左文"
     right_title = material.get("rightTitle") or right_article.get("title") or "右文"
-    return f"""你是双文档比较阅读实验的问题设计器。
+    material_id = material.get("id", "")
+    return f"""提示词 2：生成五个双文档比较问题
 
-你的任务是：只根据下面两篇冻结文章的完整 infobox 和完整正文，生成5个能够帮助读者理解两篇文章关系的问题，并同时生成研究人员使用的隐藏标准答案。
+你是双文档比较阅读实验的问题设计器。
 
-输入材料中的 infobox 和正文具有同等证据地位。题目、标准答案和来源编号都必须基于下方完整输入材料，不允许根据外部知识补充，不允许因为某些信息更容易生成而忽略 infobox 或正文。
+本 prompt 以《WikiCompare实验设计.docx》为唯一实验设计依据。你的任务是：只根据下面两篇冻结文章的完整 infobox 和完整正文，生成5个能够帮助读者理解两篇文章关系的问题，并同时生成研究人员使用的隐藏标准答案。
 
-问题不能为了适配三栏表而生成。三栏表只是参与者寻找答案时可能使用的一种工具。
+问题不能为了适配三栏表而生成。三栏表只是参与者寻找答案时可能使用的一种工具。生成题目时不得输入、引用或假设 WikiCompare 表格、ChatGPT 静态三栏表、可视化状态、系统高亮或界面位置。
+
+输入材料中的 infobox 和正文具有同等证据地位。题目、标准答案和来源编号都必须基于下方完整输入材料，不允许使用网页搜索、外部工具、连接器、模型记忆、常识补全或其他会话内容。材料没有提供或无法确定时，必须写“材料不足”，不得把推测写成文章事实。
 
 ================ 输入材料 ================
 
@@ -113,34 +117,115 @@ def build_question_prompt(material, left_article, right_article, max_article_cha
 6. 可以由两篇文章共同验证的具体结论；
 7. 不应作为问题依据的边缘事实、孤立字段和无法确定的信息。
 
-## 第二步：为每种类型生成候选问题
+问题应优先覆盖文章标题、导言、主要章节、infobox 核心内容和正文反复讨论的主题。不得仅因为某个数字容易提取就选择该数字。
+
+## 第二步：实验设计文档中的 Q1-Q5 固定题型
+
+请严格按以下五类题生成。Q1-Q5 的顺序、题型和主要理解目标不可改变。每种类型先在内部生成至少2个候选问题，然后按第三步标准选择最终题；候选问题不要输出。
 
 ### Q1【单维事实比较】
-只比较一个与文章核心主题有关的属性、事实或类别，必须需要同时查看左右文章。
+定义：Q1 是要求参与者比较两篇文章中同一个明确属性、事实、类别或数值的题目。它考察参与者能否在两篇文章中定位同一维度的信息，并形成一个简单、确定的比较判断。
+必须满足：
+- 只围绕一个比较维度；
+- 左右两篇文章都必须涉及该维度；
+- 答案必须包含左侧事实、右侧事实以及两者之间的明确比较关系；
+- 答案必须唯一，并能由材料中的真实来源编号直接支持。
+禁止生成：
+- 只问一篇文章的信息；
+- 同时比较多个不相关属性；
+- 问“哪个更重要”“哪个更好”；
+- 需要外部知识才能判断；
+- 只因为某个数字容易提取就生成题目。
+合格题目特征：在同一属性上，左文和右文分别是什么，二者有什么明确差异。
 
 ### Q2【结构、组成或变化模式比较】
-比较同一主题下的多个值、多个类别、多个时间点、组成关系、排名结构或发展阶段。
+定义：Q2 是要求参与者比较两篇文章中某一主题内部的结构、组成、类别、阶段、排名、分布或变化模式的题目。它不是比较一个单独事实，而是比较一个由多个元素组成的模式。
+必须满足：
+- 至少比较同一主题下的多个值、多个类别、多个时间点、组成关系、排名结构或发展阶段之一；
+- 答案必须描述左右两侧各自的结构或模式，并指出二者差异；
+- 如果材料没有时间序列，不得强行生成趋势题，应改用组成、类别结构、排名或阶段模式；
+- 标准答案必须避免“大致”“总体感觉”“可能”等模糊表达。
+禁止生成：
+- 只比较一个静态值；
+- 没有时间序列却强行问“趋势”；
+- 把多个无关事实拼成所谓“结构比较”；
+- 问无法穷尽的开放列表题。
+合格题目特征：两篇文章在某个主题的内部构成、阶段、类别或变化模式上分别是什么，结构上有什么不同。
 
 ### Q3【跨属性综合比较】
-必须结合至少两个内容上相关的重要属性，答案必须是有限、确定的判断。
+定义：Q3 是要求参与者结合两篇文章中的至少两个相关属性或事实条件，判断一个具体对象、关系或结论是否成立的题目。它考察参与者能否把多个相关信息点整合起来，而不是只提取单个事实。
+必须满足：
+- 至少涉及两个内容上相关的属性或事实条件；
+- 这些属性或条件之间必须与文章主题有实际关系；
+- 必须同时使用两篇文章信息；
+- 答案必须是有限、明确、可评分的；
+- 标准答案中的 gold_atoms 要分别对应每个必要事实点。
+禁止生成：
+- 不得只是把两个独立事实题简单拼接；
+- 不得问开放式总结、主观判断或文章外推理；
+- 不得生成多个合理答案都成立的问题。
+合格题目特征：结合多个相关属性后，左右两篇文章中的对象是否满足某个明确条件，或某个具体关系是否成立。
 
 ### Q4【明确背景、过程或原因理解】
-必须使用文章正文明确表达的背景、过程、原因、结果、政策、事件或发展关系。
+定义：Q4 是要求参与者理解两篇文章正文中明确表达的背景、过程、原因、结果、政策、事件、发展阶段或现象关系的题目。它考察的不是事实定位，而是对正文中明确关系的理解。
+必须满足：
+- 主要证据应来自正文，不能只来自 infobox；
+- 必须是文章明确说明的关系；
+- 可以比较两篇文章如何描述同类背景、过程或原因；
+- 如果没有明确因果关系，可以使用明确的时间顺序、发展阶段、事件过程、背景与现象关系、政策与结果关系；
+- 每个必要因素都必须有真实来源编号。
+禁止生成：
+- 禁止开放式问“为什么”但材料没有明确原因；
+- 禁止要求参与者自行推测、评价原因重要性或补充文章外解释；
+- 禁止把模型常识解释当作文章结论；
+- 如果答案有多个无法穷尽的合理版本，必须放弃该候选问题。
+合格题目特征：两篇文章分别如何明确描述某个现象的背景、过程、原因或结果关系。
 
 ### Q5【综合结论证据验证】
-提供一个与两篇文章核心内容相关的具体综合结论，参与者只能回答“支持”“不支持”或“材料不足”。
+定义：Q5 是给参与者一个具体的双文档综合结论，让参与者根据两篇文章判断这个结论是否被材料支持。Q5 考察证据验证能力，而不是自由回答能力。
+参与者只能在以下三种答案中选择：支持、不支持、材料不足。
+必须满足：
+- 题干必须给出一个具体、可验证、与两篇文章核心内容相关的综合结论；
+- 判断该结论至少需要两条证据，且证据应来自两篇文章；
+- 标准答案必须明确说明为什么是“支持”“不支持”或“材料不足”；
+- “支持”表示材料中有足够证据证明该综合结论成立；
+- “不支持”表示材料中存在相反证据，或者结论中的必要条件被材料明确否定；
+- “材料不足”表示材料没有提供足够信息判断该结论是否成立。材料不足不是“不支持”。
+禁止生成：
+- 结论过大、过泛或依赖外部知识；
+- 结论只是重复 Q1、Q2 或 Q3；
+- 参与者需要主观评价；
+- “不支持”和“材料不足”无法区分；
+- 只用一篇文章就能判断。
+合格题目特征：根据两篇文章中的证据，下面这个综合结论是支持、不支持，还是材料不足。
+
+## 第三步：选择最终五题
+
+从候选问题中各选择1题，顺序固定为 Q1 至 Q5。最终五题必须满足：
+1. 全部涉及两篇文章；
+2. 五题的主要理解目标不同；
+3. 五题共同覆盖两篇文章的核心内容；
+4. 不只是围绕三栏表中的字段提问；
+5. 不重复考察相同事实；
+6. Q1 至 Q5 的理解层次逐步提高；
+7. 每题答案都能由冻结文章唯一确定；
+8. 每个评分原子都有真实来源编号；
+9. 不需要外部知识、常识或主观意见；
+10. 问题文本不出现“三栏表”“表格行”“单元格”“可视化”“高亮”等界面词；
+11. 不使用“哪个更好”“哪个更重要”“你认为”“为什么会”“总体上有什么特点”等无法客观评分的问法；
+12. 如果任意一题不满足要求，重新选择候选题，不要降低标准。
 
 ## 输出格式
 
 只输出合法 JSON，不输出 Markdown 说明。结构如下：
 {{
-  "material_id": "{material.get('id', '')}",
+  "material_id": "{material_id}",
   "questions": [
     {{
       "question_id": "Q1",
       "question_type": "单维事实比较",
       "question_text": "给参与者显示的自然语言题目",
-      "answer_format": "结构化填写或固定选项",
+      "answer_format": "结构化填写或固定选项；Q5 必须为固定选项",
       "understanding_target": "该题帮助读者理解的文章核心内容",
       "gold_atoms": [
         {{
@@ -157,11 +242,89 @@ def build_question_prompt(material, left_article, right_article, max_article_cha
       "unique_answer": true,
       "uses_both_articles": true,
       "primary_evidence_distinct_from_previous": true
+    }},
+    {{
+      "question_id": "Q5",
+      "question_type": "综合结论证据验证",
+      "question_text": "根据两篇文章，判断以下综合结论是支持、不支持还是材料不足：……",
+      "answer_format": "固定选项",
+      "understanding_target": "该题帮助读者验证一个双文档综合结论",
+      "gold_atoms": [],
+      "answer_options": ["支持", "不支持", "材料不足"],
+      "unique_answer": true,
+      "uses_both_articles": true,
+      "primary_evidence_distinct_from_previous": true
     }}
   ]
 }}
 
-输出前逐题检查：题干前提真实、同时涉及两篇文章、存在唯一答案、每个评分原子有来源编号、Q1至Q5不重复、Q5清楚区分“不支持”和“材料不足”。"""
+输出前逐题静默检查：
+- 题干前提是否真实；
+- 是否同时涉及两篇文章；
+- 是否真的有助于理解文章；
+- 是否存在唯一答案；
+- 每个评分原子是否有来源编号；
+- 是否保留必要的年份、单位和口径；
+- 是否与其他题重复；
+- 是否把推测写成文章事实；
+- Q4 是否有明确正文依据；
+- Q5 是否清楚区分“不支持”和“材料不足”。"""
+
+
+def build_question_validation_prompt(material, questions):
+    material_id = material.get("id", "") if isinstance(material, dict) else ""
+    question_json = json.dumps({"material_id": material_id, "questions": questions}, ensure_ascii=False, indent=2)
+    return f"""提示词 3：验证问题是否合理
+
+你是双文档比较阅读实验的独立题目审查员。
+
+请逐题检查以下 Q1-Q5，不要自行补充文章外知识。你的任务是判断题目能否进入正式实验，而不是评价题目写得是否漂亮。
+
+================ 待审查题目与隐藏标准答案 ================
+{question_json}
+==========================================================
+
+每道题检查以下项目：
+1. 题目是否同时涉及两篇文章；
+2. 题目是否与两篇文章的核心内容直接相关；
+3. 参与者回答后是否能更好理解文章内容；
+4. 题目是否具有唯一确定答案；
+5. 隐藏标准答案是否被左右文章明确支持；
+6. 每个评分原子是否有真实、足够具体的来源编号；
+7. 是否遗漏年份、单位、范围或统计口径；
+8. 是否依赖外部知识、常识或研究人员推测；
+9. Q1至Q5的理解操作是否真正不同；
+10. 是否与其他题重复考察同一事实；
+11. Q4是否有明确正文关系，而不是开放式原因推测；
+12. Q5是否能区分支持、不支持和材料不足。
+
+特别按五类题目定义复核：
+- Q1 必须是单个明确维度的事实比较；
+- Q2 必须是结构、组成、类别、阶段、排名、分布或变化模式比较，不能只是单个静态值；
+- Q3 必须整合至少两个相关属性或事实条件，不能只是两个独立事实拼接；
+- Q4 的主要证据应来自正文明确关系，不能要求开放式推测原因；
+- Q5 必须只能回答“支持”“不支持”“材料不足”，并能清楚区分“不支持”和“材料不足”。
+
+输出合法 JSON：
+{{
+  "overall": "PASS 或 REJECT",
+  "question_reviews": [
+    {{
+      "question_id": "Q1",
+      "status": "PASS 或 REJECT",
+      "answer_is_unique": true,
+      "uses_both_articles": true,
+      "content_relevant": true,
+      "source_ids_valid": true,
+      "matches_question_type_definition": true,
+      "duplicate_with": [],
+      "problems": [],
+      "required_action": "无或重新生成"
+    }}
+  ]
+}}
+
+任何一道题存在两个合理答案、证据不足、内容不相关、依赖外部知识、与其他题重复，或不符合对应题型定义时，overall 必须为 REJECT。REJECT 后不要把该题直接带入正式实验。"""
 
 
 def parse_raw_json(raw):
@@ -302,7 +465,7 @@ def generate_questions_from_material(material, version, llm_client=None):
             raise
         raw_questions = _build_local_draft_questions(material, left_article, right_article)
     normalized = normalize_generated_questions(raw_questions, material.get("id", ""), version)
-    normalized.setdefault("generation_prompts", _generation_prompt_metadata(prompt))
+    normalized.setdefault("generation_prompts", _generation_prompt_metadata(prompt, normalized, material))
     return normalized
 
 
@@ -320,16 +483,24 @@ def _chat_question_generation(client, prompt):
 
 
 
-def _generation_prompt_metadata(user_prompt):
+def _generation_prompt_metadata(user_prompt, normalized_questions=None, material=None):
     prompt_pair = {
         "system": QUESTION_GENERATION_SYSTEM_PROMPT,
         "user": user_prompt,
     }
+    questions = []
+    if isinstance(normalized_questions, dict):
+        questions = normalized_questions.get("questions") or []
     return {
         "question_prompt": dict(prompt_pair),
         "answer_prompt": {
             **prompt_pair,
             "note": ANSWER_PROMPT_NOTE,
+        },
+        "validation_prompt": {
+            "system": QUESTION_VALIDATION_SYSTEM_PROMPT,
+            "user": build_question_validation_prompt(material or {}, questions),
+            "title": "提示词 3：验证问题是否合理",
         },
     }
 

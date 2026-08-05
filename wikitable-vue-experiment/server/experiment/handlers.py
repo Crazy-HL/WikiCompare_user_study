@@ -274,7 +274,7 @@ class AdminStaticTableHandler(JsonHandler, AdminMixin):
             return
         body = self.read_json()
         try:
-            self.write_json(storage().save_static_table(body.get("materialId", ""), body.get("rows")))
+            self.write_json(storage().save_static_table(body.get("materialId", ""), body.get("rows"), markdown_table=body.get("markdown_table")))
         except ValueError as error:
             self.write_error_json(str(error), status=400)
 
@@ -295,6 +295,7 @@ class AdminStaticTableGenerateHandler(JsonHandler, AdminMixin):
                 material_id,
                 generated.get("rows"),
                 generated.get("generation_prompts"),
+                generated.get("markdown_table"),
             ))
         except ValueError as error:
             self.write_error_json(str(error), status=400)

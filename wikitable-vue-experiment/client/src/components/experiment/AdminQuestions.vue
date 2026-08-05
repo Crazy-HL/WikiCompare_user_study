@@ -51,28 +51,32 @@
 				<p>这里给研究者查看自动生成题目、隐藏标准答案和 ChatGPT 静态三栏表时实际使用/保存的 prompt。旧版本如果没有记录，需要重新生成后才会显示完整 prompt。</p>
 			</header>
 			<div class="prompt-grid">
+				<details :open="Boolean(staticTablePromptInfo?.chatgpt_condition_control_prompt)">
+					<summary>提示词 0：ChatGPT 条件控制指令</summary>
+					<pre>{{ staticTablePromptInfo?.chatgpt_condition_control_prompt?.text || "旧版本没有保存 ChatGPT 条件控制指令；请重新生成 ChatGPT 三栏表后查看。" }}</pre>
+				</details>
+				<details :open="Boolean(staticTablePromptInfo)">
+					<summary>提示词 1：ChatGPT 静态三栏表生成</summary>
+					<pre>{{ staticTablePromptInfo?.static_table_prompt?.user || "旧版本没有保存静态三栏表生成提示词；请重新生成 ChatGPT 三栏表后查看。" }}</pre>
+				</details>
 				<details :open="Boolean(promptInfo)">
-					<summary>生成题目 System Prompt</summary>
+					<summary>提示词 2：生成五个双文档比较问题</summary>
+					<pre>{{ promptInfo?.question_prompt?.user || "旧版本没有保存题目生成提示词；请重新自动生成题目后查看。" }}</pre>
+				</details>
+				<details :open="Boolean(promptInfo?.validation_prompt)">
+					<summary>提示词 3：验证问题是否合理</summary>
+					<pre>{{ promptInfo?.validation_prompt?.user || "旧版本没有保存题目验证提示词；请重新自动生成题目后查看。" }}</pre>
+				</details>
+				<details>
+					<summary>技术信息：题目 System Prompt</summary>
 					<pre>{{ promptInfo?.question_prompt?.system || "旧版本没有保存题目 System Prompt；请重新自动生成题目后查看。" }}</pre>
 				</details>
 				<details>
-					<summary>生成题目 User Prompt</summary>
-					<pre>{{ promptInfo?.question_prompt?.user || "旧版本没有保存题目 User Prompt；请重新自动生成题目后查看。" }}</pre>
-				</details>
-				<details :open="Boolean(promptInfo?.answer_prompt)">
-					<summary>生成答案 / 隐藏标准答案 Prompt</summary>
-					<pre>{{ answerPromptText }}</pre>
-				</details>
-				<details :open="Boolean(staticTablePromptInfo)">
-					<summary>生成 ChatGPT 静态三栏表 System Prompt</summary>
+					<summary>技术信息：静态三栏表 System Prompt</summary>
 					<pre>{{ staticTablePromptInfo?.static_table_prompt?.system || "旧版本没有保存静态三栏表 System Prompt；请重新生成 ChatGPT 三栏表后查看。" }}</pre>
 				</details>
-				<details>
-					<summary>生成 ChatGPT 静态三栏表 User Prompt</summary>
-					<pre>{{ staticTablePromptInfo?.static_table_prompt?.user || "旧版本没有保存静态三栏表 User Prompt；请重新生成 ChatGPT 三栏表后查看。" }}</pre>
-				</details>
 				<div class="prompt-note">
-					<strong>答案 prompt 说明</strong>
+					<strong>隐藏标准答案说明</strong>
 					<p>{{ promptInfo?.answer_prompt?.note || "当前系统在同一次模型请求中共同生成参与者题目和管理员隐藏标准答案；没有单独的第二次答案生成 prompt。" }}</p>
 				</div>
 			</div>
@@ -247,17 +251,6 @@
 	const questionsFrozen = computed(() => questionPayload.value?.frozen === true);
 	const promptInfo = computed(() => questionPayload.value?.generation_prompts || null);
 	const staticTablePromptInfo = computed(() => staticTablePayload.value?.generation_prompts || null);
-	const answerPromptText = computed(() => {
-		if (!promptInfo.value?.answer_prompt) {
-			return "旧版本没有保存答案 Prompt；请重新自动生成题目后查看。";
-		}
-		const answerPrompt = promptInfo.value.answer_prompt;
-		return [
-			`System Prompt:\n${answerPrompt.system || "—"}`,
-			`User Prompt:\n${answerPrompt.user || "—"}`,
-			answerPrompt.note ? `说明:\n${answerPrompt.note}` : ""
-		].filter(Boolean).join("\n\n");
-	});
 
 	const showError = error => {
 		errorMessage.value = error.response?.data?.error || error.message || "操作失败，请稍后重试。";

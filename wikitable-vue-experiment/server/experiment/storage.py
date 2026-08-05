@@ -304,7 +304,7 @@ class ExperimentStorage:
             "rows": rows,
         }
 
-    def save_static_table(self, material_id, rows, generation_prompts=None):
+    def save_static_table(self, material_id, rows, generation_prompts=None, markdown_table=None):
         self.ensure_defaults()
         require_material_id(material_id)
         existing = self.load_static_table(material_id)
@@ -325,6 +325,10 @@ class ExperimentStorage:
         }
         if isinstance(generation_prompts, dict):
             payload["generation_prompts"] = generation_prompts
+        if isinstance(markdown_table, str) and markdown_table.strip():
+            payload["markdown_table"] = markdown_table
+        elif "markdown_table" in payload:
+            payload.pop("markdown_table", None)
         atomic_write_json(self.static_tables_dir / f"{material_id}.json", payload)
         return payload
 
