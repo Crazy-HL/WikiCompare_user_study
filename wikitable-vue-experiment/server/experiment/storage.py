@@ -304,7 +304,7 @@ class ExperimentStorage:
             "rows": rows,
         }
 
-    def save_static_table(self, material_id, rows):
+    def save_static_table(self, material_id, rows, generation_prompts=None):
         self.ensure_defaults()
         require_material_id(material_id)
         existing = self.load_static_table(material_id)
@@ -323,6 +323,8 @@ class ExperimentStorage:
             "rows": rows,
             "updated_at": utc_now_iso(),
         }
+        if isinstance(generation_prompts, dict):
+            payload["generation_prompts"] = generation_prompts
         atomic_write_json(self.static_tables_dir / f"{material_id}.json", payload)
         return payload
 

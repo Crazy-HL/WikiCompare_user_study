@@ -91,7 +91,18 @@ def generate_static_table_from_material(material, llm_client=None):
         {"role": "system", "content": STATIC_TABLE_GENERATION_SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ])
-    return normalize_static_table(raw_table)
+    normalized = normalize_static_table(raw_table)
+    normalized.setdefault("generation_prompts", _generation_prompt_metadata(prompt))
+    return normalized
+
+
+def _generation_prompt_metadata(user_prompt):
+    return {
+        "static_table_prompt": {
+            "system": STATIC_TABLE_GENERATION_SYSTEM_PROMPT,
+            "user": user_prompt,
+        }
+    }
 
 
 def _normalize_static_row(row, index):

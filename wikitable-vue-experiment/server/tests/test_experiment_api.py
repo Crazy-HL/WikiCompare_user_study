@@ -538,6 +538,46 @@ class ExperimentApiTest(AsyncHTTPTestCase):
         assert public_after_freeze.code == 200
         assert json.loads(public_after_freeze.body)["rows"] == generated_rows
 
+    def test_admin_static_table_keeps_generation_prompt_while_participant_payload_redacts_it(self):
+        login = self.post_json("/api/admin/login", {"password": "secret"})
+        token = json.loads(login.body)["token"]
+        generated_rows = [
+            {"id": "R1", "label": "GDP", "left": {"value": "1"}, "right": {"value": "2"}},
+        ]
+        prompts = {
+            "static_table_prompt": {
+                "system": "static table system",
+                "user": "static table user",
+            }
+        }
+
+        with mock.patch(
+            "experiment.handlers.generate_static_table_from_material",
+            return_value={"rows": generated_rows, "generation_prompts": prompts},
+        ):
+            generated = self.post_json(
+                "/api/admin/static-table/generate",
+                {"materialId": "M1"},
+                headers={"X-Admin-Token": token},
+            )
+
+        assert generated.code == 200
+        generated_payload = json.loads(generated.body)
+        assert generated_payload["generation_prompts"]["static_table_prompt"]["system"] == "static table system"
+
+        admin_get = self.fetch("/api/admin/static-table?materialId=M1", headers={"X-Admin-Token": token})
+        assert admin_get.code == 200
+        assert json.loads(admin_get.body)["generation_prompts"]["static_table_prompt"]["user"] == "static table user"
+
+        frozen = self.post_json("/api/admin/static-table/freeze", {"materialId": "M1"}, headers={"X-Admin-Token": token})
+        assert frozen.code == 200
+
+        participant = self.fetch("/api/experiment/static-table?materialId=M1")
+        assert participant.code == 200
+        participant_payload = json.loads(participant.body)
+        assert "generation_prompts" not in participant_payload
+        assert "static table user" not in participant.body.decode("utf-8")
+
     def test_static_tables_admin_and_participant_freeze_flow(self):
         unfrozen_public = self.fetch("/api/experiment/static-table?materialId=M1")
         assert unfrozen_public.code == 400

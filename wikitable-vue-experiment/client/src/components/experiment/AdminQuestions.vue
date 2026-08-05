@@ -47,24 +47,35 @@
 
 		<section class="prompt-card">
 			<header>
-				<h3>生成题目与答案的提示词</h3>
-				<p>当前系统在同一次模型请求中生成参与者题目和管理员隐藏标准答案，因此答案 prompt 与题目 prompt 是同一组请求。</p>
+				<h3>生成提示词</h3>
+				<p>这里给研究者查看自动生成题目、隐藏标准答案和 ChatGPT 静态三栏表时实际使用/保存的 prompt。旧版本如果没有记录，需要重新生成后才会显示完整 prompt。</p>
 			</header>
-			<div v-if="promptInfo" class="prompt-grid">
-				<details open>
-					<summary>题目/答案共同生成 System Prompt</summary>
-					<pre>{{ promptInfo.question_prompt?.system || promptInfo.answer_prompt?.system || "—" }}</pre>
+			<div class="prompt-grid">
+				<details :open="Boolean(promptInfo)">
+					<summary>生成题目 System Prompt</summary>
+					<pre>{{ promptInfo?.question_prompt?.system || "旧版本没有保存题目 System Prompt；请重新自动生成题目后查看。" }}</pre>
 				</details>
 				<details>
-					<summary>题目/答案共同生成 User Prompt</summary>
-					<pre>{{ promptInfo.question_prompt?.user || promptInfo.answer_prompt?.user || "—" }}</pre>
+					<summary>生成题目 User Prompt</summary>
+					<pre>{{ promptInfo?.question_prompt?.user || "旧版本没有保存题目 User Prompt；请重新自动生成题目后查看。" }}</pre>
+				</details>
+				<details :open="Boolean(promptInfo?.answer_prompt)">
+					<summary>生成答案 / 隐藏标准答案 Prompt</summary>
+					<pre>{{ answerPromptText }}</pre>
+				</details>
+				<details :open="Boolean(staticTablePromptInfo)">
+					<summary>生成 ChatGPT 静态三栏表 System Prompt</summary>
+					<pre>{{ staticTablePromptInfo?.static_table_prompt?.system || "旧版本没有保存静态三栏表 System Prompt；请重新生成 ChatGPT 三栏表后查看。" }}</pre>
+				</details>
+				<details>
+					<summary>生成 ChatGPT 静态三栏表 User Prompt</summary>
+					<pre>{{ staticTablePromptInfo?.static_table_prompt?.user || "旧版本没有保存静态三栏表 User Prompt；请重新生成 ChatGPT 三栏表后查看。" }}</pre>
 				</details>
 				<div class="prompt-note">
-					<strong>答案生成 prompt 说明</strong>
-					<p>{{ promptInfo.answer_prompt?.note || "隐藏标准答案与题目在同一次模型请求中共同生成，没有单独的第二次答案生成 prompt。" }}</p>
+					<strong>答案 prompt 说明</strong>
+					<p>{{ promptInfo?.answer_prompt?.note || "当前系统在同一次模型请求中共同生成参与者题目和管理员隐藏标准答案；没有单独的第二次答案生成 prompt。" }}</p>
 				</div>
 			</div>
-			<div v-else class="empty-state">当前题目没有保存 prompt 记录。重新自动生成题目后，这里会显示实际使用的题目/答案 prompt。</div>
 		</section>
 
 		<div v-if="loading" class="loading-state">正在加载配置...</div>
@@ -166,48 +177,30 @@
 			</div>
 
 			<div v-if="!staticTableDraftRows.length" class="empty-state">当前材料尚未生成 ChatGPT 静态三栏表。请点击“生成 ChatGPT 三栏表”。</div>
-			<div v-else class="gpt-table-output" aria-label="ChatGPT 静态三栏表预览">
-				<table class="gpt-markdown-table">
+			<div v-else class="gpt-table-output" aria-label="ChatGPT 静态三栏表预览与编辑">
+				<table class="gpt-markdown-table" :class="{ editable: !staticTablePayload?.frozen }">
 					<thead>
 						<tr>
 							<th>左侧</th>
 							<th>比较项</th>
 							<th>右侧</th>
+							<th v-if="!staticTablePayload?.frozen" class="row-actions">操作</th>
 						</tr>
 					</thead>
 					<tbody>
 						<tr v-for="(row, index) in staticTableDraftRows" :key="row.draft_id || row.id || index">
-							<td>{{ sideValue(row, "left") }}</td>
-							<td class="comparison-label">{{ row.label || `比较项 ${index + 1}` }}</td>
-							<td>{{ sideValue(row, "right") }}</td>
+							<td v-if="staticTablePayload?.frozen">{{ sideValue(row, "left") }}</td>
+							<td v-else><textarea v-model="row.left.value" rows="3" :disabled="saving" aria-label="左侧内容"></textarea></td>
+							<td v-if="staticTablePayload?.frozen" class="comparison-label">{{ row.label || `比较项 ${index + 1}` }}</td>
+							<td v-else><input v-model="row.label" :disabled="saving" aria-label="比较项" /></td>
+							<td v-if="staticTablePayload?.frozen">{{ sideValue(row, "right") }}</td>
+							<td v-else><textarea v-model="row.right.value" rows="3" :disabled="saving" aria-label="右侧内容"></textarea></td>
+							<td v-if="!staticTablePayload?.frozen" class="row-actions">
+								<button type="button" :disabled="saving || staticTableDraftRows.length <= 1" @click="removeStaticTableRow(index)">删除</button>
+							</td>
 						</tr>
 					</tbody>
 				</table>
-			</div>
-
-			<div v-if="staticTableDraftRows.length && !staticTablePayload?.frozen" class="static-table-editor" aria-label="编辑 ChatGPT 静态三栏表">
-				<div class="editor-heading">
-					<strong>修改表格内容</strong>
-					<span>上方预览会实时更新；点击“保存表格修改”后才会写入后台文件。</span>
-				</div>
-				<div class="static-row-editor" v-for="(row, index) in staticTableDraftRows" :key="`edit-${row.draft_id || row.id || index}`">
-					<div class="static-row-header">
-						<strong>第 {{ index + 1 }} 行</strong>
-						<button type="button" :disabled="saving || staticTableDraftRows.length <= 1" @click="removeStaticTableRow(index)">删除</button>
-					</div>
-					<label>
-						<span>左侧</span>
-						<textarea v-model="row.left.value" rows="3" :disabled="saving"></textarea>
-					</label>
-					<label>
-						<span>比较项</span>
-						<input v-model="row.label" :disabled="saving" />
-					</label>
-					<label>
-						<span>右侧</span>
-						<textarea v-model="row.right.value" rows="3" :disabled="saving"></textarea>
-					</label>
-				</div>
 			</div>
 		</section>
 	</section>
@@ -253,6 +246,18 @@
 	const questions = computed(() => questionPayload.value?.questions || []);
 	const questionsFrozen = computed(() => questionPayload.value?.frozen === true);
 	const promptInfo = computed(() => questionPayload.value?.generation_prompts || null);
+	const staticTablePromptInfo = computed(() => staticTablePayload.value?.generation_prompts || null);
+	const answerPromptText = computed(() => {
+		if (!promptInfo.value?.answer_prompt) {
+			return "旧版本没有保存答案 Prompt；请重新自动生成题目后查看。";
+		}
+		const answerPrompt = promptInfo.value.answer_prompt;
+		return [
+			`System Prompt:\n${answerPrompt.system || "—"}`,
+			`User Prompt:\n${answerPrompt.user || "—"}`,
+			answerPrompt.note ? `说明:\n${answerPrompt.note}` : ""
+		].filter(Boolean).join("\n\n");
+	});
 
 	const showError = error => {
 		errorMessage.value = error.response?.data?.error || error.message || "操作失败，请稍后重试。";
@@ -579,7 +584,7 @@
 	dt { font-weight: 900; color: #334155; }
 	dd { margin: 0; color: #475569; line-height: 1.6; }
 	.gold-block, .static-table-card, .question-edit-form, .atom-editor, .prompt-grid { display: grid; gap: 12px; }
-	.gold-block strong, .static-table-card label, .question-edit-form label, .atom-editor strong { font-weight: 900; color: #334155; }
+	.gold-block strong, .question-edit-form label, .atom-editor strong { font-weight: 900; color: #334155; }
 	.question-edit-form label, .atom-edit-card label { display: grid; gap: 6px; }
 	.atom-editor header, .atom-edit-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 	.gold-atom-list { display: grid; gap: 10px; }
@@ -598,16 +603,13 @@
 	.gpt-markdown-table th, .gpt-markdown-table td { border: 1px solid #d9d9e3; padding: 8px 12px; text-align: left; vertical-align: top; font-weight: 400; white-space: pre-wrap; overflow-wrap: anywhere; }
 	.gpt-markdown-table th { background: #f7f7f8; color: #0d0d0d; font-weight: 600; }
 	.gpt-markdown-table tbody tr:nth-child(even) td { background: #fcfcfd; }
+	.gpt-markdown-table.editable td { padding: 0; background: #ffffff; }
+	.gpt-markdown-table.editable td.row-actions { padding: 8px; width: 88px; text-align: center; }
+	.gpt-markdown-table.editable textarea, .gpt-markdown-table.editable input { display: block; width: 100%; min-width: 180px; box-sizing: border-box; border: 0; border-radius: 0; padding: 8px 12px; background: transparent; color: #0d0d0d; font: inherit; line-height: 1.55; resize: vertical; outline: none; }
+	.gpt-markdown-table.editable textarea { min-height: 82px; }
+	.gpt-markdown-table.editable input { min-height: 40px; }
+	.gpt-markdown-table.editable textarea:focus, .gpt-markdown-table.editable input:focus { box-shadow: inset 0 0 0 2px rgba(16, 163, 127, 0.35); background: #ffffff; }
 	.comparison-label { font-weight: 400; color: #0d0d0d; }
-	.static-table-editor { display: grid; gap: 12px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; background: #f8fafc; }
-	.editor-heading { display: grid; gap: 4px; }
-	.editor-heading strong { color: #334155; font-weight: 900; }
-	.editor-heading span { color: #64748b; font-size: 13px; line-height: 1.5; }
-	.static-row-editor { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.65fr) minmax(180px, 1fr); gap: 10px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 12px; background: #ffffff; }
-	.static-row-header { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #334155; }
-	.static-row-editor label { display: grid; gap: 6px; }
-	.static-row-editor label span { color: #64748b; font-size: 12px; font-weight: 900; }
-	.static-row-editor textarea { min-height: 78px; }
 	.action-row { display: flex; flex-wrap: wrap; gap: 10px; }
 	button { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 14px; background: #ffffff; color: #172033; font-weight: 900; cursor: pointer; }
 	button.primary { border-color: #2563eb; background: #2563eb; color: #ffffff; }
@@ -619,6 +621,5 @@
 		.panel-header, .question-actions-card, .question-card header { display: grid; }
 		.material-select { min-width: 0; }
 		.card-actions { justify-content: flex-start; }
-		.static-row-editor { grid-template-columns: 1fr; }
 	}
 </style>

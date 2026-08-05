@@ -291,7 +291,11 @@ class AdminStaticTableGenerateHandler(JsonHandler, AdminMixin):
             return
         try:
             generated = generate_static_table_from_material(material)
-            self.write_json(storage().save_static_table(material_id, generated.get("rows")))
+            self.write_json(storage().save_static_table(
+                material_id,
+                generated.get("rows"),
+                generated.get("generation_prompts"),
+            ))
         except ValueError as error:
             self.write_error_json(str(error), status=400)
         except Exception as error:
