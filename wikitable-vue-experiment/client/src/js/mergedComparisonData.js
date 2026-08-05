@@ -12,6 +12,7 @@ const {
 	FALLBACK_CATEGORY_COLORS,
 	PAPER_PIE_COLORS,
 	buildCategoryColorMap,
+	colorFromMap,
 } = require("./chartTheme");
 
 const SIDE_KEYS = ["left", "right"];
@@ -178,7 +179,19 @@ function mergedCategoryColors(sides, row) {
 	const palette = mergeVisualization === "pie-chart"
 		? PAPER_PIE_COLORS
 		: FALLBACK_CATEGORY_COLORS;
-	return buildCategoryColorMap(labels, palette);
+	const generated = buildCategoryColorMap(labels, palette);
+	const rowColors = row && typeof row.categoryColors === "object" && row.categoryColors !== null
+		? row.categoryColors
+		: {};
+	const merged = { ...generated };
+	Object.keys(merged).forEach(label => {
+		const sharedColor = colorFromMap(rowColors, label);
+		if (sharedColor) merged[label] = sharedColor;
+	});
+	Object.entries(rowColors).forEach(([label, color]) => {
+		if (label && color && !colorFromMap(merged, label)) merged[label] = color;
+	});
+	return merged;
 }
 
 function displayForPoint(point, raw, dataType) {

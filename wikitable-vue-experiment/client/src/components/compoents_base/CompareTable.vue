@@ -712,7 +712,8 @@
 			side: "",
 			row: {
 				...row,
-				mergeVisualization: chartVisualization(row)
+				mergeVisualization: chartVisualization(row),
+				categoryColors: rowCategoryColorMap(row)
 			},
 			titles: {
 				left: articleTitle("left"),
