@@ -3,20 +3,34 @@ from types import SimpleNamespace
 
 import requests
 
-from experiment.question_generation import build_question_prompt, normalize_generated_questions
+from experiment.question_generation import article_text, build_question_prompt, normalize_generated_questions
+from experiment.static_table_generation import build_static_table_prompt
 
 
-def test_build_question_prompt_includes_material_and_required_question_types():
+def test_build_question_prompt_includes_complete_infobox_and_body_sections():
     prompt = build_question_prompt(
         {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
-        {"title": "Left", "paragraphs": [{"id": "L-P001", "text": "Left text."}]},
-        {"title": "Right", "paragraphs": [{"id": "R-P001", "text": "Right text."}]},
+        {
+            "title": "Left",
+            "infobox": [{"id": "L-I001", "label": "GDP", "value": "Left GDP infobox value."}],
+            "paragraphs": [{"id": "L-P001", "text": "Left body text."}],
+        },
+        {
+            "title": "Right",
+            "infobox": [{"id": "R-I001", "label": "GDP", "value": "Right GDP infobox value."}],
+            "paragraphs": [{"id": "R-P001", "text": "Right body text."}],
+        },
     )
-    assert "只根据下面两篇冻结文章" in prompt
+    assert "完整 infobox" in prompt
+    assert "完整正文" in prompt
+    assert "【Infobox】" in prompt
+    assert "【正文】" in prompt
+    assert "[L-I001] GDP: Left GDP infobox value." in prompt
+    assert "[R-I001] GDP: Right GDP infobox value." in prompt
+    assert "[L-P001] Left body text." in prompt
+    assert "[R-P001] Right body text." in prompt
     assert "Q1【单维事实比较】" in prompt
     assert "Q5【综合结论证据验证】" in prompt
-    assert "Left text." in prompt
-    assert "Right text." in prompt
 
 
 def test_normalize_generated_questions_accepts_json_string_and_sets_version():
@@ -61,7 +75,35 @@ def test_normalize_generated_questions_rejects_non_object_question_items():
         raise AssertionError("Expected ValueError")
 
 
-def test_build_question_prompt_caps_long_article_contexts_to_avoid_provider_gateway_timeout():
+def test_article_text_supports_parsed_infobox_key_and_value_text_fields():
+    rendered = article_text({
+        "infobox": [{"id": "left-info-1", "key": "GDP", "valueText": "1 trillion"}],
+        "paragraphs": [{"id": "left-p-1", "text": "Body fact."}],
+    })
+
+    assert "[left-info-1] GDP: 1 trillion" in rendered
+    assert "[left-p-1] Body fact." in rendered
+    assert "未提取到 infobox" not in rendered
+
+
+def test_article_text_keeps_full_infobox_and_body_by_default():
+    article = {
+        "infobox": [{"id": "L-I001", "label": "Long infobox", "value": "i" * 6000}],
+        "paragraphs": [
+            {"id": "L-P001", "text": "first paragraph"},
+            {"id": "L-P089", "text": "late paragraph " + ("x" * 6000)},
+        ],
+    }
+
+    rendered = article_text(article)
+
+    assert "[L-I001] Long infobox: " + ("i" * 6000) in rendered
+    assert "[L-P001] first paragraph" in rendered
+    assert "[L-P089] late paragraph " + ("x" * 6000) in rendered
+    assert "内容已截断" not in rendered
+
+
+def test_build_question_prompt_keeps_late_article_content_without_truncation_by_default():
     long_left = [
         {"id": f"L-P{index:03d}", "text": "Left comparison evidence " + ("x" * 500)}
         for index in range(1, 90)
@@ -72,14 +114,47 @@ def test_build_question_prompt_caps_long_article_contexts_to_avoid_provider_gate
     ]
     prompt = build_question_prompt(
         {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
-        {"title": "Left", "paragraphs": long_left},
-        {"title": "Right", "paragraphs": long_right},
+        {"title": "Left", "infobox": [{"id": "L-I001", "label": "Population", "value": "full left infobox"}], "paragraphs": long_left},
+        {"title": "Right", "infobox": [{"id": "R-I001", "label": "Population", "value": "full right infobox"}], "paragraphs": long_right},
     )
 
-    assert len(prompt) <= 15000
+    assert "[L-I001] Population: full left infobox" in prompt
+    assert "[R-I001] Population: full right infobox" in prompt
     assert "L-P001" in prompt
     assert "R-P001" in prompt
-    assert "内容已截断" in prompt
+    assert "L-P089" in prompt
+    assert "R-P089" in prompt
+    assert "内容已截断" not in prompt
+
+
+def test_build_static_table_prompt_uses_complete_infobox_and_body_by_default():
+    prompt = build_static_table_prompt(
+        {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
+        {
+            "title": "Left",
+            "infobox": [{"id": "L-I001", "label": "Capital", "value": "Left capital"}],
+            "paragraphs": [
+                {"id": "L-P001", "text": "Left opening."},
+                {"id": "L-P050", "text": "Left late body evidence."},
+            ],
+        },
+        {
+            "title": "Right",
+            "infobox": [{"id": "R-I001", "label": "Capital", "value": "Right capital"}],
+            "paragraphs": [
+                {"id": "R-P001", "text": "Right opening."},
+                {"id": "R-P050", "text": "Right late body evidence."},
+            ],
+        },
+    )
+
+    assert "完整 infobox" in prompt
+    assert "完整正文" in prompt
+    assert "[L-I001] Capital: Left capital" in prompt
+    assert "[R-I001] Capital: Right capital" in prompt
+    assert "[L-P050] Left late body evidence." in prompt
+    assert "[R-P050] Right late body evidence." in prompt
+    assert "内容已截断" not in prompt
 
 
 def test_fetch_material_html_falls_back_to_openfactbook_snapshot_on_ssl_error(tmp_path, monkeypatch):
@@ -106,7 +181,7 @@ def test_fetch_material_html_falls_back_to_openfactbook_snapshot_on_ssl_error(tm
     assert "snapshot GDP text" in html
 
 
-def test_generate_questions_retries_with_compact_prompt_after_gateway_timeout(monkeypatch):
+def test_generate_questions_does_not_retry_with_compact_prompt_after_gateway_timeout(monkeypatch):
     import experiment.question_generation as question_generation
 
     long_paragraphs = [
@@ -150,9 +225,11 @@ def test_generate_questions_retries_with_compact_prompt_after_gateway_timeout(mo
     )
 
     assert result["material_id"] == "M2"
-    assert len(client.prompts) == 2
-    assert len(client.prompts[1]) < len(client.prompts[0])
-    assert "内容已截断" in client.prompts[1]
+    assert len(client.prompts) == 1
+    assert "left-p-19" in client.prompts[0]
+    assert "right-p-19" in client.prompts[0]
+    assert "内容已截断" not in client.prompts[0]
+    assert "本地备用生成" in result["questions"][0]["understanding_target"]
 
 
 def test_generate_questions_falls_back_to_local_draft_after_repeated_gateway_timeouts(monkeypatch):
@@ -198,7 +275,7 @@ def test_generate_questions_falls_back_to_local_draft_after_repeated_gateway_tim
         llm_client=client,
     )
 
-    assert client.calls == 2
+    assert client.calls == 1
     assert result["material_id"] == "M2"
     assert result["version"] == 8
     assert [item["question_id"] for item in result["questions"]] == ["Q1", "Q2", "Q3", "Q4", "Q5"]
@@ -206,7 +283,7 @@ def test_generate_questions_falls_back_to_local_draft_after_repeated_gateway_tim
     assert "本地备用生成" in result["questions"][0]["understanding_target"]
 
 
-def test_openfactbook_generation_uses_compact_prompt_and_local_draft_after_one_gateway_timeout(monkeypatch):
+def test_openfactbook_generation_uses_full_prompt_and_local_draft_after_one_gateway_timeout(monkeypatch):
     import experiment.question_generation as question_generation
 
     paragraphs = [{"id": "left-p-1", "text": "Geography - Area - total: 3,287,263 sq km."}]
@@ -242,7 +319,9 @@ def test_openfactbook_generation_uses_compact_prompt_and_local_draft_after_one_g
     )
 
     assert len(client.prompts) == 1
-    assert len(client.prompts[0]) < 7000
+    assert "Geography - Area - total: 3,287,263 sq km." in client.prompts[0]
+    assert "Geography - Area - total: 1,904,569 sq km." in client.prompts[0]
+    assert "内容已截断" not in client.prompts[0]
     assert result["questions"][0]["understanding_target"].startswith("本地备用生成")
 
 
@@ -274,8 +353,68 @@ def test_generate_questions_records_question_and_answer_prompt_metadata(monkeypa
     )
 
     prompts = result["generation_prompts"]
-    assert prompts["question_prompt"]["system"] == "You generate bilingual comparison-reading experiment questions. Return JSON only."
+    assert "complete article infoboxes" in prompts["question_prompt"]["system"]
+    assert "完整 infobox" in prompts["question_prompt"]["user"]
+    assert "完整正文" in prompts["question_prompt"]["user"]
     assert "Left fact." in prompts["question_prompt"]["user"]
     assert prompts["answer_prompt"]["system"] == prompts["question_prompt"]["system"]
     assert prompts["answer_prompt"]["user"] == prompts["question_prompt"]["user"]
     assert "同一次模型请求" in prompts["answer_prompt"]["note"]
+
+
+def test_generate_static_table_from_material_sends_full_infobox_and_body_prompt(monkeypatch):
+    import experiment.static_table_generation as static_table_generation
+
+    monkeypatch.setattr(
+        static_table_generation,
+        "load_material_articles",
+        lambda material: (
+            {
+                "title": "Left",
+                "infobox": [{"id": "L-I001", "label": "Currency", "value": "Left currency"}],
+                "paragraphs": [
+                    {"id": "L-P001", "text": "Left opening."},
+                    {"id": "L-P099", "text": "Left final paragraph evidence."},
+                ],
+            },
+            {
+                "title": "Right",
+                "infobox": [{"id": "R-I001", "label": "Currency", "value": "Right currency"}],
+                "paragraphs": [
+                    {"id": "R-P001", "text": "Right opening."},
+                    {"id": "R-P099", "text": "Right final paragraph evidence."},
+                ],
+            },
+        ),
+    )
+
+    class CapturingClient:
+        def __init__(self):
+            self.prompt = ""
+
+        def chat_json(self, messages):
+            self.prompt = messages[-1]["content"]
+            return {
+                "rows": [
+                    {
+                        "id": "R1",
+                        "label": "Currency",
+                        "left": {"value": "Left currency"},
+                        "right": {"value": "Right currency"},
+                    }
+                ]
+            }
+
+    client = CapturingClient()
+    result = static_table_generation.generate_static_table_from_material(
+        {"id": "M1", "leftTitle": "Left", "rightTitle": "Right"},
+        llm_client=client,
+    )
+
+    assert result["rows"][0]["label"] == "Currency"
+    assert "[L-I001] Currency: Left currency" in client.prompt
+    assert "[R-I001] Currency: Right currency" in client.prompt
+    assert "[L-P099] Left final paragraph evidence." in client.prompt
+    assert "[R-P099] Right final paragraph evidence." in client.prompt
+    assert "内容已截断" not in client.prompt
+    assert "完整 infobox" in result["generation_prompts"]["static_table_prompt"]["user"]

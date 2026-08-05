@@ -15,27 +15,37 @@ from .defaults import QUESTION_PROMPT_VERSION
 from .storage import utc_now_iso
 
 
-MAX_ARTICLE_PROMPT_CHARS = 4500
+MAX_ARTICLE_PROMPT_CHARS = None
 COMPACT_ARTICLE_PROMPT_CHARS = 1800
-QUESTION_GENERATION_SYSTEM_PROMPT = "You generate bilingual comparison-reading experiment questions. Return JSON only."
+QUESTION_GENERATION_SYSTEM_PROMPT = "You generate bilingual comparison-reading experiment questions from complete article infoboxes and complete article bodies. Return JSON only; do not invent information."
 ANSWER_PROMPT_NOTE = "当前系统在同一次模型请求中共同生成参与者题目和管理员隐藏标准答案；没有单独的第二次答案生成 prompt。"
 MATERIAL_SNAPSHOT_DIR = Path(__file__).resolve().parent / "material_snapshots"
 
 
 def article_text(article, max_chars=MAX_ARTICLE_PROMPT_CHARS):
-    lines = []
+    sections = []
+
+    infobox_lines = []
     for field in article.get("infobox") or []:
         source_id = field.get("id", "")
-        label = field.get("label", "")
-        value = field.get("value", "")
+        label = field.get("label") or field.get("key") or ""
+        value = field.get("value") or field.get("valueText") or ""
         if label or value:
-            lines.append(f"[{source_id}] {label}: {value}" if source_id else f"{label}: {value}")
+            infobox_lines.append(f"[{source_id}] {label}: {value}" if source_id else f"{label}: {value}")
+    sections.append("【Infobox】")
+    sections.extend(infobox_lines or ["（无 infobox 或未提取到 infobox 字段）"])
+
+    body_lines = []
     for paragraph in article.get("paragraphs") or []:
         source_id = paragraph.get("id", "")
         text = paragraph.get("text", "")
         if text:
-            lines.append(f"[{source_id}] {text}" if source_id else text)
-    return _cap_article_lines(lines, max_chars)
+            body_lines.append(f"[{source_id}] {text}" if source_id else text)
+    sections.append("")
+    sections.append("【正文】")
+    sections.extend(body_lines or ["（未提取到正文段落）"])
+
+    return _cap_article_lines(sections, max_chars)
 
 
 def _cap_article_lines(lines, max_chars):
@@ -72,7 +82,9 @@ def build_question_prompt(material, left_article, right_article, max_article_cha
     right_title = material.get("rightTitle") or right_article.get("title") or "右文"
     return f"""你是双文档比较阅读实验的问题设计器。
 
-你的任务是：只根据下面两篇冻结文章，生成5个能够帮助读者理解两篇文章关系的问题，并同时生成研究人员使用的隐藏标准答案。
+你的任务是：只根据下面两篇冻结文章的完整 infobox 和完整正文，生成5个能够帮助读者理解两篇文章关系的问题，并同时生成研究人员使用的隐藏标准答案。
+
+输入材料中的 infobox 和正文具有同等证据地位。题目、标准答案和来源编号都必须基于下方完整输入材料，不允许根据外部知识补充，不允许因为某些信息更容易生成而忽略 infobox 或正文。
 
 问题不能为了适配三栏表而生成。三栏表只是参与者寻找答案时可能使用的一种工具。
 
@@ -80,12 +92,12 @@ def build_question_prompt(material, left_article, right_article, max_article_cha
 
 【左侧文章】
 标题：{left_title}
-内容：
+完整材料（完整 infobox + 完整正文）：
 {article_text(left_article, max_article_chars)}
 
 【右侧文章】
 标题：{right_title}
-内容：
+完整材料（完整 infobox + 完整正文）：
 {article_text(right_article, max_article_chars)}
 
 ============================================
@@ -277,37 +289,18 @@ def generate_questions_from_material(material, version, llm_client=None):
     if client is None:
         raise RuntimeError("OPENAI_API_KEY is required to auto-generate experiment questions")
     left_article, right_article = load_material_articles(material)
-    initial_max_chars = (
-        COMPACT_ARTICLE_PROMPT_CHARS
-        if _uses_openfactbook_material(material)
-        else MAX_ARTICLE_PROMPT_CHARS
-    )
     prompt = build_question_prompt(
         material,
         left_article,
         right_article,
-        max_article_chars=initial_max_chars,
+        max_article_chars=MAX_ARTICLE_PROMPT_CHARS,
     )
     try:
         raw_questions = _chat_question_generation(client, prompt)
     except Exception as error:
         if not _is_transient_llm_generation_error(error):
             raise
-        if initial_max_chars <= COMPACT_ARTICLE_PROMPT_CHARS:
-            raw_questions = _build_local_draft_questions(material, left_article, right_article)
-        else:
-            try:
-                prompt = build_question_prompt(
-                    material,
-                    left_article,
-                    right_article,
-                    max_article_chars=COMPACT_ARTICLE_PROMPT_CHARS,
-                )
-                raw_questions = _chat_question_generation(client, prompt)
-            except Exception as retry_error:
-                if not _is_transient_llm_generation_error(retry_error):
-                    raise
-                raw_questions = _build_local_draft_questions(material, left_article, right_article)
+        raw_questions = _build_local_draft_questions(material, left_article, right_article)
     normalized = normalize_generated_questions(raw_questions, material.get("id", ""), version)
     normalized.setdefault("generation_prompts", _generation_prompt_metadata(prompt))
     return normalized
@@ -422,6 +415,14 @@ def _build_local_draft_questions(material, left_article, right_article):
 
 def _article_evidence_items(article):
     records = []
+    for field in article.get("infobox") or []:
+        source_id = field.get("id") or ""
+        label = " ".join(str(field.get("label") or field.get("key") or "").split())
+        value = " ".join(str(field.get("value") or field.get("valueText") or "").split())
+        text = f"{label}: {value}" if label or value else ""
+        if not text:
+            continue
+        records.append({"source_id": source_id, "key": label or "Infobox", "value": value or text, "text": text})
     for paragraph in article.get("paragraphs") or []:
         source_id = paragraph.get("id") or ""
         text = " ".join(str(paragraph.get("text") or "").split())

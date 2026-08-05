@@ -4,13 +4,12 @@ from services.config import get_llm_config
 from services.llm_client import LLMClient
 
 from .question_generation import (
-    COMPACT_ARTICLE_PROMPT_CHARS,
     MAX_ARTICLE_PROMPT_CHARS,
     article_text,
     load_material_articles,
 )
 
-STATIC_TABLE_GENERATION_SYSTEM_PROMPT = "You generate static three-column comparison tables for a reading experiment. Return JSON only."
+STATIC_TABLE_GENERATION_SYSTEM_PROMPT = "You generate static three-column comparison tables from complete article infoboxes and complete article bodies for a reading experiment. Return JSON only; do not invent information."
 
 
 def build_static_table_prompt(material, left_article, right_article, max_article_chars=MAX_ARTICLE_PROMPT_CHARS):
@@ -18,20 +17,20 @@ def build_static_table_prompt(material, left_article, right_article, max_article
     right_title = material.get("rightTitle") or right_article.get("title") or "右文"
     return f"""你是一个实验条件中的 ChatGPT 表格生成器。
 
-你的任务：只根据下面两篇冻结材料，生成一个给参与者阅读时使用的静态三栏比较表。
+你的任务：只根据下面两篇冻结材料的完整 infobox 和完整正文，生成一个给参与者阅读时使用的静态三栏比较表。
 
-这个表格代表 ChatGPT 条件下系统根据材料真实输出给参与者看的比较表。请避免主观推断，只使用材料中明确给出的信息。
+这个表格代表 ChatGPT 条件下系统阅读完整材料后真实输出给参与者看的比较表。infobox 和正文具有同等证据地位。请避免主观推断，只使用材料中明确给出的信息。
 
 ================ 输入材料 ================
 
 【左侧文章】
 标题：{left_title}
-内容：
+完整材料（完整 infobox + 完整正文）：
 {article_text(left_article, max_article_chars)}
 
 【右侧文章】
 标题：{right_title}
-内容：
+完整材料（完整 infobox + 完整正文）：
 {article_text(right_article, max_article_chars)}
 
 ============================================
@@ -85,7 +84,7 @@ def generate_static_table_from_material(material, llm_client=None):
         material,
         left_article,
         right_article,
-        max_article_chars=COMPACT_ARTICLE_PROMPT_CHARS,
+        max_article_chars=MAX_ARTICLE_PROMPT_CHARS,
     )
     raw_table = client.chat_json([
         {"role": "system", "content": STATIC_TABLE_GENERATION_SYSTEM_PROMPT},
