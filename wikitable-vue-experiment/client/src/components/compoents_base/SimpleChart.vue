@@ -546,6 +546,31 @@
 							value: d.data.value
 						});
 					});
+				if (!isSingleValue) {
+					const valueLabelArc = d3
+						.arc()
+						.innerRadius(radius * 0.55)
+						.outerRadius(radius * 0.55);
+					arcs
+						.filter(d => {
+							const angle = d.endAngle - d.startAngle;
+							return !d.data.isRemainder && angle >= 0.28 && d.data.value >= 5;
+						})
+						.append("text")
+						.attr("class", "pie-value-label")
+						.attr("transform", d => `translate(${valueLabelArc.centroid(d)})`)
+						.attr("text-anchor", "middle")
+						.attr("dominant-baseline", "central")
+						.style("font-size", "8px")
+						.style("font-weight", "700")
+						.style("fill", "#ffffff")
+						.style("paint-order", "stroke")
+						.style("stroke", "rgba(45,62,80,0.45)")
+						.style("stroke-width", "2px")
+						.text(d =>
+							formatChartNumber(d.data.displayValue ?? d.data.value, props.type)
+						);
+				}
 				if (isSingleValue) {
 					chart
 						.append("text")
@@ -608,8 +633,7 @@
 						.attr("y", legendItemSize)
 						.text((d, i) => {
 							const label = pieLegendLabelForPoint(d, i, { total: legendData.length, fallback: d.name });
-							const valueText = formatChartNumber(d.displayValue ?? d.value, props.type);
-							return compactMiddleText(`${label} ${valueText}`, legendColumns > 1 ? 15 : 22);
+							return compactMiddleText(label, legendColumns > 1 ? 15 : 22);
 						})
 						.style("font-size", "7.5px")
 						.style("font-weight", "500")

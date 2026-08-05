@@ -23,8 +23,9 @@ assert(
 	"Pie previews should allocate a larger radius for dense proportional rows"
 );
 assert(
-	!source.includes('selectAll(".pie-value-label")'),
-	"Paper-style pie previews should keep dense values out of the pie body"
+	source.includes('attr("class", "pie-value-label")') &&
+		source.includes("formatChartNumber(d.data.displayValue ?? d.data.value, props.type)"),
+	"Pie previews should place readable values directly on sufficiently large slices"
 );
 
 assert(
@@ -41,9 +42,10 @@ assert(
 	"Pie legends should use lightweight circular swatches matching the paper preview style"
 );
 assert(
-	!source.includes("if (showInternalPieLabels)") &&
-		!source.includes('class", "pie-value-label"'),
-	"Dense multi-category pie previews should avoid internal labels and keep values in legend/tooltip"
+	!source.includes("const valueText = formatChartNumber(d.displayValue ?? d.value, props.type)") &&
+		!source.includes("`${label} ${valueText}`") &&
+		source.includes("return compactMiddleText(label, legendColumns > 1 ? 15 : 22);"),
+	"Pie legends should only explain what each color means, not repeat numeric values"
 );
 
 console.log("simpleChartPiePreview tests passed");

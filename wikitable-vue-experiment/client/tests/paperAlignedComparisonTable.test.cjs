@@ -52,12 +52,12 @@ assert(
 );
 
 assert(
-	!simpleChartSource.includes('attr("class", "pie-value-label")') &&
+	simpleChartSource.includes('attr("class", "pie-value-label")') &&
 		simpleChartSource.includes('attr("class", "pie-legend-dot")') &&
 		simpleChartSource.includes("pieLegendLabelForPoint") &&
-		simpleChartSource.includes("formatChartNumber(d.displayValue ?? d.value, props.type)") &&
+		!simpleChartSource.includes("`${label} ${valueText}`") &&
 		!simpleChartSource.includes('attr("class", "pie-label-line")'),
-	"Paper-style pie previews should keep values in a compact legend instead of crowded in-slice labels"
+	"Paper-style pie previews should put readable values on slices while keeping legend entries category-only"
 );
 
 assert(

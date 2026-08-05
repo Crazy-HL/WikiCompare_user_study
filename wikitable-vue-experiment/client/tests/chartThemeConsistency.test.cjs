@@ -102,6 +102,13 @@ assert(
 );
 
 assert(
+	pieOptionSource.includes("return isSingle") &&
+		pieOptionSource.includes('params.data?.shortDisplay || params.data?.display || "-"') &&
+		!pieOptionSource.includes("`${params.name}\n${params.data?.shortDisplay || params.value}`"),
+	"Expanded pie slice labels should show the numeric value only because the legend already explains colors"
+);
+
+assert(
 	fullChartSource.includes("lineStyle: { width: CHART_LINE_WIDTH }"),
 	"Expanded line charts should use the same line weight token as thumbnails"
 );

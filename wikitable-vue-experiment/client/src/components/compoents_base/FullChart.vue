@@ -427,7 +427,7 @@
 							if (params.data?.silent) return "";
 							return isSingle
 								? params.data?.shortDisplay || params.data?.display || "-"
-								: `${params.name}\n${params.data?.shortDisplay || params.value}`;
+								: params.data?.shortDisplay || params.data?.display || "-";
 						}
 					},
 					labelLine: { length: 14, length2: 8 }
