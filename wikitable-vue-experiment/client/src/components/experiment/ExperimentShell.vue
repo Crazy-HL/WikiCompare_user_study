@@ -141,6 +141,7 @@
 			throw new Error(`未找到材料 ${stage.materialId} 对应的预设。`);
 		}
 		await sessionStore.loadSession(materialUrl(preset.left), materialUrl(preset.right), {
+			forceRefresh: true,
 			leftTitle: material.leftTitle || preset.left.title,
 			rightTitle: material.rightTitle || preset.right.title
 		});
