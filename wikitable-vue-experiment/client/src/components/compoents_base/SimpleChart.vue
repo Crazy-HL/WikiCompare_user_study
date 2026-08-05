@@ -634,8 +634,8 @@
 						.append("text")
 						.attr("x", legendItemSize + 3)
 						.attr("y", legendItemSize)
-						.text((d, i) => {
-							const label = pieLegendLabelForPoint(d, i, { total: legendData.length, fallback: d.name });
+						.text(d => {
+							const label = d.name || "";
 							return compactMiddleText(label, legendColumns > 1 ? 15 : 22);
 						})
 						.style("font-size", "7.5px")

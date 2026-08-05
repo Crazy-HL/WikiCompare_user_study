@@ -49,4 +49,18 @@ assert(
 	"Pie legends should only explain what each color means, not repeat numeric values"
 );
 
+const legendTextStart = source.indexOf('legendItems\n\t\t\t\t\t\t.append("text")');
+const legendFormatterStart = source.indexOf('.text(', legendTextStart);
+const legendFormatterEnd = source.indexOf('})\n						.style("font-size", "7.5px")', legendFormatterStart);
+assert(
+	legendTextStart >= 0 && legendFormatterStart >= 0 && legendFormatterEnd > legendFormatterStart,
+	"Pie preview legend formatter should be present"
+);
+const legendFormatterSource = source.slice(legendFormatterStart, legendFormatterEnd);
+assert(
+	legendFormatterSource.includes("const label = d.name") &&
+		!legendFormatterSource.includes("pieLegendLabelForPoint("),
+	"Pie preview legends should use the already-cleaned slice name instead of re-inferring labels from rendered data"
+);
+
 console.log("simpleChartPiePreview tests passed");
