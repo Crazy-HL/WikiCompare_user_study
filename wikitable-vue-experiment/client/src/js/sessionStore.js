@@ -95,14 +95,37 @@ export const sessionStore = reactive({
 
 	async loadSession(leftUrl, rightUrl, options = {}) {
 		const forceRefresh = options.forceRefresh === true;
+		const ensureBackendSession = options.ensureBackendSession === true;
 		const canUseUrlHistory = isHttpUrl(leftUrl) && isHttpUrl(rightUrl);
 		if (!forceRefresh && canUseUrlHistory) {
 			const cachedRecord = findHistoryByUrls(this.history, leftUrl, rightUrl);
 			if (cachedRecord?.session) {
-				this.applySession(applySessionTitles(cachedRecord.session, options));
-				return;
+				const cachedSession = applySessionTitles(cachedRecord.session, options);
+				this.applySession(cachedSession);
+				if (!ensureBackendSession) {
+					return;
+				}
+				if (isOfflineNow()) {
+					this.error = WIKICOMPARE_OFFLINE_MESSAGE;
+					return;
+				}
+				this.isLoading = true;
+				try {
+					await this.restoreSessionToBackend(cachedSession);
+					this.error = "";
+					return;
+				} catch (_restoreError) {
+					// A stale or malformed browser cache should not block the participant;
+					// regenerate only when the lightweight backend restoration fails.
+				} finally {
+					this.isLoading = false;
+				}
 			}
 		}
+		await this.loadFreshSession(leftUrl, rightUrl, { ...options, forceRefresh });
+	},
+
+	async loadFreshSession(leftUrl, rightUrl, options = {}) {
 		if (isOfflineNow()) {
 			this.error = WIKICOMPARE_OFFLINE_MESSAGE;
 			return;
@@ -112,7 +135,7 @@ export const sessionStore = reactive({
 		this.error = "";
 		this.clearInteractionState();
 		try {
-			const payload = buildSessionPayload(leftUrl, rightUrl, { ...options, forceRefresh });
+			const payload = buildSessionPayload(leftUrl, rightUrl, options);
 			const session = await postJson("api/compare-session", payload);
 			this.applySession(applySessionTitles(session, options));
 		} catch (error) {
@@ -123,6 +146,10 @@ export const sessionStore = reactive({
 		} finally {
 			this.isLoading = false;
 		}
+	},
+
+	async restoreSessionToBackend(session) {
+		return postJson("api/compare-session/restore", { session });
 	},
 
 	async selectHistory(key) {

@@ -583,3 +583,83 @@ class AnalysisApiTest(AsyncHTTPTestCase):
             "content": "The left article reports stronger growth.",
         } in captured["messages"]
         assert "Why is that important?" in captured["messages"][-1]["content"]
+
+
+class TestRestoreCompareSessionHandler(AsyncHTTPTestCase):
+    def get_app(self):
+        env_patch = patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False)
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        server.SESSION_STORE = SessionStore()
+        return server.make_app()
+
+    def _restored_session_payload(self):
+        return CompareSession(
+            session_id="restored-session-1",
+            articles={
+                "left": {"title": "Left", "url": "https://example.test/left"},
+                "right": {"title": "Right", "url": "https://example.test/right"},
+            },
+            ranked_rows=[
+                {
+                    "id": "row-1",
+                    "label": "GDP growth",
+                    "leftSourceIds": ["left-info-1"],
+                    "rightSourceIds": ["right-info-1"],
+                    "visualization": {
+                        "left": {"valueText": "2.3%"},
+                        "right": {"valueText": "0.6%"},
+                    },
+                }
+            ],
+            source_map={
+                "left-info-1": SourceRef(
+                    "left-info-1",
+                    "left",
+                    "infobox",
+                    "GDP growth: 2.3%",
+                    '[data-source-id="left-info-1"]',
+                ),
+                "right-info-1": SourceRef(
+                    "right-info-1",
+                    "right",
+                    "infobox",
+                    "GDP growth: 0.6%",
+                    '[data-source-id="right-info-1"]',
+                ),
+            },
+        ).to_dict()
+
+    def test_restore_session_rehydrates_backend_for_analysis_and_pair_cache(self):
+        restore_response = self.fetch(
+            "/api/compare-session/restore",
+            method="POST",
+            body=json.dumps({"session": self._restored_session_payload()}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert restore_response.code == 200
+        assert json.loads(restore_response.body) == {"ok": True, "sessionId": "restored-session-1"}
+
+        analyze_response = self.fetch(
+            "/api/analyze-attribute",
+            method="POST",
+            body=json.dumps({"sessionId": "restored-session-1", "attributeId": "row-1"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert analyze_response.code == 200
+
+        compare_response = self.fetch(
+            "/api/compare-session",
+            method="POST",
+            body=json.dumps(
+                {
+                    "leftUrl": "https://example.test/left",
+                    "rightUrl": "https://example.test/right",
+                }
+            ),
+            headers={"Content-Type": "application/json"},
+        )
+        assert compare_response.code == 200
+        compare_payload = json.loads(compare_response.body)
+        assert compare_payload["sessionId"] == "restored-session-1"
+        assert compare_payload["fromCache"] is True

@@ -153,6 +153,23 @@ class ApiHandler(tornado.web.RequestHandler):
         self.write(json.dumps({"error": message}, ensure_ascii=False))
 
 
+
+class CompareSessionRestoreHandler(ApiHandler):
+    def post(self):
+        data = self.read_json()
+        if data is None:
+            return
+
+        try:
+            session = _compare_session_from_restore_payload(data.get("session"))
+        except ValueError as error:
+            self.write_error_json(400, str(error))
+            return
+
+        SESSION_STORE.save(session, pair_key=_restored_session_pair_key(session))
+        self.write(json.dumps({"ok": True, "sessionId": session.session_id}, ensure_ascii=False))
+
+
 class CompareSessionHandler(ApiHandler):
     async def post(self):
         data = self.read_json()
@@ -293,6 +310,62 @@ def _create_compare_session_payload(
     payload = session.to_dict()
     payload["fromCache"] = False
     return 200, payload
+
+
+
+def _compare_session_from_restore_payload(payload) -> CompareSession:
+    if not isinstance(payload, dict):
+        raise ValueError("session must be an object")
+    session_id = str(payload.get("sessionId") or "").strip()
+    if not session_id:
+        raise ValueError("session.sessionId is required")
+    articles = payload.get("articles")
+    if not isinstance(articles, dict):
+        raise ValueError("session.articles is required")
+    if not isinstance(articles.get("left"), dict) or not isinstance(articles.get("right"), dict):
+        raise ValueError("session.articles.left and session.articles.right are required")
+    ranked_rows = payload.get("rankedRows") or []
+    if not isinstance(ranked_rows, list):
+        raise ValueError("session.rankedRows must be an array")
+    source_map = payload.get("sourceMap") or {}
+    if not isinstance(source_map, dict):
+        raise ValueError("session.sourceMap must be an object")
+
+    return CompareSession(
+        session_id=session_id,
+        articles=articles,
+        outline_matches=_optional_list(payload, "outlineMatches"),
+        attribute_pools=_optional_dict(payload, "attributePools"),
+        aligned_attributes=_optional_list(payload, "alignedAttributes"),
+        ranked_rows=ranked_rows,
+        source_map=source_map,
+        warnings=_optional_list(payload, "warnings"),
+    )
+
+
+def _optional_list(payload: dict, key: str) -> list:
+    value = payload.get(key) or []
+    if not isinstance(value, list):
+        raise ValueError(f"session.{key} must be an array")
+    return value
+
+
+def _optional_dict(payload: dict, key: str) -> dict:
+    value = payload.get(key) or {}
+    if not isinstance(value, dict):
+        raise ValueError(f"session.{key} must be an object")
+    return value
+
+
+def _restored_session_pair_key(session: CompareSession):
+    left_url = str(session.articles.get("left", {}).get("url") or "").strip()
+    right_url = str(session.articles.get("right", {}).get("url") or "").strip()
+    if not left_url or not right_url:
+        return None
+    try:
+        return _pair_cache_key(_parse_compare_source_url(left_url), _parse_compare_source_url(right_url))
+    except WikiUrlError:
+        return None
 
 
 def _parse_compare_source_url(url: str):
@@ -1196,6 +1269,7 @@ def env_flag(name, default=False):
 def make_app():
     routes = [
         (r"/", MainHandler),
+        (r"/api/compare-session/restore", CompareSessionRestoreHandler),
         (r"/api/compare-session", CompareSessionHandler),
         (r"/api/analyze-attribute", AnalyzeAttributeHandler),
         (r"/api/ask", AskHandlerV2),

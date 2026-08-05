@@ -10,7 +10,8 @@ const source = fs.readFileSync(
 
 assert(
 	source.includes("applySessionTitles") &&
-		source.includes("this.applySession(applySessionTitles(cachedRecord.session, options));"),
+		source.includes("const cachedSession = applySessionTitles(cachedRecord.session, options);") &&
+		source.includes("this.applySession(cachedSession);"),
 	"sessionStore should apply requested article titles when reusing a cached comparison session"
 );
 assert(
@@ -71,6 +72,51 @@ const loadSessionStoreForCachedErrorTest = () => {
 	return sandbox.module.exports;
 };
 
+
+const loadSessionStoreForBackendRestoreTest = postJsonImpl => {
+	const cachedSession = {
+		sessionId: "cached-session-1",
+		articles: {
+			left: { url: "https://example.test/left", title: "Left" },
+			right: { url: "https://example.test/right", title: "Right" }
+		},
+		rankedRows: [],
+		sourceMap: {}
+	};
+	const history = [{ key: "cached-key", leftUrl: "https://example.test/left", rightUrl: "https://example.test/right", session: cachedSession }];
+	const transformedSource = source
+		.replace('import { reactive } from "vue";', "const reactive = value => value;")
+		.replace('import { postJson } from "@/api";', "const postJson = postJsonImpl;")
+		.replace(/export const /g, "const ");
+	const sandbox = {
+		module: { exports: {} },
+		URL,
+		postJsonImpl,
+		require: dependency => {
+			if (dependency === "@/js/offlineSupport") {
+				return { isOfflineNow: () => false, WIKICOMPARE_OFFLINE_MESSAGE: "offline" };
+			}
+			if (dependency === "@/js/sessionHistory") {
+				return {
+					addSessionToHistory: (records, session) => records.map(record => ({ ...record, session })),
+					findHistoryByKey: (records, key) => records.find(record => record.key === key),
+					findHistoryByUrls: (records, leftUrl, rightUrl) => records.find(record => record.leftUrl === leftUrl && record.rightUrl === rightUrl),
+					loadHistory: () => history,
+					removeHistoryByKey: records => records,
+					saveHistory: () => {},
+					sessionPairKey: () => "cached-key"
+				};
+			}
+			throw new Error(`Unexpected dependency in test: ${dependency}`);
+		}
+	};
+	vm.runInNewContext(
+		`${transformedSource}\nmodule.exports = { sessionStore };`,
+		sandbox
+	);
+	return sandbox.module.exports;
+};
+
 (async () => {
 	const { sessionStore, getBackendCallCount } = loadSessionStoreForCachedErrorTest();
 	sessionStore.error = "previous network failure";
@@ -79,8 +125,51 @@ const loadSessionStoreForCachedErrorTest = () => {
 		rightTitle: "Experiment Right"
 	});
 	assert.strictEqual(sessionStore.error, "", "cached loadSession success should clear stale errors");
-	assert.strictEqual(getBackendCallCount(), 0, "cached loadSession should not call the backend");
+	assert.strictEqual(getBackendCallCount(), 0, "cached loadSession without backend restoration should not call the backend");
 	assert.strictEqual(sessionStore.session.articles.left.title, "Experiment Left", "cached load should still apply requested material titles");
+
+	const restoreCalls = [];
+	const { sessionStore: restoreStore } = loadSessionStoreForBackendRestoreTest(async (url, payload) => {
+		restoreCalls.push({ url, payload });
+		return { ok: true, sessionId: payload.session.sessionId };
+	});
+	await restoreStore.loadSession("https://example.test/left", "https://example.test/right", {
+		ensureBackendSession: true
+	});
+	assert.deepStrictEqual(
+		restoreCalls.map(call => call.url),
+		["api/compare-session/restore"],
+		"cached experiment loads should restore the existing session to the backend without regenerating compare-session"
+	);
+	assert.strictEqual(restoreCalls[0].payload.session.sessionId, "cached-session-1");
+
+	const fallbackCalls = [];
+	const { sessionStore: fallbackStore } = loadSessionStoreForBackendRestoreTest(async (url, payload) => {
+		fallbackCalls.push({ url, payload });
+		if (url === "api/compare-session/restore") {
+			throw new Error("restore failed");
+		}
+		return {
+			sessionId: "fresh-session-1",
+			articles: {
+				left: { url: "https://example.test/left", title: payload.leftTitle || "Left" },
+				right: { url: "https://example.test/right", title: payload.rightTitle || "Right" }
+			},
+			rankedRows: [],
+			sourceMap: {}
+		};
+	});
+	await fallbackStore.loadSession("https://example.test/left", "https://example.test/right", {
+		ensureBackendSession: true,
+		leftTitle: "Experiment Left",
+		rightTitle: "Experiment Right"
+	});
+	assert.deepStrictEqual(
+		fallbackCalls.map(call => call.url),
+		["api/compare-session/restore", "api/compare-session"],
+		"cached experiment loads should regenerate the session only when backend restoration fails"
+	);
+	assert.strictEqual(fallbackStore.session.sessionId, "fresh-session-1");
 
 	sessionStore.error = "previous network failure";
 	sessionStore.applySession(sessionStore.session);

@@ -18,8 +18,12 @@ assert(
 	"material loader should throw when sessionStore reports a load error so stale cached material cannot become a ready stage"
 );
 assert(
-	/forceRefresh:\s*true/.test(loaderSource),
-	"experiment material loading should bypass browser-cached sessions so backend-only analysis endpoints can find the session after server restarts"
+	/ensureBackendSession:\s*true/.test(loaderSource),
+	"experiment material loading should reuse browser cache while restoring the cached session into the backend for analysis endpoints"
+);
+assert(
+	!/forceRefresh:\s*true/.test(loaderSource),
+	"experiment material loading should not force-refresh every stage because that discards the fast browser-cached session path"
 );
 
 console.log("experiment shell material load tests passed");
