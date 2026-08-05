@@ -166,30 +166,48 @@
 			</div>
 
 			<div v-if="!staticTableDraftRows.length" class="empty-state">当前材料尚未生成 ChatGPT 静态三栏表。请点击“生成 ChatGPT 三栏表”。</div>
-			<div v-else class="static-table-wrapper">
-				<table class="static-preview-table">
+			<div v-else class="gpt-table-output" aria-label="ChatGPT 静态三栏表预览">
+				<table class="gpt-markdown-table">
 					<thead>
 						<tr>
 							<th>左侧</th>
 							<th>比较项</th>
 							<th>右侧</th>
-							<th v-if="!staticTablePayload?.frozen">操作</th>
 						</tr>
 					</thead>
 					<tbody>
 						<tr v-for="(row, index) in staticTableDraftRows" :key="row.draft_id || row.id || index">
-							<td v-if="staticTablePayload?.frozen">{{ sideValue(row, "left") }}</td>
-							<td v-else><textarea v-model="row.left.value" rows="3" :disabled="saving"></textarea></td>
-							<td class="label-cell" v-if="staticTablePayload?.frozen">{{ row.label || `比较项 ${index + 1}` }}</td>
-							<td v-else><input v-model="row.label" :disabled="saving" /></td>
-							<td v-if="staticTablePayload?.frozen">{{ sideValue(row, "right") }}</td>
-							<td v-else><textarea v-model="row.right.value" rows="3" :disabled="saving"></textarea></td>
-							<td v-if="!staticTablePayload?.frozen" class="row-actions">
-								<button type="button" :disabled="saving || staticTableDraftRows.length <= 1" @click="removeStaticTableRow(index)">删除</button>
-							</td>
+							<td>{{ sideValue(row, "left") }}</td>
+							<td class="comparison-label">{{ row.label || `比较项 ${index + 1}` }}</td>
+							<td>{{ sideValue(row, "right") }}</td>
 						</tr>
 					</tbody>
 				</table>
+			</div>
+
+			<div v-if="staticTableDraftRows.length && !staticTablePayload?.frozen" class="static-table-editor" aria-label="编辑 ChatGPT 静态三栏表">
+				<div class="editor-heading">
+					<strong>修改表格内容</strong>
+					<span>上方预览会实时更新；点击“保存表格修改”后才会写入后台文件。</span>
+				</div>
+				<div class="static-row-editor" v-for="(row, index) in staticTableDraftRows" :key="`edit-${row.draft_id || row.id || index}`">
+					<div class="static-row-header">
+						<strong>第 {{ index + 1 }} 行</strong>
+						<button type="button" :disabled="saving || staticTableDraftRows.length <= 1" @click="removeStaticTableRow(index)">删除</button>
+					</div>
+					<label>
+						<span>左侧</span>
+						<textarea v-model="row.left.value" rows="3" :disabled="saving"></textarea>
+					</label>
+					<label>
+						<span>比较项</span>
+						<input v-model="row.label" :disabled="saving" />
+					</label>
+					<label>
+						<span>右侧</span>
+						<textarea v-model="row.right.value" rows="3" :disabled="saving"></textarea>
+					</label>
+				</div>
 			</div>
 		</section>
 	</section>
@@ -575,14 +593,21 @@
 	pre { max-height: 360px; overflow: auto; margin: 0; border-radius: 12px; padding: 12px; background: #0f172a; color: #e2e8f0; font-size: 12px; white-space: pre-wrap; }
 
 	.static-table-card { display: grid; gap: 14px; }
-	.static-table-wrapper { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 14px; }
-	.static-preview-table { width: 100%; border-collapse: collapse; min-width: 760px; }
-	.static-preview-table th, .static-preview-table td { border-bottom: 1px solid #e2e8f0; padding: 10px; text-align: left; vertical-align: top; }
-	.static-preview-table th { background: #f8fafc; color: #334155; font-weight: 900; }
-	.static-preview-table tr:last-child td { border-bottom: 0; }
-	.static-preview-table textarea { min-width: 220px; }
-	.label-cell { font-weight: 900; color: #172033; }
-	.row-actions { width: 90px; }
+	.gpt-table-output { overflow-x: auto; color: #0d0d0d; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.55; }
+	.gpt-markdown-table { width: 100%; min-width: 760px; border-collapse: collapse; border-spacing: 0; font-size: 14px; line-height: 1.55; }
+	.gpt-markdown-table th, .gpt-markdown-table td { border: 1px solid #d9d9e3; padding: 8px 12px; text-align: left; vertical-align: top; font-weight: 400; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.gpt-markdown-table th { background: #f7f7f8; color: #0d0d0d; font-weight: 600; }
+	.gpt-markdown-table tbody tr:nth-child(even) td { background: #fcfcfd; }
+	.comparison-label { font-weight: 400; color: #0d0d0d; }
+	.static-table-editor { display: grid; gap: 12px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; background: #f8fafc; }
+	.editor-heading { display: grid; gap: 4px; }
+	.editor-heading strong { color: #334155; font-weight: 900; }
+	.editor-heading span { color: #64748b; font-size: 13px; line-height: 1.5; }
+	.static-row-editor { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.65fr) minmax(180px, 1fr); gap: 10px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 12px; background: #ffffff; }
+	.static-row-header { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; align-items: center; color: #334155; }
+	.static-row-editor label { display: grid; gap: 6px; }
+	.static-row-editor label span { color: #64748b; font-size: 12px; font-weight: 900; }
+	.static-row-editor textarea { min-height: 78px; }
 	.action-row { display: flex; flex-wrap: wrap; gap: 10px; }
 	button { border: 1px solid #cbd5e1; border-radius: 12px; padding: 10px 14px; background: #ffffff; color: #172033; font-weight: 900; cursor: pointer; }
 	button.primary { border-color: #2563eb; background: #2563eb; color: #ffffff; }
@@ -594,5 +619,6 @@
 		.panel-header, .question-actions-card, .question-card header { display: grid; }
 		.material-select { min-width: 0; }
 		.card-actions { justify-content: flex-start; }
+		.static-row-editor { grid-template-columns: 1fr; }
 	}
 </style>

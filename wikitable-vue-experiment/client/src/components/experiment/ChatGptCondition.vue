@@ -13,8 +13,8 @@
 			<div v-if="!staticRows.length" class="empty-static-table">
 				管理员尚未冻结该材料的 ChatGPT 静态三栏表。
 			</div>
-			<div v-else class="static-table-wrapper">
-				<table>
+			<div v-else class="gpt-table-output" aria-label="ChatGPT 生成的静态三栏表">
+				<table class="gpt-markdown-table">
 					<thead>
 						<tr>
 							<th>左侧</th>
@@ -25,7 +25,7 @@
 					<tbody>
 						<tr v-for="(row, index) in staticRows" :key="row.id || `${row.label}-${index}`">
 							<td>{{ sideValue(row, "left") }}</td>
-							<td class="label-cell">{{ row.label || `项目 ${index + 1}` }}</td>
+							<td class="comparison-label">{{ row.label || `项目 ${index + 1}` }}</td>
 							<td>{{ sideValue(row, "right") }}</td>
 						</tr>
 					</tbody>
@@ -208,38 +208,47 @@
 		line-height: 1.6;
 	}
 
-	.static-table-wrapper {
-		overflow: auto;
+	.gpt-table-output {
+		overflow-x: auto;
+		margin: 14px;
+		color: #0d0d0d;
+		font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+		font-size: 14px;
+		line-height: 1.55;
 	}
 
-	table {
+	.gpt-markdown-table {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 12px;
-		color: #243447;
+		border-spacing: 0;
+		font-size: 14px;
+		line-height: 1.55;
 	}
 
-	th,
-	td {
+	.gpt-markdown-table th,
+	.gpt-markdown-table td {
 		vertical-align: top;
-		padding: 9px 10px;
-		border-bottom: 1px solid #e2e8f0;
-	}
-
-	th {
-		position: sticky;
-		top: 73px;
-		background: #f8fafc;
-		color: #475569;
-		font-size: 11px;
+		padding: 8px 12px;
+		border: 1px solid #d9d9e3;
 		text-align: left;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
+		font-weight: 400;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
-	.label-cell {
-		font-weight: 780;
-		color: #1d4ed8;
+	.gpt-markdown-table th {
+		background: #f7f7f8;
+		color: #0d0d0d;
+		font-weight: 600;
+	}
+
+	.gpt-markdown-table tbody tr:nth-child(even) td {
+		background: #fcfcfd;
+	}
+
+	.comparison-label {
+		font-weight: 400;
+		color: #0d0d0d;
 	}
 
 	.ask-box {
