@@ -7,6 +7,17 @@ const CHART_COLORS = Object.freeze([
 ]);
 
 const CHART_REMAINDER_COLOR = "#f0f0f0";
+const PAPER_PIE_COLORS = Object.freeze([
+	"#65c9b3",
+	"#a17a7e",
+	"#2d3e50",
+	"#b8cfd7",
+	"#d3d4d2",
+	"#295577",
+	"#f1c27d",
+	"#8aa0ad",
+	"#e8ecef",
+]);
 const CHART_LINE_WIDTH = 2;
 
 const FALLBACK_CATEGORY_COLORS = Object.freeze([
@@ -82,6 +93,7 @@ const categoryColor = (name, index = 0, overrides = {}) =>
 module.exports = {
 	CHART_COLORS,
 	CHART_REMAINDER_COLOR,
+	PAPER_PIE_COLORS,
 	CHART_LINE_WIDTH,
 	CATEGORY_COLORS,
 	FALLBACK_CATEGORY_COLORS,

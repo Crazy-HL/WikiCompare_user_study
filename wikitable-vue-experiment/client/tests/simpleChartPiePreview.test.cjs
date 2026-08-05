@@ -23,8 +23,26 @@ assert(
 	"Pie previews should allocate a larger radius for dense proportional rows"
 );
 assert(
-	source.includes("shouldShowPieSliceLabel"),
-	"Dense pie previews should avoid labeling every tiny slice inside the pie"
+	!source.includes('selectAll(".pie-value-label")'),
+	"Paper-style pie previews should keep dense values out of the pie body"
+);
+
+assert(
+	source.includes("PAPER_PIE_COLORS") &&
+		source.includes("paperPieColors") &&
+		source.includes("d.color || paperPieColors[i % paperPieColors.length]"),
+	"Pie previews should use the paper-aligned muted palette instead of the generic chart palette"
+);
+assert(
+	source.includes('selectAll(".pie-legend-dot")') &&
+		source.includes('.append("circle")') &&
+		!source.includes('.append("rect")\n\t\t\t\t\t\t\t.attr("width", legendItemSize)'),
+	"Pie legends should use lightweight circular swatches matching the paper preview style"
+);
+assert(
+	!source.includes("if (showInternalPieLabels)") &&
+		!source.includes('class", "pie-value-label"'),
+	"Dense multi-category pie previews should avoid internal labels and keep values in legend/tooltip"
 );
 
 console.log("simpleChartPiePreview tests passed");

@@ -52,11 +52,12 @@ assert(
 );
 
 assert(
-	simpleChartSource.includes('attr("class", "pie-value-label")') &&
-		simpleChartSource.includes("pieValueLabelText") &&
-		simpleChartSource.includes("display: previewDisplayText(item)") &&
+	!simpleChartSource.includes('attr("class", "pie-value-label")') &&
+		simpleChartSource.includes('attr("class", "pie-legend-dot")') &&
+		simpleChartSource.includes("pieLegendLabelForPoint") &&
+		simpleChartSource.includes("formatChartNumber(d.displayValue ?? d.value, props.type)") &&
 		!simpleChartSource.includes('attr("class", "pie-label-line")'),
-	"Pie previews in the three-column table should label slices with values without overflowing into the middle column"
+	"Paper-style pie previews should keep values in a compact legend instead of crowded in-slice labels"
 );
 
 assert(

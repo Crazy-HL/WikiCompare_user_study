@@ -101,6 +101,7 @@
 	const {
 		CHART_COLORS,
 		CHART_REMAINDER_COLOR,
+		PAPER_PIE_COLORS,
 		categoryColor
 	} = require("@/js/chartTheme");
 	const {
@@ -262,6 +263,7 @@
 			};
 
 			const colors = CHART_COLORS;
+			const paperPieColors = PAPER_PIE_COLORS;
 			const remainderColor = CHART_REMAINDER_COLOR;
 
 			const isYearEntry = value => {
@@ -453,7 +455,7 @@
 								...pieData.value[0],
 								value: Math.min(100, Math.max(0, pieData.value[0].value)),
 								displayValue: pieData.value[0].value,
-								color: colors[0],
+								color: paperPieColors[0],
 								isMainValue: true
 							},
 							{
@@ -467,7 +469,7 @@
 					  ]
 					: pieData.value.map((d, i) => ({
 							...d,
-							color: d.color || colors[i % colors.length],
+							color: d.color || paperPieColors[i % paperPieColors.length],
 							isMainValue: true
 					  }));
 				const pie = d3
@@ -477,12 +479,9 @@
 				const arc = d3
 					.arc()
 					.innerRadius(0)
-					.outerRadius(radius * 0.9)
-					.cornerRadius(2);
-				const labelArc = d3
-					.arc()
-					.innerRadius(radius * 0.62)
-					.outerRadius(radius * 0.62);
+					.outerRadius(radius)
+					.padAngle(0.012)
+					.cornerRadius(1.5);
 				const arcs = chart
 					.selectAll(".arc")
 					.data(pie(processedData))
@@ -503,9 +502,9 @@
 					.append("path")
 					.attr("d", arc)
 					.attr("fill", d => d.data.color)
-					.style("opacity", d => (d.data.isRemainder ? 0.6 : 0.8))
-					.style("stroke", "#fff")
-					.style("stroke-width", 1)
+					.style("opacity", d => (d.data.isRemainder ? 0.5 : 0.92))
+					.style("stroke", "#ffffff")
+					.style("stroke-width", 1.5)
 					.on("mouseover", function (event, d) {
 						if (d.data.isRemainder) return;
 						hoveredIndex.value = d.data.index;
@@ -533,7 +532,7 @@
 						d3.select(this)
 							.transition()
 							.duration(200)
-							.style("opacity", d.data.isRemainder ? 0.6 : 0.8)
+							.style("opacity", d.data.isRemainder ? 0.5 : 0.92)
 							.attr("transform", "scale(1)");
 						tooltip.style("visibility", "hidden");
 					})
@@ -547,36 +546,6 @@
 							value: d.data.value
 						});
 					});
-				if (!isSingleValue && pieData.value.length > 1) {
-					const shouldShowPieSliceLabel = d => {
-						const displayValue = Number(d.data.displayValue ?? d.data.value);
-						return Number.isFinite(displayValue) && displayValue >= 6;
-					};
-					const labelData = pie(processedData).filter(
-						d => !d.data.isRemainder && shouldShowPieSliceLabel(d)
-					);
-					const pieValueLabelText = d => compactSvgText(
-						d.data.display || formatChartNumber(d.data.displayValue ?? d.data.value, props.type),
-						9
-					);
-					chart
-						.selectAll(".pie-value-label")
-						.data(labelData)
-						.enter()
-						.append("text")
-						.attr("class", "pie-value-label")
-						.attr("x", d => labelArc.centroid(d)[0])
-						.attr("y", d => labelArc.centroid(d)[1] + 2)
-						.attr("text-anchor", "middle")
-						.attr("font-size", "8px")
-						.attr("font-weight", "700")
-						.attr("fill", "#111827")
-						.attr("paint-order", "stroke")
-						.attr("stroke", "rgba(255,255,255,0.88)")
-						.attr("stroke-width", 2)
-						.attr("stroke-linejoin", "round")
-						.text(pieValueLabelText);
-				}
 				if (isSingleValue) {
 					chart
 						.append("text")
@@ -612,31 +581,39 @@
 						centerY + radius + 8,
 						containerHeight - legendRows * (legendItemSize + legendSpacing) - 3
 					);
-					pieData.value.slice(0, maxPieLegendItems).forEach((d, i) => {
-						const column = i % legendColumns;
-						const row = Math.floor(i / legendColumns);
-						const label = compactMiddleText(d.name, legendColumns > 1 ? 13 : 20);
-						const legendItem = legend
-							.append("g")
-							.attr(
-								"transform",
-								`translate(${legendStartX + column * legendColumnWidth}, ${
-									legendStartY + row * (legendItemSize + legendSpacing)
-								})`
-							);
-						legendItem
-							.append("rect")
-							.attr("width", legendItemSize)
-							.attr("height", legendItemSize)
-							.attr("fill", d.color || colors[i % colors.length]);
-						legendItem
-							.append("text")
-							.attr("x", legendItemSize + 2)
-							.attr("y", legendItemSize)
-							.text(label)
-							.style("font-size", "8px")
-							.style("fill", "#334155");
-					});
+					const legendData = pieData.value.slice(0, maxPieLegendItems);
+					const legendItems = legend
+						.selectAll(".pie-legend-dot")
+						.data(legendData)
+						.enter()
+						.append("g")
+						.attr("class", "pie-legend-item")
+						.attr("transform", (d, i) => {
+							const column = i % legendColumns;
+							const row = Math.floor(i / legendColumns);
+							return `translate(${legendStartX + column * legendColumnWidth}, ${
+								legendStartY + row * (legendItemSize + legendSpacing)
+							})`;
+						});
+					legendItems
+						.append("circle")
+						.attr("class", "pie-legend-dot")
+						.attr("cx", legendItemSize / 2)
+						.attr("cy", legendItemSize / 2)
+						.attr("r", legendItemSize / 2)
+						.attr("fill", (d, i) => d.color || paperPieColors[i % paperPieColors.length]);
+					legendItems
+						.append("text")
+						.attr("x", legendItemSize + 3)
+						.attr("y", legendItemSize)
+						.text((d, i) => {
+							const label = pieLegendLabelForPoint(d, i, { total: legendData.length, fallback: d.name });
+							const valueText = formatChartNumber(d.displayValue ?? d.value, props.type);
+							return compactMiddleText(`${label} ${valueText}`, legendColumns > 1 ? 15 : 22);
+						})
+						.style("font-size", "7.5px")
+						.style("font-weight", "500")
+						.style("fill", "#2d3e50");
 				}
 			};
 
