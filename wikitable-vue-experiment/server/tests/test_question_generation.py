@@ -274,6 +274,102 @@ def test_build_static_table_prompt_uses_complete_infobox_and_body_by_default():
     assert "内容已截断" not in prompt
 
 
+def test_fetch_material_html_retries_wikipedia_read_timeout(tmp_path, monkeypatch):
+    import experiment.question_generation as question_generation
+
+    snapshot_dir = tmp_path / "material_snapshots"
+    snapshot_dir.mkdir()
+    calls = []
+
+    def timeout_then_success(title, revision):
+        calls.append((title, revision))
+        if len(calls) == 1:
+            raise requests.exceptions.ReadTimeout("read timed out")
+        return "<html><main><p>Wikipedia article body after retry.</p></main></html>"
+
+    monkeypatch.setattr(question_generation, "MATERIAL_SNAPSHOT_DIR", snapshot_dir, raising=False)
+    monkeypatch.setattr(question_generation, "fetch_article_html", timeout_then_success)
+
+    html = question_generation.fetch_material_html(SimpleNamespace(
+        source_kind="wikipedia",
+        title="Economy of South Korea",
+        revision="1273871505",
+        display_url="https://en.wikipedia.org/w/index.php?title=Economy_of_South_Korea&oldid=1273871505",
+    ))
+
+    assert html.startswith("<html>")
+    assert calls == [
+        ("Economy of South Korea", "1273871505"),
+        ("Economy of South Korea", "1273871505"),
+    ]
+
+
+def test_fetch_material_html_uses_wikipedia_display_url_after_rest_timeout(tmp_path, monkeypatch):
+    import experiment.question_generation as question_generation
+
+    snapshot_dir = tmp_path / "material_snapshots"
+    snapshot_dir.mkdir()
+
+    def rest_timeout(title, revision):
+        raise requests.exceptions.ReadTimeout("rest read timed out")
+
+    class SuccessfulResponse:
+        text = "<html><main><p>Direct oldid page body.</p></main></html>"
+
+        def raise_for_status(self):
+            return None
+
+    direct_calls = []
+
+    def direct_get(url, headers=None, timeout=None):
+        direct_calls.append((url, timeout))
+        return SuccessfulResponse()
+
+    monkeypatch.setattr(question_generation, "MATERIAL_SNAPSHOT_DIR", snapshot_dir, raising=False)
+    monkeypatch.setattr(question_generation, "fetch_article_html", rest_timeout)
+    monkeypatch.setattr(question_generation.requests, "get", direct_get)
+
+    html = question_generation.fetch_material_html(SimpleNamespace(
+        source_kind="wikipedia",
+        title="Economy of Japan",
+        revision="1297943898",
+        display_url="https://en.wikipedia.org/w/index.php?title=Economy_of_Japan&oldid=1297943898",
+    ))
+
+    assert "Direct oldid page body." in html
+    assert direct_calls == [("https://en.wikipedia.org/w/index.php?title=Economy_of_Japan&oldid=1297943898", 30)]
+
+
+def test_fetch_material_html_uses_wikipedia_snapshot_after_repeated_timeout(tmp_path, monkeypatch):
+    import experiment.question_generation as question_generation
+
+    snapshot_dir = tmp_path / "material_snapshots"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "wikipedia-economy-of-south-korea-1273871505.html").write_text(
+        "<html><main><p>Cached Wikipedia article.</p></main></html>",
+        encoding="utf-8",
+    )
+
+    def always_timeout(title, revision):
+        raise requests.exceptions.ReadTimeout("read timed out")
+
+    def fail_if_direct_fetch_is_used(*args, **kwargs):
+        raise AssertionError("Existing Wikipedia snapshots should be used before trying the direct page URL")
+
+    monkeypatch.setattr(question_generation, "MATERIAL_SNAPSHOT_DIR", snapshot_dir, raising=False)
+    monkeypatch.setattr(question_generation, "fetch_article_html", always_timeout)
+    monkeypatch.setattr(question_generation.requests, "get", fail_if_direct_fetch_is_used)
+
+    html = question_generation.fetch_material_html(SimpleNamespace(
+        source_kind="wikipedia",
+        title="Economy of South Korea",
+        revision="1273871505",
+        display_url="https://en.wikipedia.org/w/index.php?title=Economy_of_South_Korea&oldid=1273871505",
+    ))
+
+    assert "Cached Wikipedia article." in html
+
+
 def test_fetch_material_html_falls_back_to_openfactbook_snapshot_on_ssl_error(tmp_path, monkeypatch):
     import experiment.question_generation as question_generation
 

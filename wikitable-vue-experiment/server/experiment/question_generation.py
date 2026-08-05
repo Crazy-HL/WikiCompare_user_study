@@ -21,6 +21,8 @@ QUESTION_GENERATION_SYSTEM_PROMPT = "You generate bilingual dual-document compar
 QUESTION_VALIDATION_SYSTEM_PROMPT = "You are an independent reviewer for dual-document comparison-reading experiment questions. Use only the supplied materials, questions, and gold answers; return valid JSON only."
 ANSWER_PROMPT_NOTE = "当前系统按照《WikiCompare实验设计.docx》的提示词 2，在同一次模型请求中共同生成参与者 Q1-Q5 和管理员隐藏标准答案；没有单独的第二次答案生成 prompt。"
 MATERIAL_SNAPSHOT_DIR = Path(__file__).resolve().parent / "material_snapshots"
+MATERIAL_FETCH_ATTEMPTS = 2
+
 
 
 def article_text(article, max_chars=MAX_ARTICLE_PROMPT_CHARS):
@@ -393,7 +395,7 @@ def parse_material_source(url):
 
 def fetch_material_html(source):
     if source.source_kind == "wikipedia":
-        return fetch_article_html(source.title, source.revision)
+        return _fetch_wikipedia_material_html(source)
     try:
         response = requests.get(source.display_url, headers={"User-Agent": "WikiCompare/0.1"}, timeout=20)
         response.raise_for_status()
@@ -405,6 +407,40 @@ def fetch_material_html(source):
         raise
 
 
+def _fetch_wikipedia_material_html(source):
+    last_error = None
+    for _attempt in range(MATERIAL_FETCH_ATTEMPTS):
+        try:
+            html = fetch_article_html(source.title, source.revision)
+            _save_material_snapshot_html(source.display_url, html)
+            return html
+        except requests.exceptions.RequestException as error:
+            last_error = error
+
+    snapshot_html = _load_material_snapshot_html(source.display_url)
+    if snapshot_html is not None:
+        return snapshot_html
+
+    try:
+        response = requests.get(
+            source.display_url,
+            headers={"User-Agent": "WikiCompare/0.1 (https://github.com/Crazy-HL/WikiCompare)"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        _save_material_snapshot_html(source.display_url, response.text)
+        return response.text
+    except requests.exceptions.RequestException as error:
+        last_error = error
+
+    snapshot_html = _load_material_snapshot_html(source.display_url)
+    if snapshot_html is not None:
+        return snapshot_html
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"Failed to fetch Wikipedia material: {source.display_url}")
+
+
 def _load_material_snapshot_html(url):
     snapshot_path = _material_snapshot_path(url)
     if snapshot_path is None or not snapshot_path.exists():
@@ -412,18 +448,45 @@ def _load_material_snapshot_html(url):
     return snapshot_path.read_text(encoding="utf-8")
 
 
+def _save_material_snapshot_html(url, html):
+    snapshot_path = _material_snapshot_path(url)
+    if snapshot_path is None or not isinstance(html, str) or not html.strip():
+        return
+    try:
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(html, encoding="utf-8")
+    except OSError:
+        return
+
+
 def _material_snapshot_path(url):
     parsed = urlparse(str(url or ""))
     host = parsed.netloc.lower()
     if host.startswith("www."):
         host = host[4:]
-    parts = [part for part in parsed.path.split("/") if part]
-    if host != "openfactbook.org" or len(parts) < 2 or parts[0] != "countries":
-        return None
-    country_slug = re.sub(r"[^a-z0-9-]+", "-", parts[1].lower()).strip("-")
-    if not country_slug:
-        return None
-    return MATERIAL_SNAPSHOT_DIR / f"openfactbook-countries-{country_slug}.html"
+    if host == "openfactbook.org":
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) < 2 or parts[0] != "countries":
+            return None
+        country_slug = re.sub(r"[^a-z0-9-]+", "-", parts[1].lower()).strip("-")
+        if not country_slug:
+            return None
+        return MATERIAL_SNAPSHOT_DIR / f"openfactbook-countries-{country_slug}.html"
+    if host == "en.wikipedia.org":
+        query_pairs = dict(re.findall(r"([^=&?]+)=([^&]+)", parsed.query))
+        raw_title = query_pairs.get("title")
+        if not raw_title:
+            path_parts = [part for part in parsed.path.split("/") if part]
+            if "wiki" in path_parts:
+                wiki_index = path_parts.index("wiki")
+                raw_title = path_parts[wiki_index + 1] if wiki_index + 1 < len(path_parts) else ""
+        if not raw_title:
+            return None
+        title_slug = re.sub(r"[^a-z0-9-]+", "-", raw_title.replace("_", "-").lower()).strip("-")
+        revision = query_pairs.get("oldid") or "latest"
+        revision_slug = re.sub(r"[^a-z0-9-]+", "-", revision.lower()).strip("-") or "latest"
+        return MATERIAL_SNAPSHOT_DIR / f"wikipedia-{title_slug}-{revision_slug}.html"
+    return None
 
 
 def load_material_articles(material):
