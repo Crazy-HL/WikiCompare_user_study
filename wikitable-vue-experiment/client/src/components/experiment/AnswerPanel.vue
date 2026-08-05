@@ -151,8 +151,10 @@
 
 <style scoped>
 	.answer-panel {
-		min-width: min(420px, 100%);
-		max-width: 520px;
+		width: 100%;
+		height: 100%;
+		min-width: 0;
+		max-width: none;
 		background: #f8fafc;
 		border-left: 1px solid rgba(203, 213, 225, 0.9);
 		overflow-y: auto;

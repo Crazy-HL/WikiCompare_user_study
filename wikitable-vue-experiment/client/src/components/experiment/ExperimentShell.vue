@@ -11,6 +11,7 @@
 
 	<section v-else class="experiment-shell">
 		<StageHeader
+			v-if="showStageStatus"
 			:stage-number="currentStageDisplayIndex"
 			:stage-count="stageCount"
 			:material-label="currentMaterialLabel" />
@@ -30,12 +31,27 @@
 				<ChatGptCondition v-else-if="currentStage?.condition === 'chatgpt'" :key="`chatgpt-${currentStageKey}`" :frozen-rows="staticTableRows" />
 			</div>
 
-			<AnswerPanel
+			<button
 				v-if="isStageReady"
-				:key="`answers-${currentStageKey}`"
-				:questions="questions"
-				:q6-text="q6Text"
-				@submit="handleStageSubmit" />
+				class="answer-drawer-toggle"
+				type="button"
+				:class="{ open: isAnswerPanelOpen }"
+				:aria-expanded="String(isAnswerPanelOpen)"
+				aria-controls="stage-answer-drawer"
+				@click="isAnswerPanelOpen = !isAnswerPanelOpen">
+				{{ isAnswerPanelOpen ? "隐藏题目" : "答题" }}
+			</button>
+			<div
+				v-if="isStageReady"
+				id="stage-answer-drawer"
+				class="answer-drawer"
+				:class="{ open: isAnswerPanelOpen }">
+				<AnswerPanel
+					:key="`answers-${currentStageKey}`"
+					:questions="questions"
+					:q6-text="q6Text"
+					@submit="handleStageSubmit" />
+			</div>
 			<aside v-else class="answer-panel-placeholder" aria-live="polite">
 				正在加载作答题目，加载完成前不能提交答案。
 			</aside>
@@ -78,6 +94,7 @@
 	const loadedStageKey = ref("");
 	const isStageLoading = ref(false);
 	const loadError = ref("");
+	const isAnswerPanelOpen = ref(false);
 	const stageStartedAtMs = ref(Date.now());
 	const experimentStartedAtMs = Date.now();
 	const stageResults = ref([]);
@@ -105,6 +122,7 @@
 		hasRequiredQuestions.value &&
 		hasRequiredStaticTable.value
 	));
+	const showStageStatus = computed(() => !isStageReady.value);
 	const q6Text = computed(() => props.config?.q6Text || Q6_TEXT);
 	const materials = computed(() => props.config?.materials || []);
 	const currentMaterial = computed(() => materials.value.find(material => material.id === currentStage.value?.materialId) || null);
@@ -173,6 +191,7 @@
 	watch(
 		() => currentStageKey.value,
 		() => {
+			isAnswerPanelOpen.value = false;
 			if (screen.value === "stage" && !assignmentValidationError.value) loadCurrentStage();
 		},
 		{ immediate: true }
@@ -246,9 +265,11 @@
 	}
 
 	.stage-layout {
+		position: relative;
 		display: flex;
 		min-height: 0;
 		flex: 1;
+		overflow: hidden;
 	}
 
 	.condition-column {
@@ -286,6 +307,42 @@
 
 	.stage-error.fatal {
 		margin: 24px;
+	}
+
+	.answer-drawer-toggle {
+		position: absolute;
+		top: 14px;
+		right: 14px;
+		z-index: 31;
+		border: 0;
+		border-radius: 999px;
+		padding: 10px 14px;
+		background: rgba(37, 99, 235, 0.94);
+		color: #ffffff;
+		font-weight: 840;
+		cursor: pointer;
+		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+	}
+
+	.answer-drawer-toggle.open {
+		background: rgba(15, 23, 42, 0.92);
+	}
+
+	.answer-drawer {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 30;
+		width: min(500px, calc(100% - 28px));
+		max-width: 100%;
+		transform: translateX(calc(100% + 18px));
+		transition: transform 180ms ease;
+		box-shadow: -18px 0 42px rgba(15, 23, 42, 0.18);
+	}
+
+	.answer-drawer.open {
+		transform: translateX(0);
 	}
 
 	.answer-panel-placeholder {
@@ -341,6 +398,10 @@
 
 		.condition-column {
 			min-height: 760px;
+		}
+
+		.answer-drawer {
+			width: min(460px, calc(100% - 20px));
 		}
 
 		.answer-panel-placeholder {

@@ -4,12 +4,7 @@
 			<ParentComponent side="left" divId="chatgpt-left" selectContentClass="chatgpt-left-content" />
 		</div>
 
-		<div class="static-table-pane">
-			<div class="table-heading">
-				<h2>静态三栏表</h2>
-				<p>本阶段材料加载后，表格内容保持固定。</p>
-			</div>
-
+		<div class="static-table-pane" aria-label="ChatGPT 条件静态输出与提问区">
 			<div v-if="!staticRows.length" class="empty-static-table">
 				管理员尚未冻结该材料的 ChatGPT 静态三栏表。
 			</div>
@@ -32,16 +27,16 @@
 				</table>
 			</div>
 
-			<form class="ask-box" @submit.prevent="askQuestion">
-				<label for="chatgpt-question">向系统提问</label>
+			<form class="chatgpt-composer" @submit.prevent="askQuestion">
+				<label class="sr-only" for="chatgpt-question">向系统提问</label>
 				<textarea
 					id="chatgpt-question"
 					v-model="question"
-					rows="3"
-					placeholder="请输入与当前两篇材料有关的问题"
+					rows="1"
+					placeholder="Message ChatGPT"
 					:disabled="isLoading || !hasSession"></textarea>
-				<button type="submit" :disabled="isLoading || !hasSession || !question.trim()">
-					{{ isLoading ? "处理中..." : "发送问题" }}
+				<button type="submit" :disabled="isLoading || !hasSession || !question.trim()" aria-label="发送问题">
+					{{ isLoading ? "…" : "↑" }}
 				</button>
 				<p v-if="!hasSession" class="ask-note">材料会话加载完成后可提问。</p>
 			</form>
@@ -158,12 +153,12 @@
 	.chatgpt-condition {
 		display: grid;
 		grid-template-columns: minmax(250px, 0.9fr) minmax(360px, 1.1fr) minmax(250px, 0.9fr);
-		gap: 10px;
+		gap: 8px;
 		height: 100%;
 		min-height: 0;
-		padding: 10px;
+		padding: 8px;
 		box-sizing: border-box;
-		background: #eef3f8;
+		background: #ffffff;
 	}
 
 	.article-pane,
@@ -171,31 +166,14 @@
 		min-width: 0;
 		min-height: 0;
 		overflow: auto;
-		border: 1px solid rgba(190, 201, 216, 0.82);
-		border-radius: 8px;
+		border: 1px solid rgba(226, 232, 240, 0.9);
+		border-radius: 6px;
 		background: #ffffff;
-		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 24px rgba(15, 23, 42, 0.06);
 	}
 
-	.table-heading {
-		position: sticky;
-		top: 0;
-		z-index: 1;
-		padding: 14px;
-		border-bottom: 1px solid #e2e8f0;
-		background: rgba(255, 255, 255, 0.96);
-	}
-
-	h2 {
-		margin: 0 0 4px;
-		color: #172033;
-		font-size: 18px;
-	}
-
-	.table-heading p {
-		margin: 0;
-		color: #64748b;
-		font-size: 12px;
+	.static-table-pane {
+		display: flex;
+		flex-direction: column;
 	}
 
 	.empty-static-table {
@@ -209,8 +187,9 @@
 	}
 
 	.gpt-table-output {
+		flex: 1;
 		overflow-x: auto;
-		margin: 14px;
+		margin: 14px 14px 8px;
 		color: #0d0d0d;
 		font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 		font-size: 14px;
@@ -251,40 +230,51 @@
 		color: #0d0d0d;
 	}
 
-	.ask-box {
+	.chatgpt-composer {
 		display: grid;
-		gap: 9px;
-		margin: 14px;
-		padding: 14px;
-		border: 1px solid #dbe4ee;
-		border-radius: 12px;
-		background: #f8fafc;
+		grid-template-columns: 1fr auto;
+		gap: 8px;
+		align-items: end;
+		margin: auto 14px 14px;
+		padding: 8px 8px 8px 14px;
+		border: 1px solid #d9d9e3;
+		border-radius: 24px;
+		background: #ffffff;
+		box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
 	}
 
-	.ask-box label {
-		font-weight: 800;
-		color: #334155;
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	textarea {
 		width: 100%;
 		box-sizing: border-box;
-		resize: vertical;
-		border: 1px solid #cbd5e1;
-		border-radius: 10px;
-		padding: 9px;
+		resize: none;
+		border: 0;
+		outline: 0;
+		padding: 8px 0;
 		font: inherit;
 		line-height: 1.45;
 	}
 
 	button {
-		justify-self: end;
+		width: 34px;
+		height: 34px;
 		border: 0;
-		border-radius: 10px;
-		padding: 9px 14px;
-		background: #2563eb;
+		border-radius: 999px;
+		padding: 0;
+		background: #0d0d0d;
 		color: #ffffff;
-		font-weight: 800;
+		font-weight: 900;
 		cursor: pointer;
 	}
 
