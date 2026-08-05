@@ -16,5 +16,10 @@ assert(
 		source.includes('ref="stackedContainer"'),
 	"SimpleChart should keep the stacked chart rendering branch"
 );
+assert(
+	source.includes("const previewStackMaxBarWidth = 52") &&
+		source.includes("Math.min(58, Math.max(34, width * 0.28))"),
+	"Stacked previews should shrink the bar and reserve wider side gutters so legends can show more complete labels"
+);
 
 console.log("simpleChartStackedPreview tests passed");

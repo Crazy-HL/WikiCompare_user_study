@@ -2068,3 +2068,55 @@ def test_normalize_attribute_pair_preserves_structured_text_values():
     assert row["comparisonQuality"] == "structured_values"
     assert row["visualization"]["left"]["structuredValues"][0]["value"] == "Electronics"
     assert row["visualization"]["right"]["structuredValues"][2]["value"] == "Electronics"
+
+
+def test_import_partner_percentages_are_completed_for_pie_charts():
+    row = normalize_attribute_pair(
+        {
+            "id": "left-import-partners",
+            "key": "Main import partners",
+            "valueText": "Main import partners: China 24.6% Hong Kong 5.1% United States 18.7% ASEAN 16.7% European Union 10.0% Taiwan 5.0% Japan 4.3% (2024)",
+            "source": "infobox",
+            "sourceIds": ["left-info-27"],
+        },
+        {
+            "id": "right-import-partners",
+            "key": "Main import partners",
+            "valueText": "Main import partners: China 25.8% United States 10.9% Australia 9.1% Taiwan 8.6% South Korea 7.8% ASEAN 15.8% European Union 9.1% (2023)",
+            "source": "infobox",
+            "sourceIds": ["right-info-27"],
+        },
+        "Main import partners",
+    )
+
+    assert row["dataType"] == "Proportional"
+    assert row["chartType"] == "pie"
+    assert row["visualization"]["left"]["values"][-1]["label"] == "Other"
+    assert row["visualization"]["right"]["values"][-1]["label"] == "Other"
+    assert round(sum(item["value"] for item in row["visualization"]["left"]["values"]), 1) == 100.0
+    assert round(sum(item["value"] for item in row["visualization"]["right"]["values"]), 1) == 100.0
+
+
+def test_single_metric_main_text_debt_values_remain_chartable():
+    row = normalize_attribute_pair(
+        {
+            "id": "left-debt",
+            "key": "Gross external debt",
+            "valueText": "Gross external debt: $620.9 billion (2023 est.)",
+            "source": "main_text",
+            "sourceIds": ["left-s-1"],
+        },
+        {
+            "id": "right-debt",
+            "key": "Gross external debt",
+            "valueText": "Gross external debt: $420.8 billion (2023 est.)",
+            "source": "main_text",
+            "sourceIds": ["right-s-1"],
+        },
+        "Gross external debt",
+    )
+
+    assert row["dataType"] == "Numerical"
+    assert row["chartType"] == "bar"
+    assert row["visualization"]["left"]["values"] == [{"value": 620900000000.0, "year": 2023}]
+    assert row["visualization"]["right"]["values"] == [{"value": 420800000000.0, "year": 2023}]

@@ -325,9 +325,8 @@
 
 	const chartVisualization = row => {
 		const chartType = String(row.chartType || "").toLowerCase();
-		if (chartType === "pie" && hasNonPartWholePercentage(row)) {
-			return "bar-chart";
-		}
+		if (chartType === "pie") return "pie-chart";
+		if (chartType === "stacked") return "stacked-chart";
 		if (String(row.dataType || "").toLowerCase() === "proportional") {
 			if (hasNonPartWholePercentage(row)) {
 				return rowHasYearSeries(row) ? "line-chart" : "bar-chart";

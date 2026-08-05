@@ -483,6 +483,13 @@ def normalize_attribute_pair(
         else:
             left_type = "Proportional"
             right_type = "Proportional"
+    left_values, right_values = _complete_non_exhaustive_percentage_pair(
+        row_label,
+        left_text,
+        right_text,
+        left_values,
+        right_values,
+    )
     use_structured_values = _should_use_structured_values(
         left_values,
         right_values,
@@ -2167,9 +2174,68 @@ def _chart_type_for_values(
             and not _is_non_exhaustive_share_context(row_label, left_text, right_text, left_values, right_values)
         ):
             side_count = max(len(left_values), len(right_values))
-            return "pie" if side_count <= 4 else "stacked"
+            max_pie_slices = 8 if _is_partner_share_context(row_label, left_text, right_text) else 4
+            return "pie" if side_count <= max_pie_slices else "stacked"
         return "line" if _is_year_series(left_values) or _is_year_series(right_values) else "bar"
     return choose_chart_type(data_type, point_count)
+
+
+def _is_partner_share_context(row_label: str, left_text: str, right_text: str) -> bool:
+    context = f"{row_label} {left_text} {right_text}".lower()
+    return bool(re.search(r"\b(?:partners?|suppliers?|destinations?|sources?)\b", context))
+
+
+def _complete_non_exhaustive_percentage_pair(
+    row_label: str,
+    left_text: str,
+    right_text: str,
+    left_values: list[NumericValue],
+    right_values: list[NumericValue],
+) -> tuple[list[NumericValue], list[NumericValue]]:
+    if not _is_partner_share_context(row_label, left_text, right_text):
+        return left_values, right_values
+    return (
+        _complete_percentage_side_values(left_values),
+        _complete_percentage_side_values(right_values),
+    )
+
+
+def _complete_percentage_side_values(values: list[NumericValue]) -> list[NumericValue]:
+    if len(values) < 2 or _is_year_series(values):
+        return values
+    labels = [
+        _normalized_label(value.get("label"))
+        for value in values
+        if value.get("label")
+    ]
+    if len(set(labels)) < 2:
+        return values
+    if any(label in {"other", "others", "remaining", "rest"} for label in labels):
+        return values
+    years = {value.get("year") for value in values if value.get("year") is not None}
+    if len(years) > 1:
+        return values
+    numbers: list[float] = []
+    for value in values:
+        try:
+            number = float(value.get("value"))
+        except (TypeError, ValueError):
+            return values
+        if not math.isfinite(number) or number < 0 or number > 100:
+            return values
+        numbers.append(number)
+    total = sum(numbers)
+    if total <= 0 or total >= 95:
+        return values
+    remainder = 100 - total
+    if remainder <= 0.05:
+        return values
+    completed = [dict(value) for value in values]
+    other: NumericValue = {"value": round(remainder, 6), "label": "Other"}
+    if len(years) == 1:
+        other["year"] = next(iter(years))
+    completed.append(other)
+    return completed
 
 
 def _is_year_series(values: list[NumericValue]) -> bool:
@@ -2678,4 +2744,28 @@ def _has_explicit_main_text_visual_signal(
 ) -> bool:
     if left_type == "Trend" and right_type == "Trend":
         return True
+    if _is_comparable_single_metric_pair(left_type, right_type, left_values, right_values):
+        return True
     return bool(_shared_labeled_value_pairs(left_values, right_values))
+
+
+def _is_comparable_single_metric_pair(
+    left_type: str,
+    right_type: str,
+    left_values: list[dict[str, Any]],
+    right_values: list[dict[str, Any]],
+) -> bool:
+    if left_type != right_type or left_type not in {"Numerical", "Proportional", "Ordinal"}:
+        return False
+    if len(left_values) != 1 or len(right_values) != 1:
+        return False
+    try:
+        left_number = float(left_values[0].get("value"))
+        right_number = float(right_values[0].get("value"))
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(left_number) or not math.isfinite(right_number):
+        return False
+    left_year = left_values[0].get("year")
+    right_year = right_values[0].get("year")
+    return left_year is None or right_year is None or left_year == right_year

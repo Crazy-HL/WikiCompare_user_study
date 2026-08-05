@@ -78,10 +78,10 @@ assert(
 
 assert(
 	simpleChartSource.includes("const previewStackSideGutter =") &&
-		simpleChartSource.includes("const previewStackMaxBarWidth = 86") &&
-		!simpleChartSource.includes("width * 0.3") &&
+		simpleChartSource.includes("const previewStackMaxBarWidth = 52") &&
+		simpleChartSource.includes("Math.min(58, Math.max(34, width * 0.28))") &&
 		!simpleChartSource.includes("Math.min(38, Math.max(16, availableBarWidth * 0.72))"),
-	"Stacked previews should reserve compact legend gutters and keep the stacked bar wide enough to read"
+	"Stacked previews should reserve wider legend gutters and keep the stacked bar compact enough for labels"
 );
 
 console.log("simpleChartAxisDensity tests passed");

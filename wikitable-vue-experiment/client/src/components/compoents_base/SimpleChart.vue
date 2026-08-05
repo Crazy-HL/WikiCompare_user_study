@@ -343,7 +343,7 @@
 			};
 
 			const previewStackSideGutter = width =>
-				Math.min(28, Math.max(18, width * 0.15));
+				Math.min(58, Math.max(34, width * 0.28));
 
 			const processedField = computed(() => {
 				const field = props.field;
@@ -903,10 +903,10 @@
 				const margin = { top: 8, right: sideGutter, bottom: 8, left: sideGutter };
 				const barAreaHeight = Math.max(36, height - margin.top - margin.bottom);
 				const availableBarWidth = Math.max(14, width - margin.left - margin.right);
-				const previewStackMaxBarWidth = 86;
+				const previewStackMaxBarWidth = 52;
 				const barWidth = Math.min(
 					previewStackMaxBarWidth,
-					Math.max(24, availableBarWidth * 0.88)
+					Math.max(18, availableBarWidth * 0.62)
 				);
 				const barX = (width - barWidth) / 2;
 				const barBaseY = margin.top + barAreaHeight;
