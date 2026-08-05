@@ -408,6 +408,10 @@ def fetch_material_html(source):
 
 
 def _fetch_wikipedia_material_html(source):
+    snapshot_html = _load_material_snapshot_html(source.display_url)
+    if snapshot_html is not None:
+        return snapshot_html
+
     last_error = None
     for _attempt in range(MATERIAL_FETCH_ATTEMPTS):
         try:

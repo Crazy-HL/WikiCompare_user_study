@@ -340,6 +340,33 @@ def test_fetch_material_html_uses_wikipedia_display_url_after_rest_timeout(tmp_p
     assert direct_calls == [("https://en.wikipedia.org/w/index.php?title=Economy_of_Japan&oldid=1297943898", 30)]
 
 
+def test_fetch_material_html_prefers_existing_wikipedia_snapshot(tmp_path, monkeypatch):
+    import experiment.question_generation as question_generation
+
+    snapshot_dir = tmp_path / "material_snapshots"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "wikipedia-economy-of-south-korea-1273871505.html").write_text(
+        "<html><main><p>Immediate cached Wikipedia article.</p></main></html>",
+        encoding="utf-8",
+    )
+
+    def fail_if_network_is_used(*args, **kwargs):
+        raise AssertionError("Existing Wikipedia snapshots should be used without a network request")
+
+    monkeypatch.setattr(question_generation, "MATERIAL_SNAPSHOT_DIR", snapshot_dir, raising=False)
+    monkeypatch.setattr(question_generation, "fetch_article_html", fail_if_network_is_used)
+    monkeypatch.setattr(question_generation.requests, "get", fail_if_network_is_used)
+
+    html = question_generation.fetch_material_html(SimpleNamespace(
+        source_kind="wikipedia",
+        title="Economy of South Korea",
+        revision="1273871505",
+        display_url="https://en.wikipedia.org/w/index.php?title=Economy_of_South_Korea&oldid=1273871505",
+    ))
+
+    assert "Immediate cached Wikipedia article." in html
+
+
 def test_fetch_material_html_uses_wikipedia_snapshot_after_repeated_timeout(tmp_path, monkeypatch):
     import experiment.question_generation as question_generation
 
