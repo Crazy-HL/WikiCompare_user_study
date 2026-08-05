@@ -60,6 +60,28 @@ ${mergedChartOptionSource}`;
 	);
 });
 
+
+assert(
+	fullChartComponentSource.includes("PAPER_PIE_COLORS") &&
+		fullChartComponentSource.includes("const PIE_COLORS = PAPER_PIE_COLORS"),
+	"Expanded pie charts should import and use the same paper-aligned palette as pie previews"
+);
+
+const pieOptionStart = fullChartComponentSource.indexOf("const pieOption = () => {");
+const pieOptionEnd = fullChartComponentSource.indexOf("const stackedOption = () => {", pieOptionStart);
+assert(
+	pieOptionStart >= 0 && pieOptionEnd > pieOptionStart,
+	"FullChart should define pieOption before stackedOption"
+);
+const pieOptionSource = fullChartComponentSource.slice(pieOptionStart, pieOptionEnd);
+assert(
+	pieOptionSource.includes("itemStyle: { color: PIE_COLORS[0] }") &&
+		pieOptionSource.includes("itemStyle: { color: PIE_COLORS[index % PIE_COLORS.length] }") &&
+		!pieOptionSource.includes("itemStyle: { color: COLORS[0] }") &&
+		!pieOptionSource.includes("itemStyle: { color: COLORS[index % COLORS.length] }"),
+	"Expanded pie series colors should match thumbnail pie colors instead of the generic chart palette"
+);
+
 assert(
 	fullChartSource.includes("lineStyle: { width: CHART_LINE_WIDTH }"),
 	"Expanded line charts should use the same line weight token as thumbnails"

@@ -41,6 +41,7 @@
 	const {
 		CHART_COLORS,
 		CHART_REMAINDER_COLOR,
+		PAPER_PIE_COLORS,
 		categoryColor
 	} = require("@/js/chartTheme");
 	const {
@@ -79,6 +80,7 @@
 	let renderTimeoutId = null;
 
 	const COLORS = CHART_COLORS;
+	const PIE_COLORS = PAPER_PIE_COLORS;
 	const REMAINDER_COLOR = CHART_REMAINDER_COLOR;
 	const selectedScaleMode = ref("auto");
 	const scaleModeOptions = [
@@ -368,7 +370,7 @@
 						value: Math.max(0, Math.min(100, data[0].value)),
 						display: data[0].display,
 						shortDisplay: shortValueDisplay(data[0]),
-						itemStyle: { color: COLORS[0] }
+						itemStyle: { color: PIE_COLORS[0] }
 					},
 					{
 						name: "剩余",
@@ -384,7 +386,7 @@
 					value: item.value,
 					display: item.display,
 					shortDisplay: shortValueDisplay(item),
-					itemStyle: { color: COLORS[index % COLORS.length] }
+					itemStyle: { color: PIE_COLORS[index % PIE_COLORS.length] }
 			  }));
 		return {
 			tooltip: {
