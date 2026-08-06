@@ -17,12 +17,11 @@ assert(
 	"Pie legends should show all categories instead of truncating after four items"
 );
 assert(
-	source.includes("const hasSidePieLegend = pieData.value.length > 1") &&
-		source.includes("const sideLegendColumnWidth = hasSidePieLegend") &&
-		source.includes("const maxPieRadiusByWidth = hasSidePieLegend") &&
-		source.includes("(containerWidth - sideLegendColumnWidth * 2 - pieSideGap * 2) / 2") &&
-		source.includes("hasSidePieLegend ? 44 : 62"),
-	"Pie previews should keep the pie readable while reserving enough side space so legends do not cover it"
+	source.includes("const hasCornerPieLegend = pieData.value.length > 1") &&
+		source.includes("const topLegendReservedHeight = hasCornerPieLegend") &&
+		source.includes("containerWidth * (hasCornerPieLegend ? 0.38 : 0.42)") &&
+		source.includes("hasCornerPieLegend ? 58 : 62"),
+	"Pie previews should keep the pie large by using upper-corner legend space instead of squeezing side columns"
 );
 assert(
 	source.includes('attr("class", "pie-value-label")') &&
@@ -53,7 +52,7 @@ assert(
 
 assert(
 	source.includes('text(d => compactMiddleText(d.name || "", maxLegendChars))') &&
-		!source.slice(source.indexOf('sidePieLegendGroups'), source.indexOf('const renderBarChart')).includes("pieLegendLabelForPoint("),
+		!source.slice(source.indexOf('cornerPieLegendGroups'), source.indexOf('const renderBarChart')).includes("pieLegendLabelForPoint("),
 	"Pie preview legends should use the already-cleaned slice name instead of re-inferring labels from rendered data"
 );
 

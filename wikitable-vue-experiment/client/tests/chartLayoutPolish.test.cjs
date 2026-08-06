@@ -53,35 +53,30 @@ assert(
   fullChartSource.includes("const pieLegendNames = seriesData.filter(item => !item.silent).map(item => item.name)") &&
     fullChartSource.includes("legend: [") &&
     fullChartSource.includes('orient: "vertical"') &&
-    fullChartSource.includes("left: 8") &&
-    fullChartSource.includes("right: 8") &&
+    fullChartSource.includes("left: 14") &&
+    fullChartSource.includes("right: 14") &&
+    fullChartSource.includes("top: 12") &&
     !fullChartSource.includes('orient: "horizontal",\n\t\t\t\t\tleft: "center",\n\t\t\t\t\tbottom: 0'),
-  "Expanded pie charts should move legends to left/right side columns so bottom legends are not clipped"
+  "Expanded pie charts should move legends to upper-left/upper-right corners so bottom legends are not clipped and side legends do not squeeze the pie"
 );
 
 assert(
-  simpleChartSource.includes("const sidePieLegendGroups") &&
-    simpleChartSource.includes("pie-legend-line") &&
-    simpleChartSource.includes("const sidePieLegendX") &&
-    !simpleChartSource.includes("const legendStartY = Math.max(\n\t\t\t\t\t\t\tcenterY + radius + 8"),
-  "Pie thumbnails should use side legends with leader lines, not bottom legends that can be cut off"
+  simpleChartSource.includes("const cornerPieLegendGroups") &&
+    simpleChartSource.includes("corner-pie-legend") &&
+    simpleChartSource.includes("const topLegendReservedHeight = hasCornerPieLegend") &&
+    simpleChartSource.includes("containerWidth * (hasCornerPieLegend ? 0.38 : 0.42)") &&
+    simpleChartSource.includes("Math.max(topLegendReservedHeight + radius + 2, containerHeight * 0.6)") &&
+    !simpleChartSource.includes("const sideLegendColumnWidth = hasSidePieLegend"),
+  "Pie thumbnails should place legends in the upper-left/upper-right empty corners so the pie can stay large"
 );
 
 assert(
-  simpleChartSource.includes("const sideLegendColumnWidth = hasSidePieLegend") &&
-    simpleChartSource.includes("const pieSideGap = hasSidePieLegend") &&
-    simpleChartSource.includes("(containerWidth - sideLegendColumnWidth * 2 - pieSideGap * 2) / 2") &&
-    simpleChartSource.includes("const centerX = containerWidth / 2") &&
-    simpleChartSource.includes("centerX - radius - pieSideGap / 2") &&
-    simpleChartSource.includes("centerX + radius + pieSideGap / 2"),
-  "Pie thumbnails should reserve left/right legend columns before sizing the pie so legends and leader lines stay outside the pie"
-);
-
-assert(
-  fullChartSource.includes("const pieOuterRadius = isSingle") &&
-    fullChartSource.includes("(chartWidth - 2 * sideInset - 40) / 2") &&
-    fullChartSource.includes("radius: isSingle ? [\"44%\", \"68%\"] : [0, pieOuterRadius]"),
-  "Expanded pie charts should shrink the pie radius using the side legend inset instead of letting side legends float over the pie"
+  fullChartSource.includes("const topLegendReservedHeight = isSingle") &&
+    fullChartSource.includes("const pieOuterRadius = isSingle") &&
+    fullChartSource.includes("(chartHeight - topLegendReservedHeight - 28) / 2") &&
+    fullChartSource.includes("const pieCenterY = isSingle") &&
+    fullChartSource.includes('center: isSingle ? ["50%", "50%"] : [chartWidth / 2, pieCenterY]'),
+  "Expanded pie charts should reserve top corner legend space and place the larger pie underneath it"
 );
 
 console.log("chartLayoutPolish tests passed");

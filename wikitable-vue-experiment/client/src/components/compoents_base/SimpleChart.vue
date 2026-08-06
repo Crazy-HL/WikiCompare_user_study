@@ -437,25 +437,27 @@
 				const container = d3.select(pieContainer.value);
 				const containerWidth = pieContainer.value.clientWidth;
 				const containerHeight = pieContainer.value.clientHeight;
-				const hasSidePieLegend = pieData.value.length > 1;
-				const sideLegendColumnWidth = hasSidePieLegend
-					? Math.max(34, Math.min(58, containerWidth * 0.25))
+				const hasCornerPieLegend = pieData.value.length > 1;
+				const topLegendRows = hasCornerPieLegend
+					? Math.ceil(pieData.value.length / 2)
 					: 0;
-				const pieSideGap = hasSidePieLegend ? 8 : 0;
-				const maxPieRadiusByWidth = hasSidePieLegend
-					? (containerWidth - sideLegendColumnWidth * 2 - pieSideGap * 2) / 2
-					: containerWidth * 0.42;
+				const topLegendReservedHeight = hasCornerPieLegend
+					? Math.min(44, Math.max(24, topLegendRows * 10 + 8))
+					: 0;
 				const radius = Math.max(
-					hasSidePieLegend ? 18 : 24,
+					hasCornerPieLegend ? 26 : 24,
 					Math.min(
-						maxPieRadiusByWidth,
-						containerHeight * (hasSidePieLegend ? 0.36 : 0.38),
-						hasSidePieLegend ? 44 : 62
+						containerWidth * (hasCornerPieLegend ? 0.38 : 0.42),
+						(containerHeight - topLegendReservedHeight - 8) * (hasCornerPieLegend ? 0.5 : 0.38),
+						hasCornerPieLegend ? 58 : 62
 					)
 				);
 				const centerX = containerWidth / 2;
-				const centerY = hasSidePieLegend
-					? containerHeight / 2
+				const centerY = hasCornerPieLegend
+					? Math.min(
+						containerHeight - radius - 6,
+						Math.max(topLegendReservedHeight + radius + 2, containerHeight * 0.6)
+					)
 					: Math.max(radius + 4, containerHeight * 0.34);
 				const svg = container
 					.append("svg")
@@ -612,33 +614,26 @@
 						.text(pieData.value[0].name || "value");
 				}
 				if (!isSingleValue && pieData.value.length > 1) {
-					const legend = svg.append("g").attr("class", "legend side-pie-legend");
+					const legend = svg.append("g").attr("class", "legend corner-pie-legend");
 					const legendItemSize = 7;
 					const legendData = processedData.filter(d => !d.isRemainder);
 					const splitIndex = Math.ceil(legendData.length / 2);
-					const sidePieLegendGroups = [
+					const cornerPieLegendGroups = [
 						{ side: "left", items: legendData.slice(0, splitIndex) },
 						{ side: "right", items: legendData.slice(splitIndex) }
 					];
-					const sidePieLegendX = side => (side === "left" ? 5 : containerWidth - 5);
-					const sideLabelWidth = Math.max(18, sideLegendColumnWidth - legendItemSize - 9);
-					const maxLegendChars = Math.max(4, Math.min(13, Math.floor(sideLabelWidth / 4.8)));
+					const cornerLabelWidth = Math.max(34, containerWidth * 0.42);
+					const maxLegendChars = Math.max(5, Math.min(16, Math.floor(cornerLabelWidth / 5)));
 					const legendStep = items =>
 						items.length > 1
-							? Math.min(15, Math.max(10, (containerHeight - 18) / (items.length - 0.25)))
+							? Math.min(10, Math.max(8, (topLegendReservedHeight - 7) / (items.length - 0.2)))
 							: 0;
 
-					sidePieLegendGroups.forEach(group => {
+					cornerPieLegendGroups.forEach(group => {
 						const step = legendStep(group.items);
-						const startY =
-							group.items.length > 1
-								? Math.max(10, centerY - step * (group.items.length - 1) / 2)
-								: centerY;
+						const startY = 7;
 						const isLeft = group.side === "left";
-						const x = sidePieLegendX(group.side);
-						const tickEndX = isLeft
-							? centerX - radius - pieSideGap / 2
-							: centerX + radius + pieSideGap / 2;
+						const x = isLeft ? 6 : containerWidth - 6;
 						const legendItems = legend
 							.selectAll(`.pie-legend-${group.side}`)
 							.data(group.items)
@@ -646,15 +641,6 @@
 							.append("g")
 							.attr("class", `pie-legend-item pie-legend-${group.side}`)
 							.attr("transform", (d, i) => `translate(${x}, ${startY + i * step})`);
-						legendItems
-							.append("line")
-							.attr("class", "pie-legend-line")
-							.attr("x1", isLeft ? legendItemSize + 4 : -legendItemSize - 4)
-							.attr("x2", tickEndX - x)
-							.attr("y1", 3.5)
-							.attr("y2", 3.5)
-							.attr("stroke", "#cbd5e1")
-							.attr("stroke-width", 0.8);
 						legendItems
 							.append("circle")
 							.attr("class", "pie-legend-dot")
@@ -664,7 +650,7 @@
 							.attr("fill", d => d.color);
 						legendItems
 							.append("text")
-							.attr("x", isLeft ? legendItemSize + 10 : -legendItemSize - 10)
+							.attr("x", isLeft ? legendItemSize + 5 : -legendItemSize - 5)
 							.attr("y", legendItemSize)
 							.attr("text-anchor", isLeft ? "start" : "end")
 							.text(d => compactMiddleText(d.name || "", maxLegendChars))

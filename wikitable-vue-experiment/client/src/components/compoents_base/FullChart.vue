@@ -413,10 +413,18 @@
 		const pieLegendNames = seriesData.filter(item => !item.silent).map(item => item.name);
 		const splitIndex = Math.ceil(pieLegendNames.length / 2);
 		const chartWidth = chartEl.value?.clientWidth || 760;
-		const sideInset = chartWidth < 640 ? 112 : 148;
+		const chartHeight = chartEl.value?.clientHeight || 420;
+		const topLegendRows = Math.ceil(pieLegendNames.length / 2);
+		const topLegendReservedHeight = isSingle
+			? 0
+			: Math.min(104, Math.max(46, topLegendRows * 20 + 14));
 		const pieOuterRadius = isSingle
 			? null
-			: Math.max(82, Math.min(150, (chartWidth - 2 * sideInset - 40) / 2));
+			: Math.max(110, Math.min(176, chartWidth * 0.32, (chartHeight - topLegendReservedHeight - 28) / 2));
+		const pieCenterY = isSingle
+			? "50%"
+			: Math.min(chartHeight - pieOuterRadius - 22, topLegendReservedHeight + pieOuterRadius + 12);
+		const topLegendWidth = chartWidth < 640 ? 132 : 184;
 		const legendFormatter = name =>
 			name.length > (chartWidth < 640 ? 12 : 18)
 				? `${name.slice(0, chartWidth < 640 ? 11 : 17)}…`
@@ -435,8 +443,8 @@
 					{
 						type: "scroll",
 						orient: "vertical",
-						left: 8,
-						top: "middle",
+						left: 14,
+						top: 12,
 						data: pieLegendNames.slice(0, splitIndex),
 						icon: "circle",
 						itemWidth: 10,
@@ -444,7 +452,7 @@
 						itemGap: 10,
 						selectedMode: false,
 						formatter: legendFormatter,
-						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						textStyle: { color: "#334155", fontSize: 12, width: topLegendWidth },
 						pageIconColor: "#64748b",
 						pageIconInactiveColor: "#cbd5e1",
 						pageTextStyle: { color: "#64748b" }
@@ -452,8 +460,8 @@
 					{
 						type: "scroll",
 						orient: "vertical",
-						right: 8,
-						top: "middle",
+						right: 14,
+						top: 12,
 						data: pieLegendNames.slice(splitIndex),
 						icon: "circle",
 						itemWidth: 10,
@@ -461,7 +469,7 @@
 						itemGap: 10,
 						selectedMode: false,
 						formatter: legendFormatter,
-						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						textStyle: { color: "#334155", fontSize: 12, width: topLegendWidth },
 						pageIconColor: "#64748b",
 						pageIconInactiveColor: "#cbd5e1",
 						pageTextStyle: { color: "#64748b" }
@@ -471,7 +479,7 @@
 				{
 					type: "pie",
 					radius: isSingle ? ["44%", "68%"] : [0, pieOuterRadius],
-					center: ["50%", "50%"],
+					center: isSingle ? ["50%", "50%"] : [chartWidth / 2, pieCenterY],
 					data: seriesData,
 					minAngle: 2,
 					avoidLabelOverlap: true,
@@ -518,8 +526,8 @@
 					{
 						type: "scroll",
 						orient: "vertical",
-						left: 8,
-						top: "middle",
+						left: 14,
+						top: 12,
 						data: legendNames.slice(0, splitIndex),
 						icon: "roundRect",
 						itemWidth: 14,
@@ -527,7 +535,7 @@
 						itemGap: 10,
 						selectedMode: false,
 						formatter: legendFormatter,
-						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						textStyle: { color: "#334155", fontSize: 12, width: topLegendWidth },
 						pageIconColor: "#64748b",
 						pageIconInactiveColor: "#cbd5e1",
 						pageTextStyle: { color: "#64748b" }
@@ -535,8 +543,8 @@
 					{
 						type: "scroll",
 						orient: "vertical",
-						right: 8,
-						top: "middle",
+						right: 14,
+						top: 12,
 						data: legendNames.slice(splitIndex),
 						icon: "roundRect",
 						itemWidth: 14,
@@ -544,7 +552,7 @@
 						itemGap: 10,
 						selectedMode: false,
 						formatter: legendFormatter,
-						textStyle: { color: "#334155", fontSize: 12, width: sideInset - 34 },
+						textStyle: { color: "#334155", fontSize: 12, width: topLegendWidth },
 						pageIconColor: "#64748b",
 						pageIconInactiveColor: "#cbd5e1",
 						pageTextStyle: { color: "#64748b" }
